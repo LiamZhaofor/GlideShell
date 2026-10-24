@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DwmOverview/DwmOverview.csproj" />
+    <Project Path="src/TouchpadMonitor/TouchpadMonitor.csproj" />
+  </Folder>
+</Solution>

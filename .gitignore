@@ -1,0 +1,13 @@
+# 构建产物
+bin/
+obj/
+*.user
+.vs/
+artifacts/
+
+# IDE
+.idea/
+*.suo
+
+# 运行时产物
+*.log
