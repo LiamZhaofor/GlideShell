@@ -28,7 +28,7 @@ src/
   GlideShell.Platform/   Windows 实现：Raw Input、DWM、DirectComposition、虚拟桌面、注册表
   GlideShell/            常驻宿主：托盘、线程编排、配置、控制器装配
 tests/GlideShell.Tests/  单元测试、轨迹回放测试、架构守卫测试
-tools/PtpProbe/          只读探针：打印触摸板 HID 报告描述符
+tools/PtpProbe/          只读探针：打印报告描述符、录制与分析输入轨迹
 legacy/                  MissionFlow 旧原型（只读参考）
 docs/                    路线图与设计记录
 ```
@@ -43,6 +43,10 @@ dotnet test GlideShell.slnx
 
 # 查看本机触摸板的报告描述符（触点槽数、TipSwitch/Confidence、物理尺寸）
 dotnet run --project tools\PtpProbe
+
+# 按场景录制输入轨迹（S1），再汇总分析
+dotnet run --project tools\PtpProbe -- record
+dotnet run --project tools\PtpProbe -- analyze artifacts\traces\<时间>
 ```
 
 ## 致谢
