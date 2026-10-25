@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 常驻宿主：托盘、线程编排（输入线程 / 渲染线程）、配置、控制器装配。 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>GlideShell</RootNamespace>
+    <AssemblyName>GlideShell</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GlideShell.Core\GlideShell.Core.csproj" />
+    <ProjectReference Include="..\GlideShell.Platform\GlideShell.Platform.csproj" />
+  </ItemGroup>
+
+</Project>

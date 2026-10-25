@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 纯逻辑层：手势识别、仲裁、物理、布局、交互模型。
+       刻意用不带 -windows 的 TFM，并由 ArchitectureTests 禁止 P/Invoke，保证可在任意环境回放测试。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>GlideShell.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GlideShell.Tests" />
+  </ItemGroup>
+
+</Project>
