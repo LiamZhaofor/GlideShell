@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GlideShell.Core\GlideShell.Core.csproj" />
+    <ProjectReference Include="..\..\src\GlideShell.Platform\GlideShell.Platform.csproj" />
   </ItemGroup>
 
 </Project>

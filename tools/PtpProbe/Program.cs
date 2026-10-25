@@ -12,6 +12,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   record      按场景引导录制轨迹（JSON Lines），见 Scenarios.cs
 //   analyze     分析轨迹文件或目录，目录会额外输出 S1 结论草稿
 //   replay      把轨迹跑过 GlideShell.Core 的组帧器与手势识别器，打印识别结果（调参用）
+//   live        用 GlideShell.Platform 的输入线程实时识别，打印手势（真机验证 P2 管线）
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -23,6 +24,7 @@ return command switch
     "record" => Recorder.Run(Option(args, "--out"), SelectScenarios(Option(args, "--only"))),
     "analyze" when args.Length > 1 => Analyze(args[1]),
     "replay" when args.Length > 1 => Replay(args[1], args),
+    "live" => Live(args),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -38,6 +40,7 @@ static int Usage()
           PtpProbe analyze <文件或目录>     分析轨迹；目录会额外输出 S1 结论草稿
           PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]
                                            把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
+          PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -93,11 +96,8 @@ static int Analyze(string path)
     return 0;
 }
 
-static int Replay(string path, string[] args)
+static GestureSettings ParseSettings(string[] args)
 {
-    var files = Directory.Exists(path)
-        ? Directory.GetFiles(path, "*.jsonl").Order(StringComparer.Ordinal).ToList()
-        : [path];
     double Num(string name, double fallback)
         => Option(args, name) is { } v && double.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, out double d) ? d : fallback;
     var defaults = new GestureSettings();
@@ -109,28 +109,58 @@ static int Replay(string path, string[] args)
         TapMaxMoveMm = Num("--tap-move", defaults.TapMaxMoveMm),
     };
     Console.WriteLine($"识别参数：阈值 {settings.SlopMm}mm · 指数稳定 {settings.FingerSettleMs}ms · 轻点 ≤{settings.TapMaxDurationMs}ms 且 ≤{settings.TapMaxMoveMm}mm");
+    return settings;
+}
 
+// 打印识别事件：Changed 只计数，其余逐条输出
+static Action<GestureEvent> GesturePrinter(long originUs)
+{
+    int changed = 0;
+    return e =>
+    {
+        if (e.Phase == GesturePhase.Changed) { changed++; return; }
+        bool swipe = e.Kind == GestureKind.Swipe;
+        string what = swipe ? $"{e.Phase} {e.Fingers}指" : $"Tap {e.Fingers}指";
+        string motion = swipe && e.Phase is GesturePhase.Began or GesturePhase.Ended ? $" {e.Direction}" : "";
+        if (swipe && e.Phase == GesturePhase.Ended)
+        {
+            double v = Math.Abs(e.AlongVelocityMmS) < 0.5 ? 0 : e.AlongVelocityMmS;
+            motion += $" 位移 {e.AlongMm:F1}mm 速度 {v:F0}mm/s（Changed {changed} 次）";
+        }
+        if (e.Phase == GesturePhase.Began) changed = 0;
+        Console.WriteLine($"   @{(e.HostTimeUs - originUs) / 1e6:F2}s {what}{motion}");
+    };
+}
+
+static int Replay(string path, string[] args)
+{
+    var files = Directory.Exists(path)
+        ? Directory.GetFiles(path, "*.jsonl").Order(StringComparer.Ordinal).ToList()
+        : [path];
+    var settings = ParseSettings(args);
     foreach (var file in files)
     {
         var trace = PtpTrace.Load(file);
         Console.WriteLine($"== {Path.GetFileName(file)} — {trace.Header.Title}");
-        int changed = 0;
-        var recognizer = new GestureRecognizer(settings, e =>
-        {
-            if (e.Phase == GesturePhase.Changed) { changed++; return; }
-            string what = e.Kind == GestureKind.Tap ? $"Tap {e.Fingers}指" : $"{e.Phase} {e.Fingers}指";
-            bool swipe = e.Kind == GestureKind.Swipe;
-            string motion = swipe && e.Phase is GesturePhase.Began or GesturePhase.Ended ? $" {e.Direction}" : "";
-            if (swipe && e.Phase == GesturePhase.Ended)
-            {
-                double v = Math.Abs(e.AlongVelocityMmS) < 0.5 ? 0 : e.AlongVelocityMmS;
-                motion += $" 位移 {e.AlongMm:F1}mm 速度 {v:F0}mm/s（Changed {changed} 次）";
-            }
-            if (e.Phase == GesturePhase.Began) changed = 0;
-            Console.WriteLine($"   @{e.HostTimeUs / 1e6:F2}s {what}{motion}");
-        });
+        var recognizer = new GestureRecognizer(settings, GesturePrinter(0));
         trace.Replay(new FrameAssembler(trace.Header.Device.ToGeometry(), recognizer.Process));
     }
+    return 0;
+}
+
+static int Live(string[] args)
+{
+    var settings = ParseSettings(args);
+    long origin = GlideShell.Platform.HostClock.NowUs();
+    var recognizer = new GestureRecognizer(settings, GesturePrinter(origin));
+    using var input = new GlideShell.Platform.Input.PtpInputThread(
+        recognizer.Process, recognizer.Tick, recognizer.Cancel, log: m => Console.WriteLine($"   [输入] {m}"));
+    input.Start();
+    foreach (var d in input.Devices)
+        Console.WriteLine($"   触摸板 VID={d.VendorId:X4} PID={d.ProductId:X4}：{d.Geometry.X.SizeMm:F1}×{d.Geometry.Y.SizeMm:F1}mm，{d.Geometry.ContactSlots} 个触点槽");
+    Console.WriteLine("实时识别中（三指及以上手势会打印出来），按 Enter 退出。");
+    if (Console.IsInputRedirected) Thread.Sleep(1500); // 非交互运行（自检）时只跑一下就退出
+    else Console.ReadLine();
     return 0;
 }
 
