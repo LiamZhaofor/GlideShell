@@ -1,4 +1,5 @@
 using System.Text;
+using GlideShell.Core.Tracing;
 
 namespace GlideShell.Tools.PtpProbe;
 
@@ -30,7 +31,7 @@ internal static class TraceAnalyzer
     private const double IdleGapMs = 100;  // 超过它的间隔视为空闲，不计入报告率统计
     private const double WrapGuardMs = 3000; // 到达间隔超过它时 ScanTime 可能已回绕，改用到达时刻
 
-    public static TraceStats Analyze(string file, TraceHeader header, List<TraceReport> reports)
+    public static TraceStats Analyze(string file, TraceHeader header, List<RawReport> reports)
     {
         var dev = header.Device;
         int scanMod = dev.ScanBits is > 0 and < 31 ? 1 << dev.ScanBits : 1 << 16;
@@ -117,7 +118,7 @@ internal static class TraceAnalyzer
         private (double X, double Y, double Ms, string Ids)? _prevAtMax;
         private readonly List<double> _speeds = [];
 
-        public void Add(TraceReport r, double ms, int touching, int valid, TraceDevice dev)
+        public void Add(RawReport r, double ms, int touching, int valid, TraceDevice dev)
         {
             double gap = (r.ArrivalUs - _lastArrivalUs) / 1000.0;
             _lastArrivalUs = r.ArrivalUs;
@@ -175,7 +176,7 @@ internal static class TraceAnalyzer
         }
     }
 
-    private static double ToMm(int value, AxisInfo axis)
+    private static double ToMm(int value, TraceAxis axis)
     {
         double span = Math.Max(1, axis.Max - axis.Min);
         return (value - axis.Min) / span * (axis.Mm ?? span);

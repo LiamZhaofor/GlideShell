@@ -23,4 +23,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 真机轨迹夹具（S1 录制后挑选放入），回放测试从输出目录读取 -->
+    <None Include="Traces\**\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

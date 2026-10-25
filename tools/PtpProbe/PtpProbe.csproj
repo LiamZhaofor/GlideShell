@@ -1,10 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- 只读探针：枚举 PTP 设备并打印 HID 报告描述符。P1/S1 扩展为实时轨迹录制。 -->
+  <!-- 只读探针：打印 PTP 报告描述符、录制 / 分析 / 回放输入轨迹。轨迹格式与手势识别来自 GlideShell.Core。 -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>GlideShell.Tools.PtpProbe</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GlideShell.Core\GlideShell.Core.csproj" />
+  </ItemGroup>
 
 </Project>

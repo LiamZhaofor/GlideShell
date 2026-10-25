@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using GlideShell.Core.Gestures;
+using GlideShell.Core.Input;
+using GlideShell.Core.Tracing;
 using GlideShell.Tools.PtpProbe;
 using static GlideShell.Tools.PtpProbe.Native;
 
@@ -8,6 +11,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   （无参数）   打印报告描述符：触点槽数、TipSwitch/Confidence、物理尺寸、ScanTime
 //   record      按场景引导录制轨迹（JSON Lines），见 Scenarios.cs
 //   analyze     分析轨迹文件或目录，目录会额外输出 S1 结论草稿
+//   replay      把轨迹跑过 GlideShell.Core 的组帧器与手势识别器，打印识别结果（调参用）
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -18,6 +22,7 @@ return command switch
     "describe" => Describe(),
     "record" => Recorder.Run(Option(args, "--out"), SelectScenarios(Option(args, "--only"))),
     "analyze" when args.Length > 1 => Analyze(args[1]),
+    "replay" when args.Length > 1 => Replay(args[1], args),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -31,6 +36,8 @@ static int Usage()
           PtpProbe record [--out 目录] [--only 2,3,8]
                                            按场景引导录制轨迹（默认输出到 artifacts/traces/<时间>/）
           PtpProbe analyze <文件或目录>     分析轨迹；目录会额外输出 S1 结论草稿
+          PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]
+                                           把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -77,12 +84,53 @@ static int Analyze(string path)
     var all = new List<TraceStats>();
     foreach (var file in files)
     {
-        var (header, reports) = TraceReader.Read(file);
-        var stats = TraceAnalyzer.Analyze(file, header, reports);
+        var trace = PtpTrace.Load(file);
+        var stats = TraceAnalyzer.Analyze(file, trace.Header, trace.Reports.ToList());
         TraceAnalyzer.Print(stats, Console.Out);
         all.Add(stats);
     }
     if (files.Count > 1) TraceAnalyzer.PrintConclusions(all, Console.Out);
+    return 0;
+}
+
+static int Replay(string path, string[] args)
+{
+    var files = Directory.Exists(path)
+        ? Directory.GetFiles(path, "*.jsonl").Order(StringComparer.Ordinal).ToList()
+        : [path];
+    double Num(string name, double fallback)
+        => Option(args, name) is { } v && double.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, out double d) ? d : fallback;
+    var defaults = new GestureSettings();
+    var settings = defaults with
+    {
+        SlopMm = Num("--slop", defaults.SlopMm),
+        FingerSettleMs = Num("--settle", defaults.FingerSettleMs),
+        TapMaxDurationMs = Num("--tap-ms", defaults.TapMaxDurationMs),
+        TapMaxMoveMm = Num("--tap-move", defaults.TapMaxMoveMm),
+    };
+    Console.WriteLine($"识别参数：阈值 {settings.SlopMm}mm · 指数稳定 {settings.FingerSettleMs}ms · 轻点 ≤{settings.TapMaxDurationMs}ms 且 ≤{settings.TapMaxMoveMm}mm");
+
+    foreach (var file in files)
+    {
+        var trace = PtpTrace.Load(file);
+        Console.WriteLine($"== {Path.GetFileName(file)} — {trace.Header.Title}");
+        int changed = 0;
+        var recognizer = new GestureRecognizer(settings, e =>
+        {
+            if (e.Phase == GesturePhase.Changed) { changed++; return; }
+            string what = e.Kind == GestureKind.Tap ? $"Tap {e.Fingers}指" : $"{e.Phase} {e.Fingers}指";
+            bool swipe = e.Kind == GestureKind.Swipe;
+            string motion = swipe && e.Phase is GesturePhase.Began or GesturePhase.Ended ? $" {e.Direction}" : "";
+            if (swipe && e.Phase == GesturePhase.Ended)
+            {
+                double v = Math.Abs(e.AlongVelocityMmS) < 0.5 ? 0 : e.AlongVelocityMmS;
+                motion += $" 位移 {e.AlongMm:F1}mm 速度 {v:F0}mm/s（Changed {changed} 次）";
+            }
+            if (e.Phase == GesturePhase.Began) changed = 0;
+            Console.WriteLine($"   @{e.HostTimeUs / 1e6:F2}s {what}{motion}");
+        });
+        trace.Replay(new FrameAssembler(trace.Header.Device.ToGeometry(), recognizer.Process));
+    }
     return 0;
 }
 
@@ -162,4 +210,4 @@ static void PrintDescriptor(PtpDevice d)
         Console.WriteLine($"      {b.UsagePage:X2}/{b.UsageMin:X2}-{(b.IsRange ? b.UsageMax : b.UsageMin):X2} @L{b.LinkCollection}  rid={b.ReportID}");
 }
 
-static string Mm(AxisInfo axis) => axis.Mm is { } mm ? $"≈{mm:F1}mm" : "(物理尺寸未知)";
+static string Mm(TraceAxis axis) => axis.Mm is { } mm ? $"≈{mm:F1}mm" : "(物理尺寸未知)";

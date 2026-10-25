@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using GlideShell.Core.Tracing;
 
 namespace GlideShell.Tools.PtpProbe;
 
@@ -68,21 +69,21 @@ internal static class Recorder
 
     private static void RecordOne(RawInputListener listener, PtpDevice device, Scenario sc, string path)
     {
-        var header = new TraceHeader(TraceWriter.FormatName, TraceWriter.FormatVersion, DateTimeOffset.Now,
+        var header = new TraceHeader(PtpTrace.FormatName, PtpTrace.FormatVersion, DateTimeOffset.Now,
             sc.Slug, sc.Title, sc.Instructions,
             new TraceDevice($"{device.VendorId:X4}", $"{device.ProductId:X4}", device.Path, device.Slots.Length,
                 device.X, device.Y, device.ScanBits));
 
-        var reports = new List<TraceReport>();
+        var reports = new List<RawReport>();
         long freq = Stopwatch.Frequency;
         listener.Clear();
         long start = Stopwatch.GetTimestamp();
         long deadline = start + sc.Seconds * freq;
         long nextStatus = 0;
         int lastWidth = 0;
-        TraceReport? latest = null;
+        RawReport? latest = null;
 
-        using (var writer = new TraceWriter(path, header))
+        using (var writer = new PtpTraceWriter(path, header))
         {
             while (true)
             {
@@ -114,7 +115,7 @@ internal static class Recorder
         if (listener.ParseFailures > 0) Console.WriteLine($"  （解析失败累计 {listener.ParseFailures} 份）");
     }
 
-    private static string Status(List<TraceReport> reports, TraceReport? latest, double remainingS, long nowUs)
+    private static string Status(List<RawReport> reports, RawReport? latest, double remainingS, long nowUs)
     {
         int recent = 0;
         for (int i = reports.Count - 1; i >= 0 && nowUs - reports[i].ArrivalUs <= 1_000_000; i--) recent++;

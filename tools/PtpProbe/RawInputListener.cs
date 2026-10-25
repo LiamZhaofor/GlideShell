@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using GlideShell.Core.Input;
+using GlideShell.Core.Tracing;
 using static GlideShell.Tools.PtpProbe.Native;
 
 namespace GlideShell.Tools.PtpProbe;
@@ -21,7 +23,7 @@ internal sealed class RawInputListener : IDisposable
 
     private readonly PtpDevice _device;
     private readonly bool _includeMouse;
-    private readonly ConcurrentQueue<(long Qpc, TraceReport Report)> _queue = new();
+    private readonly ConcurrentQueue<(long Qpc, RawReport Report)> _queue = new();
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
     private readonly ushort[] _usages = new ushort[32];
@@ -47,7 +49,7 @@ internal sealed class RawInputListener : IDisposable
         if (!_ready.Wait(TimeSpan.FromSeconds(3))) Error ??= "输入线程启动超时";
     }
 
-    public bool TryDequeue(out long qpc, out TraceReport report)
+    public bool TryDequeue(out long qpc, out RawReport report)
     {
         if (_queue.TryDequeue(out var item))
         {
@@ -190,7 +192,7 @@ internal sealed class RawInputListener : IDisposable
         }
     }
 
-    private TraceReport? Parse(IntPtr report, uint length)
+    private RawReport? Parse(IntPtr report, uint length)
     {
         IntPtr pp = _device.Preparsed;
         var input = HidpReportType.Input;
@@ -207,7 +209,7 @@ internal sealed class RawInputListener : IDisposable
                 if (_usages[i] is >= 1 and <= 31) buttons |= 1 << (_usages[i] - 1);
         }
 
-        var slots = new SlotSample[_device.Slots.Length];
+        var slots = new RawContact[_device.Slots.Length];
         for (int s = 0; s < slots.Length; s++)
         {
             ushort lc = _device.Slots[s];
@@ -224,8 +226,8 @@ internal sealed class RawInputListener : IDisposable
                     else if (_usages[i] == UsageConfidence) confidence = true;
                 }
             }
-            slots[s] = new SlotSample((int)id, tip, confidence, (int)x, (int)y);
+            slots[s] = new RawContact((int)id, tip, confidence, (int)x, (int)y);
         }
-        return new TraceReport(0, (int)scan, (int)cc, buttons, slots);
+        return new RawReport(0, (int)scan, (int)cc, buttons, slots);
     }
 }

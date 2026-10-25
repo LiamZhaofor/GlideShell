@@ -1,9 +1,8 @@
 using System.Runtime.InteropServices;
+using GlideShell.Core.Tracing;
 using static GlideShell.Tools.PtpProbe.Native;
 
 namespace GlideShell.Tools.PtpProbe;
-
-internal sealed record AxisInfo(int Min, int Max, double? Mm);
 
 /// <summary>一台精确式触摸板及其报告描述符里与手势相关的部分。持有 preparsed data，用完 Dispose。</summary>
 internal sealed class PtpDevice : IDisposable
@@ -20,8 +19,8 @@ internal sealed class PtpDevice : IDisposable
 
     /// <summary>携带触点的集合编号（L1..Ln），即每份报文的触点槽。</summary>
     public required ushort[] Slots { get; init; }
-    public required AxisInfo X { get; init; }
-    public required AxisInfo Y { get; init; }
+    public required TraceAxis X { get; init; }
+    public required TraceAxis Y { get; init; }
 
     /// <summary>ScanTime 位宽（PTP 规范为 16 位、100µs）；未声明时为 0。</summary>
     public required int ScanBits { get; init; }
@@ -80,11 +79,11 @@ internal sealed class PtpDevice : IDisposable
         return n >= 8 ? n - 16 : n;
     }
 
-    private static AxisInfo Axis(HIDP_VALUE_CAPS[] values, ushort[] slots, ushort usage)
+    private static TraceAxis Axis(HIDP_VALUE_CAPS[] values, ushort[] slots, ushort usage)
     {
-        if (slots.Length == 0) return new AxisInfo(0, 0, null);
+        if (slots.Length == 0) return new TraceAxis(0, 0, null);
         var cap = values.First(v => v.LinkCollection == slots[0] && v.UsagePage == 0x01 && v.UsageMin == usage);
-        return new AxisInfo(cap.LogicalMin, cap.LogicalMax, PhysicalMm(cap));
+        return new TraceAxis(cap.LogicalMin, cap.LogicalMax, PhysicalMm(cap));
     }
 
     // HID 物理范围 → 毫米。Units 低 4 位是单位制（1 = SI 线性：cm，3 = 英制线性：inch），
