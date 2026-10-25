@@ -11,6 +11,8 @@ internal sealed class MissionConfig
     public double EnterThreshold = 0.30;   // 三指上滑多少（触摸板高度归一化）= 进度 1.0
     public double EnterCommit = 0.55;      // 松手时进度达到即进入
     public double CommitVelocity = 1.2;    // 或离手速度达到（单位/秒）即进入
+    public double DragCommitVelocity = 2.5; // 滑动中即时提交的速度阈值（快甩不等松手）
+    public double DragCommitMinP = 0.35;   // 即时提交的最低进度（防误触）
     public double ExitThreshold = 0.22;    // 交互态三指下滑关闭行程
     public double ExitCommit = 0.50;
     public double StaggerStep = 0.015;     // 起飞错峰步进
@@ -40,6 +42,8 @@ internal sealed class MissionConfig
         public double? EnterThreshold { get; set; }
         public double? EnterCommit { get; set; }
         public double? CommitVelocity { get; set; }
+        public double? DragCommitVelocity { get; set; }
+        public double? DragCommitMinP { get; set; }
         public double? ExitThreshold { get; set; }
         public double? ExitCommit { get; set; }
         public double? StaggerStep { get; set; }
@@ -76,6 +80,8 @@ internal sealed class MissionConfig
             if (dto.EnterThreshold is { } v1) cfg.EnterThreshold = v1;
             if (dto.EnterCommit is { } v2) cfg.EnterCommit = v2;
             if (dto.CommitVelocity is { } v3) cfg.CommitVelocity = v3;
+            if (dto.DragCommitVelocity is { } dv) cfg.DragCommitVelocity = dv;
+            if (dto.DragCommitMinP is { } dp) cfg.DragCommitMinP = dp;
             if (dto.ExitThreshold is { } v4) cfg.ExitThreshold = v4;
             if (dto.ExitCommit is { } v5) cfg.ExitCommit = v5;
             if (dto.StaggerStep is { } v6) cfg.StaggerStep = v6;
@@ -101,6 +107,8 @@ internal sealed class MissionConfig
         EnterThreshold = c.EnterThreshold,
         EnterCommit = c.EnterCommit,
         CommitVelocity = c.CommitVelocity,
+        DragCommitVelocity = c.DragCommitVelocity,
+        DragCommitMinP = c.DragCommitMinP,
         ExitThreshold = c.ExitThreshold,
         ExitCommit = c.ExitCommit,
         StaggerStep = c.StaggerStep,

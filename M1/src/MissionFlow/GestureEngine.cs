@@ -27,14 +27,17 @@ internal sealed class GestureEngine
         ContactCount = (int)r.ContactCount;
         _lastAnyReportMs = nowMs; // 任意报文都刷新：有效性判断必须基于"新鲜的报文"而非陈旧的触点数
 
-        if (ContactCount == 3 && r.Contacts.Count >= 3)
+        // 实证（17:51 日志）：报文 cc=3 但解析出的触点常不足 3 个（分包/固件怪癖），
+        // 导致位移分支整段跳过、ΔY 冻结 0——上滑"失明"400ms 的真凶。
+        // 对策：cc==3 时用"当前可解析出的触点"的平均位置继续追踪（1-2 个触点也是近似真值）。
+        if (ContactCount == 3 && r.Contacts.Count >= 1)
         {
             double avgNY = r.Contacts.Average(c => c.NY);
             double avgNX = r.Contacts.Average(c => c.NX);
 
-            // 触点数抖动宽限：80ms 内回到三指 = 同一手势的延续，基线保持不动
-            // （实测手指微抬会造成 3→2→3 抖动，基线被反复重置导致位移鞭打式跳变）
-            bool continuing = nowMs - _lastThreeMs < 80;
+            // 触点数抖动宽限：500ms 内回到三指 = 同一手势的延续，基线保持不动
+            // （稀疏报文模式下间隔可达 100-200ms，80ms 会让每份报文都重置基线，位移永远为 0）
+            bool continuing = nowMs - _lastThreeMs < 500;
             _lastThreeMs = nowMs;
             _lastAvgNX = avgNX;
             _lastAvgNY = avgNY;
@@ -80,15 +83,17 @@ internal sealed class GestureEngine
         => nowMs - _lastThreeMs < 80
            || (ContactCount == 3 && nowMs - _lastAnyReportMs < 80);
 
-    /// <summary>把基线移到当前触点位置（不重置历史语义）：进入交互态后仍按住时调用，
-    /// 让随后的下滑收起从当前位置起算而非从原始按下点。</summary>
+    /// <summary>把基线移到最近一次三指触点的位置：新一轮三指按下时调用，
+    /// 否则陈旧基线（如原上滑起点）会让随后的下滑位移全程为正、无法触发收起。</summary>
     public void Rebase()
     {
-        if (_baseNY is null) return;
         _baseNY = _lastAvgNY;
         _baseNX = _lastAvgNX;
         _smoothNY = _lastAvgNY;
         _history.Clear();
+        DeltaYUp = 0;
+        DeltaX = 0;
+        ReleaseVelocityUp = 0;
     }
 
     public void Reset()

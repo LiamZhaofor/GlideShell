@@ -25,6 +25,7 @@ internal sealed class OverlayForm : Form
         public bool IsFocused;         // 手势发起时的前台窗口：动画带头、全程全显
         public bool Pending;           // 缩略图尚未注册（首帧先画背景，注册延后避免启动突刺）
         public double FadeIn = 1.0;    // 非聚焦窗口随进度的淡入因子
+        public bool WasDrawn;          // GDI 卡片上一帧是否绘制（淡出转跳过时需失效旧区域，防残影）
         public Bitmap? Snapshot;       // 慢路径自有位图（FromCache=false 时才由 Entry 释放）
         public bool FromCache;         // 位图借自 _snapCache，释放权在缓存
         public Bitmap? TileBitmap;     // 预缩放到平铺位的一次性拷贝（每帧 GDI 缩放太贵）
@@ -125,6 +126,7 @@ internal sealed class OverlayForm : Form
             {
                 if (!Win32.IsWindowVisible(hwnd) || Win32.GetWindowTextLength(hwnd) == 0) return;
                 if (_printImmune.Contains(hwnd)) return; // 已知抓不到的窗口不再浪费钩子路径的尝试
+                if (_snapCache.ContainsKey(hwnd)) return; // 已有缓存（如慢路径刚拍好）不必重拍，省一次必失败的空白尝试
                 var wp = new Win32.WINDOWPLACEMENT { length = System.Runtime.InteropServices.Marshal.SizeOf<Win32.WINDOWPLACEMENT>() };
                 if (!Win32.GetWindowPlacement(hwnd, ref wp) || wp.rcNormalPosition.Width < 160) return;
                 var bmp = PrintWindowSnapshot(hwnd, wp.rcNormalPosition.Width, wp.rcNormalPosition.Height);
@@ -164,9 +166,17 @@ internal sealed class OverlayForm : Form
     {
         if (m.Msg == PtpRawInput.WM_INPUT && m.LParam != IntPtr.Zero)
         {
-            _lastAnyInputMs = _sw.Elapsed.TotalMilliseconds;
+            double nowMs = _sw.Elapsed.TotalMilliseconds;
+            if (_lastAnyInputMs > 0) _reportGaps.Add(nowMs - _lastAnyInputMs);
+            _lastAnyInputMs = nowMs;
             if (PtpRawInput.TryParse(m.LParam) is { } report)
             {
+                // 诊断：cc 与实际解析触点数不一致（分包/固件怪癖）——定位 ΔY 冻结类问题
+                if (report.ContactCount != report.Contacts.Count && _sw.Elapsed.TotalMilliseconds - _lastParseLogMs > 300)
+                {
+                    _lastParseLogMs = _sw.Elapsed.TotalMilliseconds;
+                    Log.W($"Parse: cc={report.ContactCount} 解析触点={report.Contacts.Count}");
+                }
                 _gesture.Feed(report, _sw.Elapsed.TotalMilliseconds);
                 if (!_sim) HandleGesture();
             }
@@ -179,6 +189,7 @@ internal sealed class OverlayForm : Form
     }
 
     private double _lastAnyInputMs; // 最近一份任意报文的时间（看门狗区分「按住不动」和「完全松开」）
+    private double _lastParseLogMs;
 
     // ---- 对外入口 ----
 
@@ -239,6 +250,16 @@ internal sealed class OverlayForm : Form
                 else
                 {
                     SetProgress(Math.Clamp(_gesture.DeltaYUp / _cfg.EnterThreshold, 0, 1));
+
+                    // 快甩即时提交：手指还在飞就进入（macOS 行为），消除甩后按住时的死寂等待
+                    if (_gesture.ReleaseVelocityUp >= _cfg.DragCommitVelocity && _p >= _cfg.DragCommitMinP)
+                    {
+                        Log.W($"Gesture: 快甩即时进入 v={_gesture.ReleaseVelocityUp:F1} p={_p:F2}");
+                        _fullSinceMs = null;
+                        CompleteEnter();
+                        break;
+                    }
+
                     // 顶格保持 120ms 自动进入——滑到底不需要松手
                     if (_p >= 0.98)
                     {
@@ -257,11 +278,24 @@ internal sealed class OverlayForm : Form
                 break;
 
             case Phase.Animating:
-                // 盲区修复：动画播放期间（上次收起/进入未放完）新按下的三指不能无声吞掉——
-                // 快进当前动画到终点，让下一份报文立即进入正常相位
-                if (_gesture.IsThreeFinger && _sw.Elapsed.TotalMilliseconds - _animStartMs > 150)
+                // 仅「收起/回弹类」动画（目标朝 0）期间的上滑意图才回开；
+                // 进入动画期间手指仍向上是快甩提交的正常延续，重开会变成两次动画（本机实证的回归）
+                if (_animTo < _animFrom &&
+                    _gesture.IsThreeFingerEffective(_sw.Elapsed.TotalMilliseconds) && _gesture.DeltaYUp > 0.06)
                 {
-                    Log.W($"Gesture: 动画期间新手势，快进（p {_animFrom:F2}→{_animTo:F2}）");
+                    Log.W($"Gesture: 收起动画期间上滑意图 → 反向回开（visP {_visP:F2}→1.0）");
+                    _animTo = 1.0;
+                    _animFrom = _visP;
+                    _animStartMs = _sw.Elapsed.TotalMilliseconds;
+                    _animDur = _cfg.EnterAnimMs;
+                    _animDone = () => BecomeInteractive();
+                    _ffLogged = true;
+                    break;
+                }
+                // 其余情况（仍按住/下滑中）：快进当前动画，下一份报文回到正常相位
+                if (_gesture.IsThreeFingerEffective(_sw.Elapsed.TotalMilliseconds) && _sw.Elapsed.TotalMilliseconds - _animStartMs > 150)
+                {
+                    if (!_ffLogged) { Log.W($"Gesture: 动画期间手势，快进（p {_animFrom:F2}→{_animTo:F2}）"); _ffLogged = true; }
                     _animFrom = _animTo;
                     _animStartMs = _sw.Elapsed.TotalMilliseconds - _animDur - 1; // 下一 tick 即完成
                 }
@@ -271,6 +305,19 @@ internal sealed class OverlayForm : Form
                 if (!_gesture.IsThreeFingerEffective(_sw.Elapsed.TotalMilliseconds))
                 {
                     if (_exitDrag) EvaluateExitRelease();
+                    _hadThreeFingers = false;
+                    break;
+                }
+
+                // 交互态新一轮三指按下（上升沿）：基线重置到当前位置。
+                // 否则若进入交互态时已松手（快甩后提前抬指），基线停留在原上滑起点（板底），
+                // 随后的下滑全程 ΔY 为正、收起永远触发不了——"第一次下滑没反应"的根因。
+                if (!_hadThreeFingers)
+                {
+                    _gesture.Rebase();
+                    _hadThreeFingers = true;
+                    _exitDrag = false;
+                    Log.W("Gesture: 交互态新一轮三指按下，基线已重置");
                 }
                 else
                 {
@@ -285,6 +332,14 @@ internal sealed class OverlayForm : Form
                         int hoverNow = HitTest(PointToClient(Cursor.Position));
                         if (hoverNow != _hover) { _hover = hoverNow; Invalidate(); }
                         double q = Math.Clamp(-_gesture.DeltaYUp / _cfg.ExitThreshold, 0, 1);
+
+                        // 快甩即时收起（对称于快甩即时进入）
+                        if (-_gesture.ReleaseVelocityUp >= _cfg.DragCommitVelocity && q >= 0.30)
+                        {
+                            Log.W($"Gesture: 快甩即时收起 v={_gesture.ReleaseVelocityUp:F1} q={q:F2}");
+                            DismissFocusHovered();
+                            break;
+                        }
                         if (q >= 1) { DismissFocusHovered(); break; }
                         SetProgress(1 - q); // 反向飞行：跟手收起
                         LogDragFlow();
@@ -296,6 +351,8 @@ internal sealed class OverlayForm : Form
 
     private double _lastDragLogMs;
     private double? _fullSinceMs; // 顶格保持计时（自动进入）
+    private bool _ffLogged;       // 快进日志只记一次/动画
+    private bool _hadThreeFingers; // 交互态三指按下状态（上升沿触发基线重置）
 
     // 手势数据流节流日志：每 ~150ms 一条，用于定位「滑动中无反应」这类间歇性问题
     private void LogDragFlow()
@@ -303,7 +360,17 @@ internal sealed class OverlayForm : Form
         double now = _sw.Elapsed.TotalMilliseconds;
         if (now - _lastDragLogMs < 150) return;
         _lastDragLogMs = now;
-        Log.W($"Drag: cc={_gesture.ContactCount} ΔY={_gesture.DeltaYUp:+0.000;-0.000} v={_gesture.ReleaseVelocityUp:+0.0;-0.0} p={_p:F2} phase={_phase} stage={_deferStage} hover={_hover} pend={_entries.Count(e => e.Pending)}/{_entries.Count}");
+        Log.W($"Drag: cc={_gesture.ContactCount} ΔY={_gesture.DeltaYUp:+0.000;-0.000} v={_gesture.ReleaseVelocityUp:+0.0;-0.0} p={_p:F2} visP={_visP:F2} phase={_phase} stage={_deferStage} hover={_hover} pend={_entries.Count(e => e.Pending)}/{_entries.Count} op={Opacity:F2} paints={_paintCount} repP50={ReportIntervalP50():F0}ms");
+    }
+
+    private int _paintCount;      // 本会话 OnPaint 实际执行次数（区分"位置在更新"和"画面在绘制"）
+    private readonly List<double> _reportGaps = new(); // WM_INPUT 间隔采样（确认输入洪峰强度）
+
+    private double ReportIntervalP50()
+    {
+        if (_reportGaps.Count < 4) return 0;
+        var sorted = _reportGaps.OrderBy(x => x).ToList();
+        return sorted[sorted.Count / 2];
     }
 
     // 前台是全屏应用（无边框铺满整块显示器，排除桌面/任务栏）→ 游戏演示等场景暂停手势
@@ -370,6 +437,8 @@ internal sealed class OverlayForm : Form
         _frameTs.Clear();
         _applyMs.Clear();
         _paintMs.Clear();
+        _paintCount = 0;
+        _reportGaps.Clear();
         _sessionStartMs = _sw.Elapsed.TotalMilliseconds;
         _visP = 0;
         _lastVisMs = _sessionStartMs;
@@ -383,7 +452,7 @@ internal sealed class OverlayForm : Form
         SnapshotWindows();
         _snapshotPhaseMs = _sw.Elapsed.TotalMilliseconds - snap0;
         ApplyVisual(0, force: true);
-        Log.W($"BeginEnter done entries={_entries.Count} area={_areaScr.Width}x{_areaScr.Height} snapshot={_snapshotPhaseMs:F0}ms");
+        Log.W($"BeginEnter done entries={_entries.Count} area={_areaScr.Width}x{_areaScr.Height} snapshot={_snapshotPhaseMs:F0}ms 触发延迟={_sw.Elapsed.TotalMilliseconds - _lastAnyInputMs:F0}ms");
     }
 
     // 所有显示器工作区的并集（排除任务栏）
@@ -409,7 +478,12 @@ internal sealed class OverlayForm : Form
         foreach (var e in _entries)
             if (e.Label is not null) e.Label.Visible = true;
         ApplyVisual(1, force: true);
-        if (_gesture.ContactCount == 3) _gesture.Rebase(); // 仍按住时重置基线：随后下滑即收起
+        if (_gesture.ContactCount == 3)
+        {
+            _gesture.Rebase(); // 仍按住时重置基线：随后下滑即收起
+            _hadThreeFingers = true;
+        }
+        else _hadThreeFingers = false;
         ActivateHarder(); // 此时才接管键盘（Esc）；非前台进程直接 Activate 常被系统拒绝
         Log.W($"BecomeInteractive activated={Focused}");
     }
@@ -448,6 +522,12 @@ internal sealed class OverlayForm : Form
         foreach (var e in _entries)
         {
             if (e.Label is not null) e.Label.Visible = false;
+            // 复用的缩略图先隐藏：否则下次手势 Show() 的头几帧会闪现上一会话的平铺布局
+            if (e.Thumb != IntPtr.Zero)
+            {
+                var hide = new Win32.DWM_THUMBNAIL_PROPERTIES { dwFlags = Win32.DWM_TNP_VISIBLE, fVisible = false };
+                Win32.DwmUpdateThumbnailProperties(e.Thumb, ref hide);
+            }
             if (!e.FromCache) e.Snapshot?.Dispose(); // 缓存位图不归 Entry 管
             e.Snapshot = null;
             e.FromCache = false;
@@ -490,13 +570,23 @@ internal sealed class OverlayForm : Form
         return sorted[sorted.Count / 2];
     }
 
-    private void SetProgress(double p) => ApplyVisual(p);
+    private void SetProgress(double p)
+    {
+        _p = p;
+        _needsFrame = true; // 渲染统一由定时器帧驱动：实证 WM_INPUT 上下文发出的 DWM 缩略图
+                            // 位移不生效（窗口停在原位），而定时器上下文（提交动画）的生效
+    }
+
+    private bool _needsFrame; // 输入置脏，定时器帧取走
 
     private void AnimateProgress(double to, double durationMs, Action? done)
     {
         _phase = Phase.Animating;
         _animating = true;
-        _animFrom = _p;
+        _ffLogged = false;
+        // 从「视觉进度」起飞而非逻辑进度：快甩时 p 已瞬移到 1.0，若从 p 起播则动画零长度
+        // （窗口瞬移到平铺位=没动画）。从弹簧所在的视觉位置起播，飞行始终可见。
+        _animFrom = _visP;
         _animTo = to;
         _animStartMs = _sw.Elapsed.TotalMilliseconds;
         _animDur = durationMs;
@@ -514,12 +604,17 @@ internal sealed class OverlayForm : Form
         _p = p;
         if (RunOptions.Stats) _frameTs.Add(now);
 
-        // 弹簧平滑：视觉进度追逐逻辑进度（时间常数 ~70ms）。慢滑时紧贴（保持 1:1 跟手），
-        // 快甩时把 100ms 内的瞬移拉成肉眼可见的 ~150ms 飞行（macOS 快甩也有最短可见动画）
+        // 自适应弹簧：时间常数随误差变大——慢滑时 τ≈25ms 紧贴手指（消除主窗口延迟感），
+        // 快甩时 τ→90ms 把瞬移拉成可见飞行。固定 70ms 曾让所有窗口整体拖后 ~80-100ms，
+        // 在"原地收缩"的主窗口上最显眼。
         double dt = Math.Clamp((now - _lastVisMs) / 1000.0, 0.001, 0.05);
         _lastVisMs = now;
-        if (_animating || force) _visP = p;
-        else _visP += (p - _visP) * (1 - Math.Exp(-dt / 0.07));
+        if (_animating) _visP = p; // 仅脚本动画旁路弹簧
+        else
+        {
+            double tau = Math.Clamp(0.025 + Math.Abs(p - _visP) * 0.25, 0.025, 0.09);
+            _visP += (p - _visP) * (1 - Math.Exp(-dt / tau));
+        }
 
         try
         {
@@ -539,11 +634,11 @@ internal sealed class OverlayForm : Form
         int i = 0;
         foreach (var e in _entries)
         {
-            // 聚焦窗口零延迟带头；其余窗口带错峰延迟 + 淡入（问题7：主窗先动，其余浮现）
-            double d = e.IsFocused ? 0 : Math.Min(0.08 + i * _cfg.StaggerStep, 0.30);
-            double k = Math.Clamp((p - d) / (1 - d), 0, 1);
-            double ease = k * k * (3 - 2 * k); // smoothstep：两端缓、中段快
-            e.FadeIn = e.IsFocused ? 1.0 : Math.Clamp((p - d) / 0.10, 0, 1);
+            // GNOME/macOS 式：所有窗口同时动，不排队、不逐个淡入（错峰+淡入曾引发
+            // 变灰/残影/慢起步一连串问题，现代 GNOME 也已移除旧版错峰）
+            double k = Math.Clamp(p, 0, 1);
+            double ease = _animating ? k * k * (3 - 2 * k) : k; // 跟手线性，脚本动画两端缓
+            e.FadeIn = 1;
             e.Current = Lerp(e.SrcRect, e.TileRect, ease);
 
             if (e.Pending)
@@ -559,7 +654,7 @@ internal sealed class OverlayForm : Form
                     dwFlags = Win32.DWM_TNP_RECTDESTINATION | Win32.DWM_TNP_OPACITY
                               | Win32.DWM_TNP_VISIBLE | Win32.DWM_TNP_SOURCECLIENTAREAONLY,
                     rcDestination = ToRECT(e.Current),
-                    opacity = (byte)Math.Round(255 * (e.IsFocused ? 1 : e.FadeIn)),
+                    opacity = (byte)Math.Round(255 * e.FadeIn),
                     fVisible = true,
                     fSourceClientAreaOnly = true,
                 };
@@ -581,16 +676,20 @@ internal sealed class OverlayForm : Form
                     e.TileBitmap = new Bitmap(bmp, (int)e.TileRect.Width, (int)e.TileRect.Height);
             }
 
-            // 局部重绘：只失效 GDI 绘制内容新旧位置的并集（DWM 缩略图自己合成，无需重绘）
+            // GDI 卡片（最小化/失败占位）状态跟踪
             if (e.IsMinimized || e.Failed)
             {
-                if (force || e.LastPaint.IsEmpty) Invalidate(Rectangle.Ceiling(e.Current));
-                else if (!e.Current.Equals(e.LastPaint))
-                    Invalidate(Rectangle.Ceiling(Union(e.LastPaint, e.Current)));
+                e.WasDrawn = e.FadeIn > 0.05;
                 e.LastPaint = e.Current;
             }
             i++;
         }
+
+        // 实证（18:04 vs 18:08 对照）：DWM 缩略图的位移刷新依赖宿主窗口重绘——
+        // 有 GDI 卡片时每帧 Invalidate+Update 的会话"画面流畅"，
+        // 纯 DWM 缩略图（无最小化窗口）不 Invalidate 的会话缩略图纹丝不动。
+        // 因此活动相位一律整帧重绘（全量绘制实测 5-7ms，80fps 预算内）。
+        if (_phase != Phase.Idle) Invalidate();
 
         // 下滑收起时：指针下的窗口随下滑进度放大（问题6），松手后它接管焦点
         if (_exitDrag && _hover >= 0 && _hover < _entries.Count)
@@ -616,6 +715,12 @@ internal sealed class OverlayForm : Form
             Invalidate(new Rectangle(0, ClientRectangle.Height - 64, ClientRectangle.Width, 64));
             _lastHint = hint;
         }
+
+        // 关键修复（WM_PAINT 饥饿）：绘制消息只在消息队列清空时生成，而滑动中触摸板以
+        // ~100Hz 持续投递 WM_INPUT，队列永不清空 → 位置每帧都在正确更新（日志可证）但
+        // 画面一帧不画，直到松手队列清空才集中渲染——即"滑动没动画、释放才出现"。
+        // Update() = UpdateWindow：同步绘制当前失效区域，无视队列状态。
+        if (!_dump) Update();
     }
 
     private string HintText => _phase switch
@@ -819,7 +924,7 @@ internal sealed class OverlayForm : Form
             if (LooksBlank(result))
             {
                 result.Dispose();
-                Log.W($"Snapshot: 内容空白，丢弃 ({w}x{h})");
+                Log.W($"Snapshot: 内容空白，丢弃 hwnd={hwnd} {w}x{h}");
                 return null;
             }
             return result;
@@ -904,92 +1009,88 @@ internal sealed class OverlayForm : Form
         }
     }
 
-    // macOS 调度中心式布局：所有窗口用同一个缩放系数（保留原始比例，大窗大、小窗小），
-    // 按行贪心打包，二分搜索能放下的最大系数。
+    // 就近布局（GNOME workspace.js 思想）：按原位 Y→X 排序贪心分行，平铺位落在原位附近、
+    // 飞行距离最小化；统一缩放 × 窗高补偿（小窗最多 +25% 保可读），尝试 1..n 行按
+    // 「缩放优先 + 空间利用」评分取最优，评分变差即停。
     private void LayoutGroup(List<Entry> group, Rectangle areaScr)
     {
         int n = group.Count;
         if (n == 0) return;
-        const int gap = 20;
-        const int labelH = 36;
-        int margin = (int)(Math.Min(areaScr.Width, areaScr.Height) * 0.06);
+        const double gap = 20;
+        const double labelH = 36;
+        double margin = Math.Min(areaScr.Width, areaScr.Height) * 0.06;
         double availW = areaScr.Width - 2 * margin;
         double availH = areaScr.Height - 2 * margin;
 
-        // 高的窗口排前面，打包更紧凑
-        var items = group.OrderByDescending(e => e.SrcRect.Height).ToList();
+        var items = group.OrderBy(e => e.SrcRect.Top).ThenBy(e => e.SrcRect.Left).ToList();
+        double totalW = items.Sum(e => e.SrcRect.Width);
 
-        // 缩放系数封顶 0.8：满屏单窗也有明显的收缩动画（问题5）
-        double lo = 0.02, hi = 0.80, best = 0.02;
-        for (int iter = 0; iter < 24; iter++)
+        List<List<Entry>>? bestRows = null;
+        double bestScore = double.MinValue, bestScale = 0.02;
+
+        for (int numRows = 1; numRows <= n; numRows++)
         {
-            double s = (lo + hi) / 2;
-            if (TryPackRows(items, s, availW, availH, gap, labelH, out _)) { best = s; lo = s; }
-            else hi = s;
+            double idealRowW = totalW / numRows;
+            var rows = new List<List<Entry>> { new() };
+            foreach (var e in items)
+            {
+                var row = rows[^1];
+                if (row.Count > 0 && row.Sum(x => x.SrcRect.Width) + e.SrcRect.Width > idealRowW * 1.2)
+                    rows.Add(row = new List<Entry>());
+                row.Add(e);
+            }
+            if (rows.Count < numRows && numRows < n) continue; // 该行数分不出来
+
+            double scaleW = double.MaxValue, sumMaxH = 0;
+            foreach (var row in rows)
+            {
+                double wSum = row.Sum(x => x.SrcRect.Width);
+                if (wSum > 0) scaleW = Math.Min(scaleW, (availW - gap * (row.Count - 1)) / wSum);
+                sumMaxH += row.Max(x => x.SrcRect.Height);
+            }
+            double scaleH = (availH - gap * (rows.Count - 1) - labelH * rows.Count) / Math.Max(1, sumMaxH);
+            double scale = Math.Min(Math.Min(scaleW, scaleH), 0.65);
+            if (scale <= 0.02) break;
+
+            double usedW = rows.Max(r => r.Sum(x => x.SrcRect.Width) * scale + gap * (r.Count - 1));
+            double score = scale + 0.55 * Math.Min(1, usedW / availW);
+            if (score <= bestScore + 0.002) break; // 评分变差即停（GNOME 策略）
+            bestScore = score;
+            bestRows = rows;
+            bestScale = scale;
         }
 
-        TryPackRows(items, best, availW, availH, gap, labelH, out var rows);
+        bestRows ??= new List<List<Entry>> { items };
+        double s = bestScale;
 
-        // 垂直居中放各行；行内水平居中
-        double rowsGapSum = gap * (rows.Count - 1);
-        double totalH = rows.Sum(r => r.Height) + rowsGapSum;
-        double y = areaScr.Top + margin + Math.Max(0, (availH - totalH) / 2);
-        foreach (var row in rows)
+        double HeightFactor(Entry e) => 1 + 0.25 * Math.Clamp(1 - e.SrcRect.Height / areaScr.Height, 0, 1);
+
+        var rowHeights = new List<double>();
+        double rowsH = 0;
+        foreach (var row in bestRows)
         {
-            double rowW = row.Items.Sum(it => it.Width) + gap * (row.Items.Count - 1);
+            double h = row.Max(e => e.SrcRect.Height * s * HeightFactor(e)) + labelH;
+            rowHeights.Add(h);
+            rowsH += h;
+        }
+
+        double y = areaScr.Top + margin + Math.Max(0, (availH - rowsH - gap * (bestRows.Count - 1)) / 2);
+        for (int r = 0; r < bestRows.Count; r++)
+        {
+            var row = bestRows[r];
+            double rowW = row.Sum(e => e.SrcRect.Width * s * HeightFactor(e)) + gap * (row.Count - 1);
             double x = areaScr.Left + margin + Math.Max(0, (availW - rowW) / 2);
-            foreach (var it in row.Items)
+            foreach (var e in row)
             {
-                var e = it.Entry;
-                double h = it.Height - labelH; // it.Height 含标题条
-                e.TileRect = new RectangleF((float)x, (float)(y + (row.Height - it.Height) / 2),
-                                            (float)it.Width, (float)h);
-                e.LabelRect = new RectangleF((float)x, (float)(e.TileRect.Bottom + 4),
-                                             Math.Max(120f, (float)it.Width), labelH);
-                x += it.Width + gap;
+                double f = HeightFactor(e);
+                double w = e.SrcRect.Width * s * f;
+                double h = e.SrcRect.Height * s * f;
+                e.TileRect = new RectangleF((float)x, (float)(y + (rowHeights[r] - labelH - h) / 2), (float)w, (float)h);
+                e.LabelRect = new RectangleF((float)x, (float)(e.TileRect.Bottom + 4), Math.Max(120f, (float)w), (float)labelH);
+                x += w + gap;
             }
-            y += row.Height + gap;
+            y += rowHeights[r] + gap;
         }
-    }
-
-    private sealed class PackedItem(Entry entry, double width, double height)
-    {
-        public Entry Entry = entry;
-        public double Width = width, Height = height; // 含标题条的高度
-    }
-
-    private sealed class PackedRow
-    {
-        public List<PackedItem> Items = new();
-        public double Height; // 本行内容高（最大窗口高 + 标题条）
-    }
-
-    /// <summary>给定缩放系数 s 打包；成功返回 true 并输出行结构（行高含标题条与间距）。</summary>
-    private static bool TryPackRows(List<Entry> items, double s, double availW, double availH,
-        double gap, double labelH, out List<PackedRow> rows)
-    {
-        rows = new List<PackedRow>();
-        var row = new PackedRow();
-        double rowW = 0;
-        foreach (var e in items)
-        {
-            double w = e.SrcRect.Width * s;
-            double h = e.SrcRect.Height * s;
-            double itemH = h + labelH;
-            if (row.Items.Count > 0 && rowW + gap + w > availW)
-            {
-                rows.Add(row);
-                row = new PackedRow();
-                rowW = 0;
-            }
-            row.Items.Add(new PackedItem(e, w, itemH));
-            rowW += (row.Items.Count > 1 ? gap : 0) + w;
-            row.Height = Math.Max(row.Height, itemH);
-        }
-        if (row.Items.Count > 0) rows.Add(row);
-
-        double totalH = rows.Sum(r => r.Height) + gap * (rows.Count - 1);
-        return totalH <= availH;
     }
 
     private void RegisterThumbnails()
@@ -1040,7 +1141,16 @@ internal sealed class OverlayForm : Form
                 else
                 {
                     e.Snapshot = RestoreAndPrint(e.Hwnd, (int)e.SrcRect.Width, (int)e.SrcRect.Height);
-                    if (e.Snapshot is null) _printImmune.Add(e.Hwnd);
+                    Log.W($"SnapQueue: {e.Title.TruncateLog(20)} hwnd={e.Hwnd} → {(e.Snapshot is null ? "失败，加入免疫名单" : "成功并入缓存")}");
+                    if (e.Snapshot is not null)
+                    {
+                        // 成功即入缓存：后续手势零延迟复用，不再每手势重拍（窗口还原时钩子会清缓存）
+                        _snapCache.TryGetValue(e.Hwnd, out var oldSnap);
+                        _snapCache[e.Hwnd] = e.Snapshot;
+                        e.FromCache = true;
+                        oldSnap?.Dispose();
+                    }
+                    else _printImmune.Add(e.Hwnd);
                 }
                 if (e.Snapshot is not null) e.LastPaint = e.SrcRect;
             }
@@ -1049,6 +1159,13 @@ internal sealed class OverlayForm : Form
         // 淡入：每帧 +0.18 直到不透明（替代 0.85→1.0 的突变，消除闪屏感）
         if (Opacity < 1.0 && _phase is Phase.Entering or Phase.Interactive)
             Opacity = Math.Min(1.0, Opacity + 0.18);
+
+        // 跟手帧：输入只置脏，这里统一渲染（与提交动画同一条已验证的路径）
+        if (_needsFrame && !_animating && _phase is Phase.Entering or Phase.Interactive)
+        {
+            _needsFrame = false;
+            ApplyVisual(_p, force: true);
+        }
 
         // 静默决断：本机触摸板按住静止时也会停发报文，「无报文」无法区分按住/松手。
         // 规则：静默超 250ms 且进度已达进入线 → 直接进入（停住=意图明确；顶格只等 180ms）；
@@ -1184,6 +1301,7 @@ internal sealed class OverlayForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         double t0 = _sw.Elapsed.TotalMilliseconds;
+        _paintCount++;
         base.OnPaint(e);
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
