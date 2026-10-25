@@ -1,0 +1,3 @@
+<Project>
+  <!-- 截断向上查找：旧原型不继承仓库根目录的 Directory.Build.props（如 TreatWarningsAsErrors），保持归档时的构建行为。 -->
+</Project>

@@ -1,3 +1,5 @@
+> **已归档**：GlideShell 重构前的旧原型，只读参考，见 [legacy/README.md](../README.md)。
+
 # M0 — 可行性验证 Demo
 
 「Windows 跟手式调度中心」项目的 M0 里程碑：两个独立 demo，分别验证

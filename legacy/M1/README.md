@@ -1,3 +1,5 @@
+> **已归档**：GlideShell 重构前的旧原型，只读参考，见 [legacy/README.md](../README.md)。
+
 # M1/M2 — MissionFlow：跟手式调度中心
 
 把 M0 的输入侧（PTP 三指追踪）和渲染侧（DWM 实时缩略图）接成了完整原型：
