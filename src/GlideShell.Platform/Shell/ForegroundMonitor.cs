@@ -67,6 +67,9 @@ public sealed unsafe class ForegroundMonitor : IDisposable
     private void Update(nint hwnd)
     {
         if (hwnd == 0) return;
+        // 点托盘图标、开始菜单时任务栏会成为前台：不算用户「在用的程序」
+        if (WindowCatalog.ClassName(hwnd) is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "NotifyIconOverflowWindow"
+            or "TopLevelWindowForOverflowXamlIsland" or "Windows.UI.Core.CoreWindow") return;
         uint pid = 0;
         User32.GetWindowThreadProcessId(hwnd, &pid);
         var state = new ForegroundState(hwnd, WindowCatalog.ProcessName(pid));

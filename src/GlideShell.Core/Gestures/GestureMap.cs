@@ -13,6 +13,9 @@ public enum GestureAction
 
     /// <summary>连续切换虚拟桌面。</summary>
     SwitchDesktops,
+
+    /// <summary>三指拖移：按住左键拖动（三指拖移模式下三指的两个轴都绑定它）。</summary>
+    Drag,
 }
 
 /// <summary>一条绑定：几根手指、沿哪个轴 → 哪个动作。</summary>
@@ -31,10 +34,12 @@ public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
 
     /// <summary>
     /// 开启三指拖移时三指整组让给拖移（macOS 同款取舍）：总览改四指上下，切桌面保持四指左右，
-    /// 窗口切换没有手势（用 Alt+Tab）。
+    /// 窗口切换没有手势（用 Alt+Tab）。三指轻点（中键）仍归系统。
     /// </summary>
     public static GestureMap WithThreeFingerDrag { get; } = new(
     [
+        new(3, GestureAxis.Vertical, GestureAction.Drag),
+        new(3, GestureAxis.Horizontal, GestureAction.Drag),
         new(4, GestureAxis.Vertical, GestureAction.Overview),
         new(4, GestureAxis.Horizontal, GestureAction.SwitchDesktops),
     ]);
@@ -59,8 +64,10 @@ public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
         foreach (var b in Bindings.Where(b => b.Fingers is < 3 or > 5))
             problems.Add($"{b.Fingers} 指不支持（1–2 指留给系统的指针、滚动和缩放）");
         if (threeFingerDrag)
-            foreach (var b in Bindings.Where(b => b.Fingers == 3 && b.Action != GestureAction.None))
+            foreach (var b in Bindings.Where(b => b.Fingers == 3 && b.Action is not (GestureAction.None or GestureAction.Drag)))
                 problems.Add($"已开启三指拖移，三指{AxisName(b.Axis)}不能再绑定 {b.Action}");
+        foreach (var b in Bindings.Where(b => b.Action == GestureAction.Drag && b.Fingers != 3))
+            problems.Add($"拖移只支持三指（现在绑在了 {b.Fingers} 指上）");
         return problems;
     }
 

@@ -49,6 +49,15 @@ public sealed record DesktopConfig
     public SpringConfig Spring { get; init; } = new() { Response = 0.32, DampingRatio = 0.92 };
 }
 
+public sealed record DragConfig
+{
+    /// <summary>慢速时每毫米手指位移移动多少物理像素。</summary>
+    public double PixelsPerMm { get; init; } = 14;
+
+    /// <summary>速度加速系数：100mm/s 时增益乘以 (1 + 加速)，最多按 400mm/s 计。</summary>
+    public double Acceleration { get; init; } = 0.6;
+}
+
 /// <summary>
 /// 用户配置（%APPDATA%\GlideShell\config.json）。缺失的字段取默认值；越界的数值会被夹回合法范围并报告。
 /// </summary>
@@ -72,6 +81,8 @@ public sealed record GlideShellConfig
     public SwitcherConfig Switcher { get; init; } = new();
 
     public DesktopConfig Desktops { get; init; } = new();
+
+    public DragConfig Drag { get; init; } = new();
 
     /// <summary>前台是这些进程时不接管手势（进程名，不含 .exe，不区分大小写）。</summary>
     public List<string> ExcludedProcesses { get; init; } = [];
@@ -141,6 +152,11 @@ public sealed record GlideShellConfig
             {
                 MmPerWindow = Clamp(Switcher.MmPerWindow, 5, 100, "Switcher.MmPerWindow"),
                 Spring = FixSpring(Switcher.Spring, "Switcher.Spring"),
+            },
+            Drag = Drag with
+            {
+                PixelsPerMm = Clamp(Drag.PixelsPerMm, 1, 80, "Drag.PixelsPerMm"),
+                Acceleration = Clamp(Drag.Acceleration, 0, 4, "Drag.Acceleration"),
             },
             Desktops = Desktops with
             {

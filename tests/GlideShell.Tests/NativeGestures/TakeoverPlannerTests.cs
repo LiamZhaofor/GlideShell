@@ -97,10 +97,14 @@ public class TakeoverPlannerTests
     }
 
     [Fact]
-    public void Three_finger_drag_map_leaves_three_finger_settings_alone()
+    public void Three_finger_drag_takes_over_all_three_finger_swipes_but_not_the_tap()
     {
         var (changes, _) = TakeoverPlanner.Plan(GestureMap.WithThreeFingerDrag, Reg(ThisMachine));
-        Assert.DoesNotContain(changes, c => c.Name.StartsWith("Three", StringComparison.Ordinal));
+        var after = Apply(ThisMachine, changes);
+
+        Assert.Equal(0, after["ThreeFingerLeft"]); // 拖移时系统不能再切换应用
+        Assert.Equal(0, after["ThreeFingerRight"]);
+        Assert.Equal(4, after["ThreeFingerTapEnabled"]); // 三指轻点中键保留
         Assert.Contains(changes, c => c.Name == "FourFingerUp" && c.Written == 0);
     }
 }

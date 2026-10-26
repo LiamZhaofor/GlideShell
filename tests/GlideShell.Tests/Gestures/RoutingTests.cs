@@ -18,10 +18,10 @@ public class GestureMapTests
     }
 
     [Fact]
-    public void Three_finger_drag_mode_frees_all_three_finger_gestures()
+    public void Three_finger_drag_mode_gives_all_three_finger_gestures_to_drag()
     {
         var map = GestureMap.WithThreeFingerDrag;
-        Assert.Empty(map.Candidates(3));
+        Assert.Equal(new[] { GestureAction.Drag }, map.Candidates(3));
         Assert.Equal(GestureAction.Overview, map.Resolve(4, GestureAxis.Vertical));
         Assert.Empty(map.Validate(threeFingerDrag: true));
         Assert.NotEmpty(GestureMap.Default.Validate(threeFingerDrag: true));

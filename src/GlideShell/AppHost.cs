@@ -4,6 +4,7 @@ using GlideShell.Core.Desktops;
 using GlideShell.Core.Gestures;
 using GlideShell.Core.Input;
 using GlideShell.Core.Overview;
+using GlideShell.Core.Pointer;
 using GlideShell.Core.Switcher;
 using GlideShell.Platform;
 using GlideShell.Platform.Desktops;
@@ -50,6 +51,7 @@ internal sealed class AppHost
     private VirtualDesktopService _virtualDesktops = null!;
     private DesktopSwitchPresenter _desktopPresenter = null!;
     private DesktopSwitchController _desktopSwitch = null!;
+    private DragController _drag = null!;
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
     private readonly string? _simulate;
@@ -75,6 +77,7 @@ internal sealed class AppHost
         _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops);
         _desktopSwitch = new DesktopSwitchController(_desktopPresenter, () => _config.Desktops);
         _desktopPresenter.Attach(_desktopSwitch);
+        _drag = new DragController(new MouseInjector(), () => _config.Drag);
         _activeMap = ActiveMap(_config);
         _router = new GestureRouter(() => _activeMap, Target, Suppressed);
         _recognizer = new GestureRecognizer(_config.Recognition, _router.OnGesture);
@@ -109,6 +112,7 @@ internal sealed class AppHost
         GestureAction.SwitchWindows => _switcher,
         // 虚拟桌面接口自检不通过、或用户关掉了它：四指横滑交还系统（原生切桌面本身已跟手）
         GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled => _desktopSwitch,
+        GestureAction.Drag => _drag,
         _ => null,
     };
 
@@ -122,7 +126,7 @@ internal sealed class AppHost
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>
     private bool Suppressed()
     {
-        if (_overview.IsVisible || _switcher.IsVisible || _desktopSwitch.IsVisible) return false;
+        if (_overview.IsVisible || _switcher.IsVisible || _desktopSwitch.IsVisible || _drag.IsDragging) return false;
         if (_paused) return true;
         var cfg = _config;
         var fg = _foreground?.Current;
@@ -281,17 +285,69 @@ internal sealed class AppHost
 
     // ---------- 托盘 ----------
 
-    private IReadOnlyList<TrayMenuItem> Menu() =>
+    private IReadOnlyList<TrayMenuItem> Menu()
+    {
+        var cfg = _config;
+        string? lastApp = _foreground?.Current.ProcessName is { Length: > 0 } name && !name.Equals("explorer", StringComparison.OrdinalIgnoreCase) ? name : null;
+        var items = new List<TrayMenuItem>
+        {
+            new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
+            new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
+            TrayMenuItem.Separator,
+            new("三指拖移（总览、切桌面改为四指）", () => UpdateConfig(c => c with { ThreeFingerDrag = !c.ThreeFingerDrag }), Checked: cfg.ThreeFingerDrag),
+            new("四指横滑切换虚拟桌面", () => UpdateConfig(c => c with { Desktops = c.Desktops with { Enabled = !c.Desktops.Enabled } }),
+                Checked: cfg.Desktops.Enabled, Enabled: _virtualDesktops.Available),
+        };
+        foreach (var (label, preset) in SensitivityPresets)
+            items.Add(new($"灵敏度：{label}", () => UpdateConfig(preset), Checked: preset(cfg) == cfg));
+        items.Add(TrayMenuItem.Separator);
+        if (lastApp is not null && !cfg.IsExcluded(lastApp))
+            items.Add(new($"在 {lastApp} 中不使用手势", () => UpdateConfig(c => c with { ExcludedProcesses = [.. c.ExcludedProcesses, lastApp] })));
+        if (cfg.ExcludedProcesses.Count > 0)
+            items.Add(new($"恢复在全部程序中使用手势（已排除 {cfg.ExcludedProcesses.Count} 个）", () => UpdateConfig(c => c with { ExcludedProcesses = [] })));
+        items.AddRange(
+        [
+            new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
+            new("打开配置文件", () => OpenPath(ConfigStore.DefaultPath)),
+            new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
+            TrayMenuItem.Separator,
+            new("退出", () => _ui.Quit()),
+        ]);
+        return items;
+    }
+
+    /// <summary>灵敏度预设：同时调整滑动阈值和各动作的行程（越灵敏，手指走得越短）。</summary>
+    private static readonly (string Label, Func<GlideShellConfig, GlideShellConfig> Apply)[] SensitivityPresets =
     [
-        new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
-        new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
-        TrayMenuItem.Separator,
-        new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
-        new("打开配置文件", () => OpenPath(ConfigStore.DefaultPath)),
-        new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
-        TrayMenuItem.Separator,
-        new("退出", () => _ui.Quit()),
+        ("高", c => WithSensitivity(c, slop: 2.5, overview: 24, perWindow: 18, desktop: 45)),
+        ("标准", c => WithSensitivity(c, slop: 3.0, overview: 30, perWindow: 22, desktop: 55)),
+        ("低", c => WithSensitivity(c, slop: 4.0, overview: 38, perWindow: 28, desktop: 68)),
     ];
+
+    private static GlideShellConfig WithSensitivity(GlideShellConfig c, double slop, double overview, double perWindow, double desktop) => c with
+    {
+        Recognition = c.Recognition with { SlopMm = slop, TapMaxMoveMm = Math.Min(c.Recognition.TapMaxMoveMm, slop) },
+        Overview = c.Overview with { TravelMm = overview },
+        Switcher = c.Switcher with { MmPerWindow = perWindow },
+        Desktops = c.Desktops with { TravelMm = desktop },
+    };
+
+    /// <summary>托盘里改设置：写回配置文件（文件监视器随后重载，这里也立即生效）。</summary>
+    private void UpdateConfig(Func<GlideShellConfig, GlideShellConfig> change)
+    {
+        var (updated, problems) = change(_config).Sanitize();
+        foreach (var p in problems) Log.Warn($"配置：{p}");
+        try
+        {
+            ConfigStore.Save(updated, ConfigStore.DefaultPath);
+        }
+        catch (IOException ex)
+        {
+            Log.Warn($"保存配置失败：{ex.Message}");
+        }
+        _lastConfigReloadUs = 0;
+        ReloadConfig();
+    }
 
     private static void OpenPath(string path)
     {
