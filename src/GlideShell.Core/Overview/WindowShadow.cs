@@ -8,23 +8,21 @@ namespace GlideShell.Core.Overview;
 public readonly record struct ShadowLayer(double Opacity, double SigmaX, double SigmaY, double OffsetY);
 
 /// <summary>
-/// Win11 窗口阴影的近似（真机实测拟合，2026-10-26，150% 缩放下测得后换算成 96 DPI 逻辑像素）。
-/// 缩略图不含阴影，总览自己按这个参数画，撤层那一刻缩略图与真实窗口才一致（否则阴影会一下子压到下面的窗口上）。
+/// Win11 窗口阴影的近似：普通 Win32 窗口在白底上的真实阴影（PtpProbe thumbnails --shadow 截屏对照，2026-10-26，
+/// 150% 缩放，与窗口大小无关），按离窗口边的距离加权拟合，换算成 96 DPI 逻辑像素。
+/// 缩略图不含阴影，总览自己按这个参数画，撤层那一刻缩略图与真实窗口才一致（否则阴影会一下子变深或变浅）。
 /// 多层按「1 − ∏(1 − 各层)」叠加。
 /// </summary>
 public sealed record ShadowStyle(IReadOnlyList<ShadowLayer> Layers)
 {
-    /// <summary>
-    /// 前台（活动）窗口：贴边的深层 + 偏下的宽层（物理像素，150%：A=0.41 σ=17/21 不偏移；A=0.55 σ=29/34 下移 45），
-    /// 四条边逐点误差 &lt; 0.01（RMS 0.0033）。
-    /// </summary>
-    public static ShadowStyle Active { get; } = new([new(0.41, 11.6, 14.3, 0), new(0.55, 19.3, 22.3, 29.9)]);
+    /// <summary>前台（活动）窗口：窗口外 110px 内 RMS 0.0065、逐点最大差 0.038（在角上）。</summary>
+    public static ShadowStyle Active { get; } = new([new(0.05, 0.16, 8.9, -6.57), new(0.25, 13.17, 17.34, 12.15), new(0.12, 27.73, 19.19, 44.2)]);
 
-    /// <summary>非活动窗口：单层 A=0.23、σx=18、σy=36、下移 34（物理像素，150%，RMS 0.0045）。</summary>
-    public static ShadowStyle Inactive { get; } = new([new(0.23, 12.0, 24.0, 22.7)]);
+    /// <summary>非活动窗口：RMS 0.0043、逐点最大差 0.026。</summary>
+    public static ShadowStyle Inactive { get; } = new([new(0.03, 0.13, 4.58, -1.36), new(0.14, 6.47, 9.08, 4.43), new(0.12, 21.4, 17.74, 39.42)]);
 
     /// <summary>阴影图在窗口四周各留的边距（逻辑像素）：偏移 + 3σ 之外已经看不出来。</summary>
-    public double Margin => Layers.Max(l => l.OffsetY + 3 * Math.Max(l.SigmaX, l.SigmaY));
+    public double Margin => Layers.Max(l => Math.Abs(l.OffsetY) + 3 * Math.Max(l.SigmaX, l.SigmaY));
 }
 
 /// <summary>阴影图：黑色、预乘 alpha 的 BGRA，按 <paramref name="Downscale"/> 缩小存储（阴影本身很虚，放大回去看不出差别）。</summary>

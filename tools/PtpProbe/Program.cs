@@ -34,6 +34,7 @@ return command switch
     "windows" => Windows(),
     "native" => Native(),
     "desktops" => Desktops(),
+    "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
@@ -58,6 +59,8 @@ static int Usage()
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
           PtpProbe thumbnails [--classic]  缩略图后端自检（左下角显示约 1 秒测试小窗）
+          PtpProbe thumbnails --shadow [--size 600x400]
+                                           阴影对照：逐点比较系统画的窗口阴影与总览自画的阴影（屏幕中央闪现约 3 秒）
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -297,6 +300,14 @@ static int Thumbnails(bool shared, bool fade)
 {
     bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.Run(shared, m => Console.WriteLine($"   {m}"), fade);
     Console.WriteLine($"{(shared ? "共享缩略图视觉" : "经典缩略图")}：{(ok ? "通过" : "未通过")}");
+    return ok ? 0 : 1;
+}
+
+static int ShadowCompare(string? size, string? dump)
+{
+    var wh = (size ?? "600x400").Split('x');
+    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.CompareShadows(m => Console.WriteLine($"   {m}"), int.Parse(wh[0]), int.Parse(wh[1]), dump);
+    Console.WriteLine($"阴影对照：{(ok ? "一致" : "有差异")}");
     return ok ? 0 : 1;
 }
 

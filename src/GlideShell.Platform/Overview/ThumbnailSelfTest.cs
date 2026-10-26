@@ -1,5 +1,6 @@
 using GlideShell.Core.Geometry;
 using GlideShell.Platform.Native;
+using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
 
 namespace GlideShell.Platform.Overview;
@@ -104,6 +105,163 @@ public static unsafe partial class ThumbnailSelfTest
             layer?.Unregister();
             composition?.Dispose();
             backend?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 阴影对照（PtpProbe thumbnails --shadow）：白底上放一个普通窗口，分别截下它活动 / 非活动时系统画的真实阴影，
+    /// 再用总览同一套代码（共享缩略图 + 自画阴影）在同一位置画一遍，逐点比较四条边的变暗比例。
+    /// </summary>
+    public static bool CompareShadows(Action<string> log, int sourceWidth = 600, int sourceHeight = 400, string? dumpPath = null)
+    {
+        using var backend = SharedThumbnailBackend.TryCreate(out string status);
+        if (backend is null)
+        {
+            log(status);
+            return false;
+        }
+        var monitor = Shell.Monitors.Enumerate().First(m => m.IsPrimary);
+        double scale = monitor.DpiScale;
+        var area = monitor.WorkArea;
+        int bw = sourceWidth + 500, bh = sourceHeight + 420, bx = (int)(area.Left + (area.Width - bw) / 2), by = (int)(area.Top + (area.Height - bh) / 2);
+        const uint Normal = User32.WS_CAPTION | User32.WS_SYSMENU | 0x00040000; // 标题栏 + 可调边框：有系统阴影
+        using var backdrop = new PlainWindow(0xFFFFFF, User32.WS_POPUP, User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U, bx, by, bw, bh, activate: false);
+        using var source = new PlainWindow(0x808080, Normal, User32.WS_EX_TOPMOST, bx + 250, by + 200, sourceWidth, sourceHeight, activate: true);
+        using var taker = new PlainWindow(0x808080, Normal, User32.WS_EX_TOPMOST, (int)area.Left + 8, (int)area.Top + 8, 240, 160, activate: true);
+        Pump(300);
+
+        User32.RECT bounds;
+        Dwmapi.DwmGetWindowAttribute(source.Handle, Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, (uint)sizeof(User32.RECT));
+        var vb = bounds;
+        log($"缩放 {scale:P0} · 测试窗口可见边界 {vb.Left},{vb.Top} {vb.Width}×{vb.Height}（白底 {bx},{by} {bw}×{bh}）");
+
+        uint[] Shot(nint foreground)
+        {
+            if (foreground != 0)
+            {
+                WindowActivator.Activate(foreground);
+                Pump(400);
+                if (User32.GetForegroundWindow() != foreground) log($"警告：没能切到前台 0x{foreground:X}");
+            }
+            for (int i = 0; i < 3; i++) Dwmapi.DwmFlush();
+            Pump(80);
+            return Diagnostics.ScreenCapture.Grab(bx, by, bw, bh);
+        }
+        var realActive = Shot(source.Handle);
+        var realInactive = Shot(taker.Handle);
+
+        using var dest = new PlainWindow(0xFFFFFF, User32.WS_POPUP, User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U, bx, by, bw, bh, activate: false);
+        Pump(150);
+        using var composition = OverlayComposition.Create(backend, dest.Handle, out int hr);
+        if (composition is null)
+        {
+            log($"创建 DComp 目标失败 0x{hr:X8}");
+            return false;
+        }
+        var layer = SharedThumbnailLayer.Register(backend, composition, dest.Handle, new RectD(bx, by, bw, bh), scale, [(0, source.Handle)], null, out hr);
+        if (layer is null)
+        {
+            log($"创建共享缩略图视觉失败 0x{hr:X8}");
+            return false;
+        }
+        try
+        {
+            if (dumpPath is not null) Dump(dumpPath);
+            var rect = Monitors.ToRect(vb);
+            layer.Apply([rect], [1.0], [1.0], 0);
+            var oursActive = Shot(0);
+            layer.Apply([rect], [1.0], [0.0], 0);
+            var oursInactive = Shot(0);
+
+            double worst = 0;
+            foreach (var (name, real, ours) in new[] { ("活动", realActive, oursActive), ("非活动", realInactive, oursInactive) })
+            {
+                log($"—— {name}窗口（真实 / 自画，变暗比例）");
+                foreach (var side in new[] { "下", "右", "上", "左" })
+                {
+                    var line = new System.Text.StringBuilder($"  {side}：");
+                    foreach (int d in new[] { 1, 2, 4, 8, 12, 18, 25, 35, 50, 70, 95 })
+                    {
+                        int cx = (vb.Left + vb.Right) / 2 - bx, cy = (vb.Top + vb.Bottom) / 2 - by;
+                        var (px, py) = side switch
+                        {
+                            "下" => (cx, vb.Bottom - by - 1 + d),
+                            "右" => (vb.Right - bx - 1 + d, cy),
+                            "上" => (cx, vb.Top - by - d),
+                            _ => (vb.Left - bx - d, cy),
+                        };
+                        if (px < 0 || py < 0 || px >= bw || py >= bh) continue;
+                        double a = Dark(real[py * bw + px]), b = Dark(ours[py * bw + px]);
+                        worst = Math.Max(worst, Math.Abs(a - b));
+                        line.Append($" {d}:{a:F3}/{b:F3}");
+                    }
+                    log(line.ToString());
+                }
+                // 整圈（窗口外 120px 内）的平均差：正数 = 自画的更深
+                double sum = 0;
+                int n = 0;
+                for (int py = 0; py < bh; py++)
+                    for (int px = 0; px < bw; px++)
+                    {
+                        int sxp = px + bx, syp = py + by;
+                        bool inside = sxp >= vb.Left && sxp < vb.Right && syp >= vb.Top && syp < vb.Bottom;
+                        bool near = sxp > vb.Left - 120 && sxp < vb.Right + 120 && syp > vb.Top - 120 && syp < vb.Bottom + 120;
+                        if (inside || !near) continue;
+                        sum += Dark(ours[py * bw + px]) - Dark(real[py * bw + px]);
+                        n++;
+                    }
+                log($"  窗口外 120px 内平均差（自画 − 真实）：{sum / n:+0.0000;-0.0000}");
+            }
+            log($"逐点最大差 {worst:F3}");
+            return worst < 0.03;
+        }
+        finally
+        {
+            layer.Unregister();
+        }
+
+        // 拟合用：真实阴影在窗口外的整块变暗比例（x,y 相对可见边界左上角，物理像素）
+        void Dump(string path)
+        {
+            using var w = new StreamWriter(path);
+            w.WriteLine($"# {vb.Width} {vb.Height} {scale}");
+            w.WriteLine("state,x,y,dark");
+            for (int py = 0; py < bh; py += 2)
+                for (int px = 0; px < bw; px += 2)
+                {
+                    int x = px + bx - vb.Left, y = py + by - vb.Top;
+                    if (x >= 0 && x < vb.Width && y >= 0 && y < vb.Height) continue;
+                    w.WriteLine($"a,{x},{y},{Dark(realActive[py * bw + px]):F4}");
+                    w.WriteLine($"i,{x},{y},{Dark(realInactive[py * bw + px]):F4}");
+                }
+        }
+
+        static double Dark(uint argb) => 1 - ((argb >> 8) & 0xFF) / 255.0; // 白底：绿色通道的变暗比例
+    }
+
+    /// <summary>纯色窗口（颜色 0xBBGGRR）。</summary>
+    private sealed class PlainWindow : NativeWindow
+    {
+        private readonly uint _color;
+
+        public PlainWindow(uint color, uint style, uint exStyle, int x, int y, int w, int h, bool activate)
+        {
+            _color = color;
+            Create("GlideShell.ShadowCompare", style, exStyle, x, y, w, h);
+            User32.ShowWindow(Handle, activate ? 5 /* SW_SHOW */ : User32.SW_SHOWNOACTIVATE);
+        }
+
+        protected override nint? WndProc(uint msg, nint wParam, nint lParam)
+        {
+            if (msg == User32.WM_ERASEBKGND) return 1;
+            if (msg != User32.WM_PAINT) return null;
+            User32.PAINTSTRUCT ps;
+            nint hdc = User32.BeginPaint(Handle, &ps);
+            nint brush = Gdi32.CreateSolidBrush(_color);
+            User32.FillRect(hdc, &ps.rcPaint, brush);
+            Gdi32.DeleteObject(brush);
+            User32.EndPaint(Handle, &ps);
+            return 0;
         }
     }
 

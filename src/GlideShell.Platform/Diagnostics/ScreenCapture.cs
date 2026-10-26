@@ -46,6 +46,25 @@ public static unsafe partial class ScreenCapture
         ReleaseDC(0, screen);
     }
 
+    /// <summary>读回屏幕上一块区域（物理像素，自上而下逐行，每像素 0xAARRGGBB）。</summary>
+    public static uint[] Grab(int x, int y, int w, int h)
+    {
+        var pixels = new uint[w * h];
+        nint screen = GetDC(0);
+        nint mem = CreateCompatibleDC(screen);
+        var bi = new BITMAPINFOHEADER { biSize = 40, biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32 }; // 负高度：自上而下
+        void* bits;
+        nint bmp = CreateDIBSection(screen, &bi, 0, &bits, 0, 0);
+        nint old = SelectObject(mem, bmp);
+        BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020 | 0x40000000);
+        new ReadOnlySpan<uint>(bits, w * h).CopyTo(pixels);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        ReleaseDC(0, screen);
+        return pixels;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct BITMAPINFOHEADER
     {

@@ -12,34 +12,43 @@ public class WindowShadowTests
         Assert.Equal(-0.9953222650, WindowShadow.Erf(-2), 6);
     }
 
+    // 真机对照实测（PtpProbe thumbnails --shadow，150%，普通 Win32 窗口可见边界 582×391；与窗口大小无关）：
+    // 到窗口可见边的距离（物理像素）→ 白底上的变暗比例
     [Theory]
-    // 150% 缩放下真机实测的活动窗口阴影（物理像素，到窗口可见边的距离 → 变暗比例）
-    [InlineData("右", 9, 0.294)]
-    [InlineData("右", 25, 0.137)]
-    [InlineData("右", 49, 0.024)]
-    [InlineData("下", 9, 0.545)]
-    [InlineData("下", 41, 0.307)]
-    [InlineData("下", 81, 0.078)]
-    [InlineData("上", 9, 0.169)]
-    [InlineData("上", 25, 0.059)]
-    public void Active_shadow_matches_the_measured_profile(string side, double d, double measured)
-    {
-        double W = 1729, H = 922;
-        var (x, y) = side switch { "右" => (W + d, H / 2), "下" => (W / 2, H + d), _ => (W / 2, -d) };
-        Assert.InRange(WindowShadow.Coverage(ShadowStyle.Active, x, y, W, H, 1.5), measured - 0.015, measured + 0.015);
-    }
+    [InlineData("下", 1, 0.306)]
+    [InlineData("下", 8, 0.278)]
+    [InlineData("下", 25, 0.212)]
+    [InlineData("下", 50, 0.118)]
+    [InlineData("下", 95, 0.016)]
+    [InlineData("右", 1, 0.165)]
+    [InlineData("右", 8, 0.129)]
+    [InlineData("右", 25, 0.059)]
+    [InlineData("右", 50, 0.008)]
+    [InlineData("上", 1, 0.110)]
+    [InlineData("上", 8, 0.075)]
+    [InlineData("上", 25, 0.020)]
+    public void Active_shadow_matches_the_measured_profile(string side, double d, double measured) =>
+        AssertProfile(ShadowStyle.Active, side, d, measured);
 
     [Theory]
-    // 非活动窗口（400×300 测试窗口，150%）
-    [InlineData("右", 9, 0.063)]
-    [InlineData("下", 9, 0.176)]
-    [InlineData("下", 49, 0.078)]
-    [InlineData("上", 9, 0.024)]
-    public void Inactive_shadow_matches_the_measured_profile(string side, double d, double measured)
+    [InlineData("下", 1, 0.220)]
+    [InlineData("下", 8, 0.184)]
+    [InlineData("下", 35, 0.110)]
+    [InlineData("下", 70, 0.043)]
+    [InlineData("右", 1, 0.118)]
+    [InlineData("右", 8, 0.075)]
+    [InlineData("右", 25, 0.020)]
+    [InlineData("上", 1, 0.067)]
+    [InlineData("上", 8, 0.031)]
+    public void Inactive_shadow_matches_the_measured_profile(string side, double d, double measured) =>
+        AssertProfile(ShadowStyle.Inactive, side, d, measured);
+
+    private static void AssertProfile(ShadowStyle style, string side, double d, double measured)
     {
-        double W = 382, H = 291;
-        var (x, y) = side switch { "右" => (W + d, H / 2), "下" => (W / 2, H + d), _ => (W / 2, -d) };
-        Assert.InRange(WindowShadow.Coverage(ShadowStyle.Inactive, x, y, W, H, 1.5), measured - 0.015, measured + 0.015);
+        double W = 582, H = 391;
+        // 可见边界最外一圈像素算第 0 个，d=1 是紧贴着的第一个窗口外像素（像素中心）
+        var (x, y) = side switch { "右" => (W - 0.5 + d, H / 2), "下" => (W / 2, H - 0.5 + d), _ => (W / 2, 0.5 - d) };
+        Assert.InRange(WindowShadow.Coverage(style, x, y, W, H, 1.5), measured - 0.025, measured + 0.025);
     }
 
     [Fact]
