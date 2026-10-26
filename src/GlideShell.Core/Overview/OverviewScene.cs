@@ -59,7 +59,7 @@ public sealed class OverviewScene
     public int HitTest(double x, double y, double progress)
     {
         for (int i = 0; i < Windows.Count; i++)
-            if (OverviewVisuals.WindowRect(Windows[i].Source, Slots[i].Tile, progress).Contains(x, y)) return i;
+            if (OverviewVisuals.SceneWindow(Windows[i], Slots[i].Tile, progress, emphasized: false).Rect.Contains(x, y)) return i;
         return -1;
     }
 }

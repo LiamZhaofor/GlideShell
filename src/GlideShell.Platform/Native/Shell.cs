@@ -33,6 +33,8 @@ internal static unsafe partial class User32
         public int X, Y;
     }
 
+    public const uint WPF_RESTORETOMAXIMIZED = 0x0002;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct WINDOWPLACEMENT
     {

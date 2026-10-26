@@ -146,6 +146,7 @@ public static unsafe class WindowCatalog
     /// <summary>
     /// 最小化窗口的还原位置。Win11 最小化窗口的 GetWindowRect 只有 237×40，必须用 WINDOWPLACEMENT；
     /// 而 rcNormalPosition 是相对所在显示器工作区的坐标，要加上工作区相对整屏的偏移（任务栏在上 / 左时才有差别）。
+    /// 从最大化状态最小化的窗口会还原成最大化（DWM 保留的画面也是最大化时的），取所在显示器的工作区。
     /// </summary>
     private static RectD RestoreBounds(nint hwnd, IReadOnlyList<MonitorInfo> monitors, out MonitorInfo? monitor)
     {
@@ -161,6 +162,7 @@ public static unsafe class WindowCatalog
             dx = monitor.WorkArea.Left - monitor.Bounds.Left;
             dy = monitor.WorkArea.Top - monitor.Bounds.Top;
         }
+        if ((wp.flags & User32.WPF_RESTORETOMAXIMIZED) != 0 && monitor is not null) return monitor.WorkArea;
         return Monitors.ToRect(n).Offset(dx, dy);
     }
 

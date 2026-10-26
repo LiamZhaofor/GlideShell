@@ -299,7 +299,7 @@ internal sealed unsafe class DesktopLayer
             if (slot == int.MinValue) continue;
             nint thumb;
             if (Dwmapi.DwmRegisterThumbnail(overlay, (nint)w.Id, &thumb) != 0) continue;
-            entries.Add(new Entry(thumb, slot, w.Source, ThumbnailLayer.VisibleSource((nint)w.Id)));
+            entries.Add(new Entry(thumb, slot, w.Source, ThumbnailLayer.ThumbnailSource((nint)w.Id, thumb).Source));
         }
         var layer = new DesktopLayer(entries.ToArray(), area, monitor.DpiScale);
         layer.HideAll();

@@ -138,9 +138,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                 var w = _scene.Windows[i];
                 var slot = _scene.Slots[i];
                 var tile = Local(slot.Tile, origin);
-                if (w.IsMinimized)
+                if (w.IsMinimized && !_layer.ShowsContent(i))
                 {
-                    // 最小化窗口没有实时缩略图：画一张卡片占位（快照支持见 ROADMAP）
+                    // DWM 没有留下这个最小化窗口的画面（例如启动即最小化）：画一张卡片占位
                     User32.FillRect(hdc, &tile, card);
                     Gdi32.SetTextColor(hdc, Gdi32.Rgb(150, 150, 158));
                     User32.DrawTextW(hdc, "已最小化", -1, &tile, User32.DT_CENTER | User32.DT_VCENTER | User32.DT_SINGLELINE | User32.DT_NOPREFIX);

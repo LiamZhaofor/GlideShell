@@ -277,13 +277,12 @@ public sealed class OverviewController : IGestureTarget
     }
 
     /// <summary>按帧计算每个窗口的当前矩形，写进 <paramref name="dest"/>（长度 ≥ 场景窗口数，零分配）。</summary>
-    public static void WindowRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest)
+    public static void WindowRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest, Span<double> opacity)
     {
         for (int i = 0; i < scene.Count; i++)
         {
-            var rect = OverviewVisuals.WindowRect(scene.Windows[i].Source, scene.Slots[i].Tile, frame.Progress);
-            if (frame.EmphasizedWindow == scene.Windows[i].Id) rect = OverviewVisuals.EmphasizeForDismiss(rect, frame.Progress);
-            dest[i] = rect;
+            var w = scene.Windows[i];
+            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Slots[i].Tile, frame.Progress, frame.EmphasizedWindow == w.Id);
         }
     }
 

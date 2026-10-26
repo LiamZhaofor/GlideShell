@@ -6,10 +6,12 @@ namespace GlideShell.Platform.Overview;
 /// <summary>
 /// 一块覆盖层上的一组 DWM 缩略图（不可变：UI 线程整体创建 / 替换，渲染线程只读并逐帧更新属性）。
 /// 第 0 个是桌面壁纸（不透明度兼作背景变暗），之后是窗口，按 Z 序从下往上注册（后注册的在上层）。
+/// 最小化窗口也是实时缩略图：DWM 保留着它最小化前的画面（见 <see cref="ThumbnailSource"/>）。
 /// </summary>
 internal sealed unsafe class ThumbnailLayer
 {
-    public readonly record struct Entry(nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source);
+    /// <param name="HasContent">false = 最小化窗口在 DWM 里没有留下画面，不显示缩略图，由覆盖层画占位卡片。</param>
+    public readonly record struct Entry(nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent);
 
     private readonly Entry[] _windows; // 从下往上
     private readonly nint _wallpaper;
@@ -73,12 +75,14 @@ internal sealed unsafe class ThumbnailLayer
             var (index, hwnd) = windows[windows.Count - 1 - k];
             if (k < keep)
             {
-                entries.Add(old[k] with { SceneIndex = index, Source = VisibleSource(hwnd) });
+                var (kept, keptContent) = ThumbnailSource(hwnd, old[k].Thumb);
+                entries.Add(old[k] with { SceneIndex = index, Source = kept, HasContent = keptContent });
                 continue;
             }
             nint thumb;
             if (Dwmapi.DwmRegisterThumbnail(overlay, hwnd, &thumb) != 0) continue;
-            entries.Add(new Entry(thumb, hwnd, index, VisibleSource(hwnd)));
+            var (source, hasContent) = ThumbnailSource(hwnd, thumb);
+            entries.Add(new Entry(thumb, hwnd, index, source, hasContent));
         }
         var layer = new ThumbnailLayer(wallpaper, progman, wallpaperSource, entries.ToArray(), workArea);
         layer.HideAll();
@@ -91,8 +95,11 @@ internal sealed unsafe class ThumbnailLayer
         foreach (var e in _windows) Dwmapi.DwmUnregisterThumbnail(e.Thumb);
     }
 
-    /// <summary>渲染线程：按本帧的窗口矩形（屏幕坐标）与壁纸不透明度更新全部缩略图。返回第一个失败的 HRESULT（0 = 全部成功）。</summary>
-    public int Apply(ReadOnlySpan<RectD> sceneRects, double wallpaperOpacity)
+    /// <summary>
+    /// 渲染线程：按本帧的窗口矩形（屏幕坐标）、窗口不透明度与壁纸不透明度更新全部缩略图。
+    /// 返回第一个失败的 HRESULT（0 = 全部成功）。
+    /// </summary>
+    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, double wallpaperOpacity)
     {
         int firstError = 0;
         var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES();
@@ -108,12 +115,12 @@ internal sealed unsafe class ThumbnailLayer
         }
 
         props.dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_OPACITY | Dwmapi.DWM_TNP_VISIBLE;
-        props.opacity = 255;
         props.fVisible = 1;
         foreach (var e in _windows)
         {
-            if (e.SceneIndex >= sceneRects.Length) continue;
+            if (!e.HasContent || e.SceneIndex >= sceneRects.Length) continue;
             var r = sceneRects[e.SceneIndex];
+            props.opacity = (byte)Math.Round(255 * Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1));
             props.rcDestination = new User32.RECT
             {
                 Left = (int)Math.Round(r.Left - _origin.Left), Top = (int)Math.Round(r.Top - _origin.Top),
@@ -128,6 +135,14 @@ internal sealed unsafe class ThumbnailLayer
 
     public bool HasWallpaper => _wallpaper != 0;
 
+    /// <summary>UI 线程（重绘时）：该场景窗口是否有缩略图画面；没有时覆盖层画占位卡片。</summary>
+    public bool ShowsContent(int sceneIndex)
+    {
+        foreach (var e in _windows)
+            if (e.SceneIndex == sceneIndex) return e.HasContent;
+        return false;
+    }
+
     public void HideAll()
     {
         var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES { dwFlags = Dwmapi.DWM_TNP_VISIBLE, fVisible = 0 };
@@ -135,12 +150,30 @@ internal sealed unsafe class ThumbnailLayer
         foreach (var e in _windows) Dwmapi.DwmUpdateThumbnailProperties(e.Thumb, &props);
     }
 
-    // 缩略图源坐标相对窗口左上角；只取可见边框内的部分（去掉 Win10/11 的隐形缩放边框），与 Source 矩形对齐
-    internal static User32.RECT VisibleSource(nint hwnd)
+    /// <summary>
+    /// 缩略图的源矩形（相对窗口左上角），以及 DWM 是否有可画的内容。
+    /// <list type="bullet">
+    /// <item>普通窗口：只取可见边框内的部分（去掉 Win10/11 的隐形缩放边框），与 Source 矩形对齐。</item>
+    /// <item>
+    /// 最小化窗口：GetWindowRect 只剩 237×40 的标题条，但 DWM 仍保留着最小化前的整幅画面（只含可见边框内，
+    /// 任务栏预览与 Alt+Tab 用的就是它），所以取缩略图源的完整尺寸。启动即最小化等情况下 DWM 只有标题条，视为没有内容。
+    /// </item>
+    /// </list>
+    /// </summary>
+    internal static (User32.RECT Source, bool HasContent) ThumbnailSource(nint hwnd, nint thumb)
     {
+        if (User32.IsIconic(hwnd))
+        {
+            Dwmapi.SIZE size;
+            if (Dwmapi.DwmQueryThumbnailSourceSize(thumb, &size) != 0) return (default, false);
+            return (new User32.RECT { Right = size.cx, Bottom = size.cy }, size.cx >= MinContentSize && size.cy >= MinContentSize);
+        }
         User32.RECT wr, fr;
         User32.GetWindowRect(hwnd, &wr);
         if (Dwmapi.DwmGetWindowAttribute(hwnd, Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS, &fr, (uint)sizeof(User32.RECT)) != 0) fr = wr;
-        return new User32.RECT { Left = fr.Left - wr.Left, Top = fr.Top - wr.Top, Right = fr.Right - wr.Left, Bottom = fr.Bottom - wr.Top };
+        return (new User32.RECT { Left = fr.Left - wr.Left, Top = fr.Top - wr.Top, Right = fr.Right - wr.Left, Bottom = fr.Bottom - wr.Top }, true);
     }
+
+    // 比最小化后的标题条（约 40 像素高）大，才算留下了画面
+    private const int MinContentSize = 64;
 }

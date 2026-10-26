@@ -175,12 +175,50 @@ public class OverviewControllerTests
         };
         var scene = OverviewScene.Build(windows, [new OverviewArea(new RectD(0, 0, 2560, 1528), 1.5)]);
         var rects = new RectD[2];
+        var opacity = new double[2];
 
-        OverviewController.WindowRects(scene, new OverviewFrame(0, 0, 0, TransitionPhase.Resting, true, null), rects);
+        OverviewController.WindowRects(scene, new OverviewFrame(0, 0, 0, TransitionPhase.Resting, true, null), rects, opacity);
         Assert.Equal(windows[0].Source, rects[0]);
+        Assert.Equal(1, opacity[0]);
 
-        OverviewController.WindowRects(scene, new OverviewFrame(1, 0, 0, TransitionPhase.Resting, true, null), rects);
+        OverviewController.WindowRects(scene, new OverviewFrame(1, 0, 0, TransitionPhase.Resting, true, null), rects, opacity);
         Assert.Equal(scene.Slots[1].Tile, rects[1]);
         Assert.Equal(1, scene.HitTest(rects[1].CenterX, rects[1].CenterY, 1));
+    }
+
+    [Fact]
+    public void Minimized_windows_fade_in_at_their_tile_and_fly_out_only_when_chosen()
+    {
+        var windows = new[]
+        {
+            new OverviewWindow(1, "A", new RectD(0, 0, 1280, 1500), false, true, 0, "a"),
+            new OverviewWindow(2, "B", new RectD(1280, 0, 1280, 1500), true, false, 0, "b"),
+        };
+        var scene = OverviewScene.Build(windows, [new OverviewArea(new RectD(0, 0, 2560, 1528), 1.5)]);
+        var tile = scene.Slots[1].Tile;
+        var rects = new RectD[2];
+        var opacity = new double[2];
+
+        // 收起态：不在屏幕上「原位」出现，而是停在平铺位、完全透明
+        OverviewController.WindowRects(scene, new OverviewFrame(0, 0, 0, TransitionPhase.Resting, true, null), rects, opacity);
+        Assert.Equal(0, opacity[1]);
+        Assert.Equal(tile.CenterX, rects[1].CenterX, 6);
+        Assert.True(rects[1].Width < tile.Width);
+
+        OverviewController.WindowRects(scene, new OverviewFrame(0.5, 0, 0, TransitionPhase.Tracking, true, null), rects, opacity);
+        Assert.Equal(0.5, opacity[1]);
+
+        OverviewController.WindowRects(scene, new OverviewFrame(1, 0, 0, TransitionPhase.Resting, true, null), rects, opacity);
+        Assert.Equal(tile.Left, rects[1].Left, 6);
+        Assert.Equal(tile.Top, rects[1].Top, 6);
+        Assert.Equal(tile.Width, rects[1].Width, 6);
+        Assert.Equal(tile.Height, rects[1].Height, 6);
+        Assert.Equal(1, opacity[1]);
+
+        // 被选中（收起后会被还原）：和普通窗口一样飞回还原位置
+        OverviewController.WindowRects(scene, new OverviewFrame(0, 0, 0, TransitionPhase.Animating, true, 2), rects, opacity);
+        Assert.Equal(1, opacity[1]);
+        Assert.Equal(windows[1].Source.CenterX, rects[1].CenterX, 6);
+        Assert.True(rects[1].Width > windows[1].Source.Width); // 收起时的强调放大
     }
 }

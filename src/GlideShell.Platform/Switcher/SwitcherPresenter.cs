@@ -156,9 +156,16 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             for (int i = 0; i < n; i++)
             {
                 nint hwnd = (nint)scene.Windows[i].Id;
-                sources[i] = ThumbnailLayer.VisibleSource(hwnd);
                 nint thumb;
-                if (Dwmapi.DwmRegisterThumbnail(band, hwnd, &thumb) == 0) thumbs[i] = thumb;
+                if (Dwmapi.DwmRegisterThumbnail(band, hwnd, &thumb) != 0) continue;
+                var (source, hasContent) = ThumbnailLayer.ThumbnailSource(hwnd, thumb);
+                if (!hasContent)
+                {
+                    Dwmapi.DwmUnregisterThumbnail(thumb); // 没有画面的最小化窗口只留标题
+                    continue;
+                }
+                thumbs[i] = thumb;
+                sources[i] = source;
             }
             var t = new Thumbs(thumbs, sources, bandRect);
             t.HideAll();

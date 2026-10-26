@@ -11,6 +11,25 @@ public static class OverviewVisuals
     /// <summary>窗口当前矩形：原位与平铺位之间线性插值。跟手阶段必须线性，缓动交给松手后的弹簧。</summary>
     public static RectD WindowRect(RectD source, RectD tile, double p) => RectD.Lerp(source, tile, p);
 
+    /// <summary>
+    /// 最小化窗口不在屏幕上，没有「原位」可飞：停在平铺位，随进度从略小放大到原大，同时按 <see cref="MinimizedOpacity"/> 淡入。
+    /// </summary>
+    public static RectD MinimizedRect(RectD tile, double p, double minScale = 0.85)
+        => tile.ScaleAroundCenter(minScale + (1 - minScale) * Math.Clamp(p, 0, 1));
+
+    public static double MinimizedOpacity(double p) => Math.Clamp(p, 0, 1);
+
+    /// <summary>
+    /// 场景里一个窗口在进度 p 下的矩形与不透明度。收起时被选中的最小化窗口会被还原，
+    /// 所以它和普通窗口一样飞向还原位置，而不是原地淡出。
+    /// </summary>
+    public static (RectD Rect, double Opacity) SceneWindow(OverviewWindow window, RectD tile, double p, bool emphasized)
+    {
+        if (window.IsMinimized && !emphasized) return (MinimizedRect(tile, p), MinimizedOpacity(p));
+        var rect = WindowRect(window.Source, tile, p);
+        return (emphasized ? EmphasizeForDismiss(rect, p) : rect, 1);
+    }
+
     /// <summary>背景遮罩不透明度：随进度线性加深，越界部分不再加深。</summary>
     public static double BackdropOpacity(double p, double max = 0.85) => Math.Clamp(p, 0, 1) * max;
 

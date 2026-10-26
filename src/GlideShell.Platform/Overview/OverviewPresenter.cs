@@ -22,6 +22,7 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
     private volatile OverlayWindow[] _renderOverlays = [];
     private OverviewController? _controller;
     private RectD[] _rects = new RectD[WindowCatalog.MaxWindows];
+    private double[] _opacity = new double[WindowCatalog.MaxWindows];
     private bool _prepared;
     private bool _shown;
     private volatile bool _labelsShown;
@@ -118,7 +119,11 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
         int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
         var scene = OverviewScene.Build(windows, monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale)).ToList(),
             cfg.PrimaryMonitorOnly, primary);
-        if (scene.Count > _rects.Length) _rects = new RectD[scene.Count];
+        if (scene.Count > _rects.Length)
+        {
+            _rects = new RectD[scene.Count];
+            _opacity = new double[scene.Count];
+        }
 
         foreach (var o in _overlays)
         {
@@ -208,14 +213,15 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
         var frame = controller.Sample(nowUs);
         var scene = controller.Scene;
         var rects = _rects;
-        int count = Math.Min(scene.Count, rects.Length);
-        OverviewController.WindowRects(scene, frame, rects.AsSpan(0, count));
+        var opacity = _opacity;
+        int count = Math.Min(scene.Count, Math.Min(rects.Length, opacity.Length));
+        OverviewController.WindowRects(scene, frame, rects.AsSpan(0, count), opacity.AsSpan(0, count));
 
         double wallpaper = 1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1);
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
-            int hr = o.Layer.Apply(rects.AsSpan(0, count), wallpaper);
+            int hr = o.Layer.Apply(rects.AsSpan(0, count), opacity.AsSpan(0, count), wallpaper);
             if (hr != 0 && !_applyErrorLogged)
             {
                 _applyErrorLogged = true; // 每次会话只记一次
