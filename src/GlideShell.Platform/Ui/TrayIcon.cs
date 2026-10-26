@@ -159,10 +159,15 @@ internal static unsafe class AppIcon
         {
             if (s_handle != 0) return s_handle;
             uint dpi = User32.GetDpiForSystem();
-            int cx = User32.GetSystemMetricsForDpi(User32.SM_CXSMICON, dpi), cy = User32.GetSystemMetricsForDpi(User32.SM_CYSMICON, dpi);
-            s_handle = User32.LoadImageW(Kernel32.GetModuleHandleW(null), (char*)User32.IDI_APPLICATION, User32.IMAGE_ICON, cx, cy, 0);
-            if (s_handle == 0) s_handle = User32.LoadIconW(0, User32.IDI_APPLICATION);
+            s_handle = Load(User32.GetSystemMetricsForDpi(User32.SM_CXSMICON, dpi));
             return s_handle;
         }
+    }
+
+    /// <summary>按指定边长加载图标（窗口标题栏等）。调用方不必释放：LoadImage 未带 LR_SHARED 时句柄随进程存在，数量很少。</summary>
+    public static nint Load(int size)
+    {
+        nint h = User32.LoadImageW(Kernel32.GetModuleHandleW(null), (char*)User32.IDI_APPLICATION, User32.IMAGE_ICON, size, size, 0);
+        return h != 0 ? h : User32.LoadIconW(0, User32.IDI_APPLICATION);
     }
 }

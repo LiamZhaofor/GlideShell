@@ -26,6 +26,12 @@ public sealed unsafe class UiThread : NativeWindow
 
     public bool IsCurrentThread => Environment.CurrentManagedThreadId == _threadId;
 
+    /// <summary>
+    /// 当前打开的对话框式窗口（设置窗口）：消息循环先交给 IsDialogMessage，
+    /// Tab / 方向键在控件间移动，Enter / Esc 变成「确定 / 取消」命令。0 = 没有。
+    /// </summary>
+    public nint DialogWindow { get; set; }
+
     /// <summary>任意线程调用：在 UI 线程上异步执行。</summary>
     public void Post(Action action)
     {
@@ -59,6 +65,7 @@ public sealed unsafe class UiThread : NativeWindow
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
+            if (DialogWindow != 0 && User32.IsDialogMessageW(DialogWindow, &msg)) continue;
             User32.TranslateMessage(&msg);
             User32.DispatchMessageW(&msg);
         }

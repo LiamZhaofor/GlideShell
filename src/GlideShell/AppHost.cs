@@ -340,10 +340,13 @@ internal sealed class AppHost
     {
         var cfg = _config;
         string? lastApp = _foreground?.Current.ProcessName is { Length: > 0 } name && !name.Equals("explorer", StringComparison.OrdinalIgnoreCase) ? name : null;
-        var sensitivity = SensitivityPresets
-            .Select(p => new TrayMenuItem(p.Label, () => UpdateConfig(p.Apply), Checked: p.Apply(cfg) == cfg))
+        var sensitivity = SensitivityPreset.All
+            .Select(p => new TrayMenuItem(p.Label, () => UpdateConfig(p.ApplyTo), Checked: p.Matches(cfg)))
             .ToList();
-        string? current = SensitivityPresets.FirstOrDefault(p => p.Apply(cfg) == cfg).Label;
+        string? current = SensitivityPreset.Of(cfg)?.Label;
+        // 三指拖移、四指切桌面两个开关与设置窗口走同一个模型，两边的说法永远一致
+        var desktopSlot = SettingsModel.SlotOf(4, GestureAxis.Horizontal);
+        bool desktopsOn = SettingsModel.FromConfig(cfg).ActionAt(desktopSlot) == GestureAction.SwitchDesktops;
 
         // 不使用手势的程序：最近的前台程序可一键加入；已排除的逐个点击即恢复
         var excluded = new List<TrayMenuItem>();
@@ -366,37 +369,64 @@ internal sealed class AppHost
         [
             new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
             new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
+            new("设置…", OpenSettings),
             TrayMenuItem.Separator,
-            new("三指拖移（总览、切桌面改为四指）", () => UpdateConfig(c => c with { ThreeFingerDrag = !c.ThreeFingerDrag }), Checked: cfg.ThreeFingerDrag),
-            new("四指横滑切换虚拟桌面", () => UpdateConfig(c => c with { Desktops = c.Desktops with { Enabled = !c.Desktops.Enabled } }),
-                Checked: cfg.Desktops.Enabled, Enabled: _virtualDesktops.Available),
+            new("三指拖移（总览改为四指上滑）", () => UpdateConfig(c => SettingsModel.FromConfig(c).WithThreeFingerDrag(!c.ThreeFingerDrag).ApplyTo(c).Config),
+                Checked: cfg.ThreeFingerDrag),
+            new("四指左右滑切换虚拟桌面", () => UpdateConfig(c => SettingsModel.FromConfig(c)
+                    .WithAction(desktopSlot, desktopsOn ? GestureAction.None : GestureAction.SwitchDesktops).ApplyTo(c).Config),
+                Checked: desktopsOn && _virtualDesktops.Available, Enabled: _virtualDesktops.Available),
             new(current is null ? "灵敏度：自定义" : $"灵敏度：{current}", Children: sensitivity),
             new(cfg.ExcludedProcesses.Count > 0 ? $"不使用手势的程序（{cfg.ExcludedProcesses.Count}）" : "不使用手势的程序", Children: excluded),
             new("全屏时暂停手势", () => UpdateConfig(c => c with { PauseInFullscreen = !c.PauseInFullscreen }), Checked: cfg.PauseInFullscreen),
             TrayMenuItem.Separator,
             new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
-            new("打开配置文件（高级设置）", () => OpenPath(ConfigStore.DefaultPath)),
             new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
             TrayMenuItem.Separator,
             new("退出", () => _ui.Quit()),
         ];
     }
 
-    /// <summary>灵敏度预设：同时调整滑动阈值和各动作的行程（越灵敏，手指走得越短）。</summary>
-    private static readonly (string Label, Func<GlideShellConfig, GlideShellConfig> Apply)[] SensitivityPresets =
-    [
-        ("高", c => WithSensitivity(c, slop: 2.5, overview: 24, perWindow: 18, desktop: 45)),
-        ("标准", c => WithSensitivity(c, slop: 3.0, overview: 30, perWindow: 22, desktop: 55)),
-        ("低", c => WithSensitivity(c, slop: 4.0, overview: 38, perWindow: 28, desktop: 68)),
-    ];
+    // ---------- 设置窗口 ----------
 
-    private static GlideShellConfig WithSensitivity(GlideShellConfig c, double slop, double overview, double perWindow, double desktop) => c with
+    private void OpenSettings()
     {
-        Recognition = c.Recognition with { SlopMm = slop, TapMaxMoveMm = Math.Min(c.Recognition.TapMaxMoveMm, slop) },
-        Overview = c.Overview with { TravelMm = overview },
-        Switcher = c.Switcher with { MmPerWindow = perWindow },
-        Desktops = c.Desktops with { TravelMm = desktop },
-    };
+        var model = SettingsModel.FromConfig(_config, Autostart.IsEnabled(_exePath));
+        SettingsWindow.ShowOrActivate(_ui, model, new SettingsEnvironment(
+            _virtualDesktops.Available,
+            RunningApps,
+            SaveSettings,
+            () => OpenPath(ConfigStore.DefaultPath)));
+    }
+
+    /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>
+    private IReadOnlyList<string> SaveSettings(SettingsModel model)
+    {
+        var (updated, problems) = model.ApplyTo(_config);
+        foreach (var p in problems) Log.Warn($"配置：{p}");
+        try
+        {
+            ConfigStore.Save(updated, ConfigStore.DefaultPath);
+        }
+        catch (IOException ex)
+        {
+            return [$"保存配置失败：{ex.Message}"];
+        }
+        if (model.Autostart != Autostart.IsEnabled(_exePath)) Autostart.Set(_exePath, model.Autostart);
+        _lastConfigReloadUs = 0;
+        ReloadConfig();
+        Log.Info("设置已保存");
+        return [];
+    }
+
+    /// <summary>当前有窗口的程序（进程名），供设置窗口挑选要排除的程序。</summary>
+    private static IReadOnlyList<string> RunningApps()
+        => WindowCatalog.Snapshot(Monitors.Enumerate())
+            .Select(w => w.ProcessName)
+            .Where(n => n.Length > 0 && !n.Equals("GlideShell", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>托盘里改设置：写回配置文件（文件监视器随后重载，这里也立即生效）。</summary>
     private void UpdateConfig(Func<GlideShellConfig, GlideShellConfig> change)
