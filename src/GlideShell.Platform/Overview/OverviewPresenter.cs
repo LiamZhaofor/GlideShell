@@ -34,7 +34,7 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
         _ui = ui;
         _config = config;
         _keys = new KeyboardHook(OnKey);
-        _render = new RenderLoop(RenderFrame, stats => Log.Info($"总览渲染：{stats}"));
+        _render = new RenderLoop(RenderFrame, stats => Log.Info($"总览渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
 
     public OverviewController Controller => _controller ?? throw new InvalidOperationException("先调用 Attach");

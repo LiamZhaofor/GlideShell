@@ -27,7 +27,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     public SwitcherPresenter(UiThread ui)
     {
         _ui = ui;
-        _render = new RenderLoop(RenderFrame, stats => Log.Info($"切换条渲染：{stats}"));
+        _render = new RenderLoop(RenderFrame, stats => Log.Info($"切换条渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
 
     public SwitcherController Controller => _controller ?? throw new InvalidOperationException("先调用 Attach");
