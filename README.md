@@ -42,7 +42,7 @@ pwsh build\uninstall.ps1    # 退出、确认系统手势已还原、删除程�
 
 - **托盘菜单**：打开总览（也可按 Ctrl+Alt+O）；暂停（即退回 Windows 原生手势）；设置…；三指拖移；四指切桌面；灵敏度高 / 标准 / 低；不使用手势的程序（把最近的前台程序加进去，或逐个恢复）；全屏时暂停手势；开机启动；打开日志目录。
 - **设置窗口**：每个三指 / 四指手势做什么、灵敏度与行程、总览背景变暗、三指拖移速度、不使用手势的程序、开机启动。
-- **总览里**：点击窗口切过去，Esc 收起，Enter 切到鼠标所指的窗口。
+- **总览里**：点击窗口切过去；方向键 / Tab（Shift+Tab 反向）移动选中的窗口，Enter 切过去；Esc 收起。
 - **配置文件** `%APPDATA%\GlideShell\config.json`（可带注释，保存即生效，写错了会回退默认值并记日志）：手势映射、滑动阈值、各功能行程与弹簧参数、背景变暗、拖移速度、排除程序等，逐项说明见 [docs/CONFIG.md](docs/CONFIG.md)。
 - **日志** `%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
 - **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`；`GlideShell.exe --quit` 让运行中的实例正常退出。

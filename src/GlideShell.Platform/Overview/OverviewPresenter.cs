@@ -2,6 +2,7 @@ using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Overview;
 using GlideShell.Platform.Diagnostics;
+using GlideShell.Platform.Native;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
 
@@ -184,7 +185,7 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
 
     private bool OnKey(uint vk)
     {
-        const uint VkEscape = 0x1B, VkReturn = 0x0D;
+        const uint VkEscape = 0x1B, VkReturn = 0x0D, VkTab = 0x09, VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28;
         switch (vk)
         {
             case VkEscape:
@@ -193,9 +194,45 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
             case VkReturn:
                 Controller.Close(_hoveredId, HostClock.NowUs());
                 return true;
+            case VkTab:
+                MoveSelection(scene => scene.Cycle(Selected(scene), backwards: User32.GetAsyncKeyState(User32.VK_SHIFT) < 0));
+                return true;
+            case VkLeft or VkUp or VkRight or VkDown:
+                var direction = vk switch
+                {
+                    VkLeft => NavigationDirection.Left,
+                    VkUp => NavigationDirection.Up,
+                    VkRight => NavigationDirection.Right,
+                    _ => NavigationDirection.Down,
+                };
+                // 还没有选中项时，第一下先选中当前前台窗口（而不是直接跳走）
+                MoveSelection(scene => _hoveredId is null ? Selected(scene) : scene.Navigate(Selected(scene), direction));
+                return true;
             default:
                 return false;
         }
+    }
+
+    /// <summary>键盘选中项：鼠标悬停的窗口；没有时是原来的前台窗口；再没有就是最上层窗口。</summary>
+    private int Selected(OverviewScene scene)
+    {
+        int index = _hoveredId is { } id ? scene.IndexOf(id) : -1;
+        if (index < 0)
+            for (int i = 0; i < scene.Count && index < 0; i++)
+                if (scene.Windows[i].IsForeground) index = i;
+        return Math.Max(index, 0);
+    }
+
+    /// <summary>键盘移动选中项（与鼠标悬停共用同一个高亮；之后动鼠标会接着按鼠标位置更新）。</summary>
+    private void MoveSelection(Func<OverviewScene, int> next)
+    {
+        var scene = Controller.Scene;
+        if (scene.Count == 0) return;
+        int index = next(scene);
+        if (index < 0 || index >= scene.Count) return;
+        _hoveredId = scene.Windows[index].Id;
+        Controller.SetHovered(_hoveredId);
+        UpdateDecorations();
     }
 
     private void UpdateDecorations()

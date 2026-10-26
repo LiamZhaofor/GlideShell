@@ -95,6 +95,11 @@ internal static unsafe partial class User32
     [LibraryImport("user32.dll")]
     public static partial nint SetFocus(nint hwnd);
 
+    public const int VK_SHIFT = 0x10;
+
+    [LibraryImport("user32.dll")]
+    public static partial short GetAsyncKeyState(int key);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetClientRect(nint hwnd, RECT* rect);

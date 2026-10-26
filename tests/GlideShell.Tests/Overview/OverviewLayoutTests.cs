@@ -96,3 +96,49 @@ public class OverviewLayoutTests
         Assert.Equal(1, OverviewVisuals.LabelOpacity(1));
     }
 }
+
+public class OverviewNavigationTests
+{
+    // 四个窗口分别在屏幕的四个象限：就近布局排成 2×2
+    private static OverviewScene Grid()
+    {
+        var windows = new[]
+        {
+            new OverviewWindow(1, "左上", new RectD(0, 0, 1200, 700), false, true, 0, "a"),
+            new OverviewWindow(2, "右上", new RectD(1300, 0, 1200, 700), false, false, 0, "b"),
+            new OverviewWindow(3, "左下", new RectD(0, 800, 1200, 700), false, false, 0, "c"),
+            new OverviewWindow(4, "右下", new RectD(1300, 800, 1200, 700), false, false, 0, "d"),
+        };
+        return OverviewScene.Build(windows, [new OverviewArea(new RectD(0, 0, 2560, 1528), 1.5)]);
+    }
+
+    [Fact]
+    public void Arrow_keys_move_to_the_nearest_window_in_that_direction()
+    {
+        var scene = Grid();
+        Assert.Equal(1, scene.Navigate(0, NavigationDirection.Right));
+        Assert.Equal(2, scene.Navigate(0, NavigationDirection.Down));
+        Assert.Equal(3, scene.Navigate(1, NavigationDirection.Down));
+        Assert.Equal(2, scene.Navigate(3, NavigationDirection.Left));
+        Assert.Equal(0, scene.Navigate(2, NavigationDirection.Up));
+    }
+
+    [Fact]
+    public void Arrow_keys_stay_put_at_the_edge_and_start_from_the_top_window()
+    {
+        var scene = Grid();
+        Assert.Equal(0, scene.Navigate(0, NavigationDirection.Left));
+        Assert.Equal(0, scene.Navigate(0, NavigationDirection.Up));
+        Assert.Equal(0, scene.Navigate(-1, NavigationDirection.Right));
+        Assert.Equal(-1, OverviewScene.Empty.Navigate(0, NavigationDirection.Right));
+    }
+
+    [Fact]
+    public void Tab_cycles_in_reading_order()
+    {
+        var scene = Grid();
+        Assert.Equal(new[] { 1, 2, 3, 0 }, new[] { 0, 1, 2, 3 }.Select(i => scene.Cycle(i, backwards: false)));
+        Assert.Equal(3, scene.Cycle(0, backwards: true));
+        Assert.Equal(0, scene.Cycle(-1, backwards: false));
+    }
+}
