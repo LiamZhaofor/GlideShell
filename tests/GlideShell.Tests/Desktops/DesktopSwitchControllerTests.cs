@@ -64,6 +64,24 @@ public class DesktopSwitchControllerTests
     }
 
     [Fact]
+    public void Frame_that_requests_hide_shows_the_target_and_later_frames_are_invisible()
+    {
+        // 呈现层靠这个约定：请求撤层那一帧停在目标桌面；之后位置已归零（为下一次手势准备），
+        // 但这些帧不可见、不能画（否则撤层前会把原来的桌面摆回中央闪一下）
+        var (c, host) = Create();
+        long end = Swipe(c, dx: -30, v: 0, start: 0);
+
+        var settled = c.Sample(end + 5_000_000);
+        Assert.Equal("Hide:1", host.Calls[^1]);
+        Assert.True(settled.Visible);
+        Assert.Equal(1, settled.Position, 6);
+
+        var after = c.Sample(end + 5_006_000);
+        Assert.False(after.Visible);
+        Assert.Equal(0, after.Position, 6);
+    }
+
+    [Fact]
     public void Short_swipe_springs_back_without_switching()
     {
         var (c, host) = Create();

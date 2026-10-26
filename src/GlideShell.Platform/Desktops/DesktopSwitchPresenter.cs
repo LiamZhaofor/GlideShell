@@ -202,7 +202,10 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     private bool RenderFrame(long nowUs)
     {
         var frame = Controller.Sample(nowUs);
-        if (_shown)
+        // 只画可见的帧：落定那一帧之后控制器已把位置归零（为下一次手势准备），而 UI 线程撤层还要等切换完成、
+        // 交出焦点再等两帧；这期间若按归零后的位置再画一帧，原来那个桌面会被摆回屏幕中央——
+        // 真机反馈「空桌面切到有窗口的桌面闪一下空桌面，反之闪一下前一个桌面的窗口」
+        if (_shown && frame.Visible)
             foreach (var o in _renderOverlays) o.Layer.Apply(frame.Position);
         return frame.Visible;
     }
