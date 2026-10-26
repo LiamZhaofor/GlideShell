@@ -23,7 +23,12 @@ public readonly record struct ShadowStyle(double Opacity, double SigmaX, double 
 
 /// <summary>阴影图：黑色、预乘 alpha 的 BGRA，按 <paramref name="Downscale"/> 缩小存储（阴影本身很虚，放大回去看不出差别）。</summary>
 /// <param name="MarginPx">图的左上角相对窗口左上角向外的距离（物理像素，原尺寸）。</param>
-public sealed record ShadowImage(int Width, int Height, int Downscale, double MarginPx, byte[] Bgra);
+/// <param name="Bgra">从 <see cref="System.Buffers.ArrayPool{T}.Shared"/> 借来的缓冲（可能比 Width×Height×4 长），用完调用 <see cref="Return"/>。</param>
+public sealed record ShadowImage(int Width, int Height, int Downscale, double MarginPx, byte[] Bgra)
+{
+    /// <summary>上传完就还回去：每张约 1MB，反复新分配会落在大对象堆里迟迟不回收。</summary>
+    public void Return() => System.Buffers.ArrayPool<byte>.Shared.Return(Bgra);
+}
 
 public static class WindowShadow
 {
@@ -56,7 +61,9 @@ public static class WindowShadow
             inY[j] = y > 0 && y < heightPx;
         }
 
-        var bgra = new byte[w * h * 4];
+        int size = w * h * 4;
+        var bgra = System.Buffers.ArrayPool<byte>.Shared.Rent(size);
+        Array.Clear(bgra, 0, size);
         for (int j = 0; j < h; j++)
             for (int i = 0; i < w; i++)
             {

@@ -83,7 +83,9 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
 
         void* d3d = null, context = null, dxgi = null;
         int fl;
-        if (Dcomp.D3D11CreateDevice(null, 1 /* 硬件 */, 0, 0x20 /* BGRA_SUPPORT */, null, 0, 7, &d3d, &fl, &context) >= 0)
+        // 用 WARP（软件光栅化）：阴影图只在注册时上传一次，用不着 GPU；硬件设备要加载显卡驱动，实测多 28MB 私有内存、126ms，WARP 只多 1.4MB、51ms。
+        // 只在持有 Gate 锁的 UI 线程上用，所以单线程设备即可
+        if (Dcomp.D3D11CreateDevice(null, 5 /* WARP */, 0, 0x20 | 0x1 /* BGRA_SUPPORT | SINGLETHREADED */, null, 0, 7, &d3d, &fl, &context) >= 0)
         {
             Guid dxgiIid = Dcomp.IID_IDXGIDevice;
             if (Dcomp.QueryInterface(d3d, &dxgiIid, &dxgi) < 0) dxgi = null;
@@ -516,7 +518,9 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         Shadow MakeShadow(ShadowStyle style)
         {
             var image = WindowShadow.Render(style, source.Width, source.Height, dpiScale);
-            if (backend.CreateShadowVisual(image, out nint v, out nint s) < 0) return default;
+            int created = backend.CreateShadowVisual(image, out nint v, out nint s);
+            image.Return();
+            if (created < 0) return default;
             Dcomp.AddVisual((void*)group, (void*)v); // 先加的在下面：阴影垫在缩略图下
             return new Shadow(v, s, image.Downscale, image.MarginPx);
         }

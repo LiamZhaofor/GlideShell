@@ -16,10 +16,17 @@ public static unsafe partial class ThumbnailSelfTest
     public static bool Run(bool shared, Action<string> log, bool fadeProbe = false)
     {
         SharedThumbnailBackend? backend = null;
+        string Mem()
+        {
+            using var p = System.Diagnostics.Process.GetCurrentProcess();
+            return $"私有 {p.PrivateMemorySize64 / 1048576.0:F1}MB / 工作集 {p.WorkingSet64 / 1048576.0:F1}MB";
+        }
         if (shared)
         {
+            log($"创建后端前：{Mem()}");
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             backend = SharedThumbnailBackend.TryCreate(out string status);
-            log(status);
+            log($"{status}（{System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:F0}ms）；创建后端后：{Mem()}");
             if (backend is null) return false;
         }
 
@@ -43,7 +50,9 @@ public static unsafe partial class ThumbnailSelfTest
                     log($"创建 DComp 目标失败 0x{hr:X8}");
                     return false;
                 }
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 layer = SharedThumbnailLayer.Register(backend, composition, dest.Handle, workArea, 1.0, windows, null, out hr);
+                log($"注册 1 个窗口（含两种阴影）{System.Diagnostics.Stopwatch.GetElapsedTime(t1).TotalMilliseconds:F0}ms；之后：{Mem()}");
                 if (layer is null)
                 {
                     log($"创建共享缩略图视觉失败 0x{hr:X8}");

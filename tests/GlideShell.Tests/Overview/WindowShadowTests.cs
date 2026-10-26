@@ -31,7 +31,7 @@ public class WindowShadowTests
     {
         var img = WindowShadow.Render(ShadowStyle.Inactive, 400, 300, 1.5, downscale: 4);
 
-        Assert.Equal(img.Width * img.Height * 4, img.Bgra.Length);
+        Assert.True(img.Bgra.Length >= img.Width * img.Height * 4); // 池里借的缓冲可能更长
         byte Alpha(double xPx, double yPx)
         {
             int i = (int)((xPx + img.MarginPx) / 4), j = (int)((yPx + img.MarginPx) / 4);
