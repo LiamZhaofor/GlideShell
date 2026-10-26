@@ -5,7 +5,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- P7 发布时改为 uiAccess="true"（需签名并安装到受保护目录） -->
+        <!-- 开发版不要 UIAccess：未签名、不在受保护目录的 uiAccess 程序无法启动。签名发布版用 app.uiaccess.manifest -->
         <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>

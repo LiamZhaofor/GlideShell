@@ -5,7 +5,8 @@
 .DESCRIPTION
   1. 正在运行的 GlideShell 正常退出（--quit，会还原系统手势）
   2. 再执行一次 --restore-native（崩溃残留的接管记录也会被还原；没有记录时什么也不做）
-  3. 删除开机启动项（只删指向本安装目录的那一项）、开始菜单快捷方式与安装目录
+  3. 删除开机启动项（只删指向安装目录的那一项）、开始菜单快捷方式与安装目录：
+     普通版 %LOCALAPPDATA%\Programs\GlideShell、UIAccess 版 %ProgramFiles%\GlideShell（删除要管理员权限，会弹一次 UAC）
   4. 指定 -Purge 时同时删除配置与日志
 
 .EXAMPLE
@@ -13,12 +14,19 @@
   pwsh build/uninstall.ps1 -Purge
 #>
 param(
-    [string]$Destination = (Join-Path $env:LOCALAPPDATA "Programs\GlideShell"),
-    [switch]$Purge
+    [string]$Destination,
+    [switch]$Purge,
+    [switch]$RemoveOnly # 内部：提权后的子进程只删目录
 )
 
 $ErrorActionPreference = "Stop"
-$target = Join-Path $Destination "GlideShell.exe"
+
+if ($RemoveOnly) {
+    Remove-Item -Recurse -Force $Destination
+    return
+}
+
+$dirs = if ($Destination) { @($Destination) } else { @((Join-Path $env:LOCALAPPDATA "Programs\GlideShell"), (Join-Path $env:ProgramFiles "GlideShell")) }
 
 # GlideShell.exe 是 GUI 子系统程序：PowerShell 的 & 不会等它结束，退出码要这样取
 function Invoke-GlideShell([string]$exe, [string]$argument) {
@@ -35,18 +43,18 @@ function Wait-Released([string]$path) {
     }
 }
 
-if (Test-Path $target) {
+$targets = $dirs | ForEach-Object { Join-Path $_ "GlideShell.exe" } | Where-Object { Test-Path $_ }
+if (-not $targets) { Write-Warning "没有找到已安装的 GlideShell，跳过退出与还原" }
+foreach ($target in $targets) {
     if ((Invoke-GlideShell $target "--quit") -ne 0) { throw "运行中的 GlideShell 没有在 10 秒内退出，请从托盘退出后重试" }
     if ((Invoke-GlideShell $target "--restore-native") -ne 0) { Write-Warning "系统手势还原未能校验通过（详见日志），可重启资源管理器或注销后再确认" }
     else { "系统手势：已确认为原生设置" }
     Wait-Released $target
-} else {
-    Write-Warning "$target 不存在，跳过退出与还原"
 }
 
 $run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $value = (Get-ItemProperty -Path $run -Name "GlideShell" -ErrorAction SilentlyContinue).GlideShell
-if ($value -and $value -like "*$target*") {
+if ($value -and ($dirs | Where-Object { $value -like "*$_*" })) {
     Remove-ItemProperty -Path $run -Name "GlideShell"
     "开机启动：已删除"
 }
@@ -57,9 +65,16 @@ if (Test-Path $lnk) {
     "开始菜单快捷方式：已删除"
 }
 
-if (Test-Path $Destination) {
-    Remove-Item -Recurse -Force $Destination
-    "安装目录：已删除 $Destination"
+foreach ($dir in $dirs | Where-Object { Test-Path $_ }) {
+    try {
+        Remove-Item -Recurse -Force $dir
+    } catch [UnauthorizedAccessException], [System.IO.IOException] {
+        # Program Files 下的 UIAccess 版要管理员权限才能删
+        $shell = (Get-Process -Id $PID).Path
+        Start-Process -FilePath $shell -Verb RunAs -Wait -ArgumentList @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-RemoveOnly", "-Destination", "`"$dir`"")
+    }
+    if (Test-Path $dir) { Write-Warning "没能删除 $dir" } else { "安装目录：已删除 $dir" }
 }
 
 if ($Purge) {

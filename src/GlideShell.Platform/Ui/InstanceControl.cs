@@ -8,11 +8,26 @@ namespace GlideShell.Platform.Ui;
 /// 或者打开设置窗口（再次启动 GlideShell 时，例如从开始菜单）。
 /// 请求是注册的窗口消息，发给运行实例 UI 线程的隐藏主窗口（单实例互斥保证只有一个）。
 /// </summary>
-public static unsafe class InstanceControl
+public static unsafe partial class InstanceControl
 {
     public static uint QuitMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Quit");
 
     public static uint ShowSettingsMessage { get; } = User32.RegisterWindowMessageW("GlideShell.ShowSettings");
+
+    /// <summary>
+    /// 运行实例调用：允许普通进程把这两条请求发给本窗口。UIAccess 版受 UIPI 保护，
+    /// 不放行的话安装 / 卸载脚本发出的 --quit、再次启动时的「打开设置」都会被系统丢掉。
+    /// </summary>
+    public static void AllowRequests(nint hwnd)
+    {
+        const uint MSGFLT_ALLOW = 1;
+        ChangeWindowMessageFilterEx(hwnd, QuitMessage, MSGFLT_ALLOW, null);
+        ChangeWindowMessageFilterEx(hwnd, ShowSettingsMessage, MSGFLT_ALLOW, null);
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool ChangeWindowMessageFilterEx(nint hwnd, uint message, uint action, void* changeFilterStruct);
 
     /// <summary>
     /// 让运行实例打开设置窗口。本进程是用户刚启动的、拥有前台权限，先把权限让给运行实例，

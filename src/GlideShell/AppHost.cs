@@ -96,6 +96,7 @@ internal sealed class AppHost
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
         _ui.SessionEnding += OnSessionEnding;
+        InstanceControl.AllowRequests(_ui.Handle);
         _ui.OnMessage(InstanceControl.ShowSettingsMessage, (_, _) =>
         {
             OpenSettings();
@@ -276,10 +277,12 @@ internal sealed class AppHost
     {
         try
         {
+            // 必须走 ShellExecute：UIAccess 版（签名、装在 Program Files）用 CreateProcess 启动自己会被拒绝（需要提升），
+            // ShellExecute 由系统的 AppInfo 服务处理 uiAccess，不弹 UAC。普通版两种方式都可以
             var psi = new ProcessStartInfo(_exePath, $"--watchdog {Environment.ProcessId}")
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
+                UseShellExecute = true,
+                WorkingDirectory = AppContext.BaseDirectory,
             };
             Process.Start(psi)?.Dispose();
         }

@@ -28,7 +28,14 @@ pwsh build\uninstall.ps1    # 退出、确认系统手势已还原、删除程�
 
 `pwsh build\package.ps1` 打出 `artifacts\GlideShell-<版本>-win-x64.zip`：解压后双击「安装.cmd」/「卸载.cmd」即可，不需要源码与 .NET SDK。
 
-两个脚本都不需要管理员权限（Windows PowerShell 5.1 也可以运行），重装即升级：运行中的 GlideShell 会先正常退出（`GlideShell.exe --quit`）。
+**UIAccess 版**（覆盖层能盖住开始菜单等系统界面，切换前台更可靠；只对这台电脑有效）：
+
+```powershell
+pwsh build\publish.ps1 -Aot -UIAccess   # NativeAOT（需要 MSVC）+ uiAccess 清单 + 本机自签名证书签名（首次会弹 UAC 信任证书）
+pwsh build\install.ps1 -UIAccess        # 装到 %ProgramFiles%\GlideShell（只有复制这一步弹 UAC，程序以普通权限运行）
+```
+
+普通版的两个脚本都不需要管理员权限（Windows PowerShell 5.1 也可以运行），重装即升级：运行中的 GlideShell 会先正常退出（`GlideShell.exe --quit`）。
 
 ## 使用
 
