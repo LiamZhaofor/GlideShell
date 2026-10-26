@@ -26,6 +26,8 @@ pwsh build\install.ps1      # 没有发布产物时会先发布；装到 %LOCALA
 pwsh build\uninstall.ps1    # 退出、确认系统手势已还原、删除程序（加 -Purge 连配置与日志一起删）
 ```
 
+`pwsh build\package.ps1` 打出 `artifacts\GlideShell-<版本>-win-x64.zip`：解压后双击「安装.cmd」/「卸载.cmd」即可，不需要源码与 .NET SDK。
+
 两个脚本都不需要管理员权限（Windows PowerShell 5.1 也可以运行），重装即升级：运行中的 GlideShell 会先正常退出（`GlideShell.exe --quit`）。
 
 ## 使用

@@ -26,8 +26,14 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 if (-not $Source) {
-    $Source = Join-Path $root "artifacts/publish/win-x64/GlideShell.exe"
-    if (-not (Test-Path $Source)) { & (Join-Path $PSScriptRoot "publish.ps1") }
+    # 发布包（package.ps1 打的 zip）里 exe 就在脚本旁边；在仓库里则用发布产物，没有就先发布
+    $beside = Join-Path $PSScriptRoot "GlideShell.exe"
+    if (Test-Path $beside) {
+        $Source = $beside
+    } else {
+        $Source = Join-Path $root "artifacts/publish/win-x64/GlideShell.exe"
+        if (-not (Test-Path $Source)) { & (Join-Path $PSScriptRoot "publish.ps1") }
+    }
 }
 if (-not (Test-Path $Source)) { throw "找不到 $Source" }
 

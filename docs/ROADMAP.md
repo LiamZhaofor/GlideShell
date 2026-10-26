@@ -167,7 +167,8 @@ legacy/
 - **开机启动**：HKCU Run。登录早期 Explorer 的设置缓存可能还没就绪：接管时 Refresh 失败就隔 3 / 6 / 9 / 12 秒重试（注册表已写好），都失败才弹提示。
 - **安装 / 卸载**：`build/install.ps1` 装到 `%LOCALAPPDATA%\Programs\GlideShell`（开始菜单、开机启动，无需管理员）；`build/uninstall.ps1` 退出实例、用 `--restore-native` 读回确认原生手势、删除启动项与文件（`-Purge` 连配置与日志）。重装即升级：`GlideShell.exe --quit` 通过注册的窗口消息让运行实例正常退出（会还原系统手势），脚本再等看门狗子进程放开文件。已实测覆盖安装（运行中的实例被正常退出后替换）与卸载。
 - **发布**：`build/publish.ps1` 产出自包含单文件（裁剪 + ReadyToRun）`GlideShell.exe` 14.0MB。代码已通过 NativeAOT / 裁剪分析（`IsAotCompatible`，警告即错误，JSON 全部源生成）。实测：启动约 0.15s 完成首次预热（38ms），常驻工作集 43MB / 私有 14.7MB，总览渲染 P95 6.1ms。
-- 还差：NativeAOT 产物（需要安装 MSVC，第 6 节）；代码签名与 UIAccess（需要证书，第 6 节）；正式安装包（MSIX / 安装程序，签名之后再做）。
+- **发布包**：`build/package.ps1` 打出 `artifacts/GlideShell-<版本>-win-x64.zip`（约 9MB：exe、安装 / 卸载脚本、双击用的「安装.cmd」「卸载.cmd」、使用说明），解压即可安装，不需要源码与 .NET SDK。已实测从解压目录安装 / 卸载。
+- 还差：NativeAOT 产物（需要安装 MSVC，第 6 节）；代码签名与 UIAccess（需要证书，第 6 节）；签名后可改做 MSIX。
 
 ## 5. P1 技术验证项
 
