@@ -2,10 +2,12 @@ using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Motion;
 using GlideShell.Core.Overview;
+using GlideShell.Platform.Desktops;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Native;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
+using GlideShell.Platform.VirtualDesktops;
 
 namespace GlideShell.Platform.Overview;
 
@@ -36,12 +38,23 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long? _activatedId; // UI 线程：本次会话收起时已经切到前台的窗口
     private long? _renderEmphasized; // 渲染线程：上一帧强调的窗口
     private readonly SharedThumbnailSource _shared;
+    private readonly VirtualDesktopService? _desktops;
+    private DesktopState _barState = DesktopState.Empty; // UI 线程：本次会话桌面条上的桌面
+    private List<OverviewWindow> _barWindows = []; // UI 线程：各桌面的窗口（Z 序），放大进入后交焦点用
+    private Guid? _switchTarget; // UI 线程：点了桌面条上的别的桌面，已经在下面切过去
+    private Guid? _switchPrevious;
+    private long _switchStartedMs;
+    private int _barHovered = -1; // UI 线程
+    private volatile bool _barShown; // 渲染线程决定、UI 线程重绘用
+    private volatile bool _barExpanded;
 
-    public OverviewPresenter(UiThread ui, Func<OverviewConfig> config, SharedThumbnailSource shared)
+    /// <param name="desktops">虚拟桌面服务；为 null 或自检不通过时没有桌面条。</param>
+    public OverviewPresenter(UiThread ui, Func<OverviewConfig> config, SharedThumbnailSource shared, VirtualDesktopService? desktops = null)
     {
         _ui = ui;
         _config = config;
         _shared = shared;
+        _desktops = desktops;
         _keys = new KeyboardHook(OnKey);
         _render = new RenderLoop(RenderFrame, stats => Log.Info($"总览渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
@@ -95,6 +108,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     public void Hide(long? focusWindowId) => _ui.Post(() =>
     {
         _keys.Uninstall();
+        if (_switchTarget is { } target)
+        {
+            HideAfterDesktopSwitch(target);
+            return;
+        }
         // 选中的窗口通常已经在收起开始时切到前台了（Closing）；没有的话现在切，并等它真正成为前台（激活由目标程序的线程处理）
         if (focusWindowId is { } id)
         {
@@ -126,9 +144,41 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         ReleaseScene();
     });
 
-    public void SwitchDesktop(int desktopIndex)
+    public void SwitchDesktop(int desktopIndex) => _ui.Post(() =>
     {
-        // 第三步接入：切换真实桌面
+        if (!_shown || _desktops is null || desktopIndex < 0 || desktopIndex >= _barState.Count) return;
+        var target = _barState.Desktops[desktopIndex];
+        _switchTarget = target;
+        _switchPrevious = _barState.Current;
+        _switchStartedMs = Environment.TickCount64;
+        foreach (var o in _overlays) o.BeginZoom(desktopIndex);
+        Select(-1);
+        _ = _desktops.SwitchToAsync(target).ContinueWith(t =>
+        {
+            if (t.Result < 0) Log.Warn($"总览桌面条：切换桌面失败 0x{t.Result:X8}");
+        }, TaskScheduler.Default);
+        Log.Info($"总览桌面条：切到桌面 {desktopIndex + 1}「{_barState.Names[desktopIndex]}」");
+    });
+
+    /// <summary>
+    /// 放大进入别的桌面落定：等真实桌面完全切好（一般早就切好了，动画约 0.3 秒），焦点交给它最上层的窗口，
+    /// 等两帧再撤层——最后一帧就是那个桌面的样子（壁纸、窗口、阴影），撤层无跳变。
+    /// </summary>
+    private void HideAfterDesktopSwitch(Guid target)
+    {
+        long deadline = Environment.TickCount64 + 400;
+        while (Environment.TickCount64 < deadline &&
+               (_desktops?.State.Current != target || !DesktopHandoff.CloakSettled(_barWindows, target, _switchPrevious)))
+            Dwmapi.DwmFlush();
+        string who = DesktopHandoff.ActivateTop(_barWindows, target);
+        Dwmapi.DwmFlush();
+        Dwmapi.DwmFlush();
+        foreach (var o in _overlays) o.HideOverlay();
+        Log.Info($"总览桌面条：撤层（点击后 {Environment.TickCount64 - _switchStartedMs}ms），焦点交给 {who}");
+        _switchTarget = null;
+        _switchPrevious = null;
+        _shown = false;
+        ReleaseScene();
     }
 
     /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
@@ -180,7 +230,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var windows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet());
         long t2 = HostClock.NowUs();
         int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
-        var scene = OverviewScene.Build(windows, monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale)).ToList(),
+        // 桌面条：有两个以上虚拟桌面才显示（每块屏一条，显示各桌面在这块屏上的样子）
+        var desktops = _desktops is { Available: true } ? _desktops.State : DesktopState.Empty;
+        bool bar = desktops.Count >= 2 && desktops.CurrentIndex >= 0;
+        var bars = monitors.Select(m => bar ? DesktopBarGeometry.Compute(m.WorkArea, desktops.Count, m.DpiScale) : null).ToList();
+        var scene = OverviewScene.Build(windows, monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, bars[m.Index])).ToList(),
             cfg.PrimaryMonitorOnly, primary);
         if (scene.Count > _rects.Length)
         {
@@ -202,10 +256,26 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             if (failure != 0) _shared.Disable(failure, "总览");
         }
         Controller.SetScene(scene);
-        _prepared = true;
+
+        // 桌面条里各桌面的窗口：跨桌面再枚举一次（最小化的不在桌面画面里）
         long t3 = HostClock.NowUs();
-        Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t3 - t0) / 1000.0:F1}ms" +
-                 $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}）");
+        _barState = bar ? desktops : DesktopState.Empty;
+        _barWindows = bar
+            ? WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true).Where(w => !w.IsMinimized).ToList()
+            : [];
+        nint foreground = User32.GetForegroundWindow();
+        foreach (var o in _overlays)
+        {
+            var mine = _barWindows.Where(w => w.MonitorIndex == o.Monitor.Index || w.Overlaps(o.Monitor.WorkArea)).ToList();
+            int failure = o.PrepareBar(bars[o.Monitor.Index], _barState, mine, foreground);
+            if (failure != 0) _shared.Disable(failure, "总览桌面条");
+        }
+        Controller.SetDesktops(bar ? new DesktopBarState(desktops.Names, desktops.CurrentIndex) : DesktopBarState.Empty);
+        _prepared = true;
+        long t4 = HostClock.NowUs();
+        Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t4 - t0) / 1000.0:F1}ms" +
+                 $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}" +
+                 (bar ? $" / 桌面条 {desktops.Count} 个桌面 {_barWindows.Count} 个窗口 {(t4 - t3) / 1000.0:F1}）" : "）"));
     }
 
     /// <summary>UI 线程：按某个进度把全部缩略图摆好（显示覆盖层之前用；用局部数组，不碰渲染线程的缓冲）。</summary>
@@ -230,6 +300,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _hoveredId = null;
         _raisedId = null;
         _activatedId = null;
+        _barHovered = -1;
         Controller.SetHovered(null);
     }
 
@@ -251,6 +322,25 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
     private void OnMouseMove(OverlayWindow overlay, double x, double y)
     {
+        // 桌面条：指针进入就展开，离开就收回；在条上时不选窗口
+        if (overlay.Bar is { } bar)
+        {
+            long now = HostClock.NowUs();
+            double e = Controller.BarExpansionAt(now);
+            bool inBar = bar.Contains(x, y, e);
+            Controller.SetBarHovered(inBar, now);
+            int desktop = inBar ? bar.HitTest(x, y, e) : -1;
+            if (desktop != _barHovered)
+            {
+                _barHovered = desktop;
+                UpdateDecorations();
+            }
+            if (inBar)
+            {
+                if (_hoveredId is not null) Select(-1);
+                return;
+            }
+        }
         var scene = Controller.Scene;
         int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
@@ -260,6 +350,17 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
     private void OnClick(OverlayWindow overlay, double x, double y)
     {
+        if (overlay.Bar is { } bar)
+        {
+            long now = HostClock.NowUs();
+            double e = Controller.BarExpansionAt(now);
+            if (bar.Contains(x, y, e))
+            {
+                int desktop = bar.HitTest(x, y, e);
+                if (desktop >= 0) Controller.GoToDesktop(desktop, now);
+                return; // 点在桌面条的空白处：什么也不做
+            }
+        }
         var scene = Controller.Scene;
         int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
@@ -345,7 +446,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         var scene = Controller.Scene;
         int hovered = _hoveredId is { } id ? scene.IndexOf(id) : -1;
-        foreach (var o in _overlays) o.SetDecorations(_labelsShown, hovered);
+        foreach (var o in _overlays)
+        {
+            o.SetDecorations(_labelsShown, hovered);
+            o.SetBarDecorations(_barShown, _barExpanded, _barHovered);
+        }
     }
 
     // ---------- 渲染线程 ----------
@@ -368,11 +473,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         OverviewController.WindowRects(scene, frame, rects.AsSpan(0, count), opacity.AsSpan(0, count));
         OverviewController.ActiveShadowWeights(scene, frame, active.AsSpan(0, count));
 
-        double wallpaper = 1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1);
+        double wallpaper = (1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1)) * (1 - Math.Clamp(frame.Zoom, 0, 1));
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
-            int hr = o.Layer.Apply(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper);
+            int hr = o.Render(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame);
             if (hr != 0 && !_applyErrorLogged)
             {
                 _applyErrorLogged = true; // 每次会话只记一次
@@ -380,10 +485,16 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             }
         }
 
-        bool labels = frame.LabelOpacity >= 0.5;
-        if (labels != _labelsShown)
+        // 窗口标题：展开完成才显示；桌面条展开（窗口区域在动）或放大进入别的桌面时不显示（GDI 文字跟不上逐帧变化）
+        bool steady = frame.ZoomDesktop < 0;
+        bool labels = frame.LabelOpacity >= 0.5 && frame.BarExpansion < 0.02 && steady;
+        bool barShown = frame.LabelOpacity >= 0.5 && steady;
+        bool barExpanded = frame.BarExpansion >= 0.5;
+        if (labels != _labelsShown || barShown != _barShown || barExpanded != _barExpanded)
         {
             _labelsShown = labels;
+            _barShown = barShown;
+            _barExpanded = barExpanded;
             _ui.Post(UpdateDecorations);
         }
         return frame.Visible;

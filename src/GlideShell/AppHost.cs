@@ -72,14 +72,14 @@ internal sealed class AppHost
         _ui = new UiThread();
         _foreground = new ForegroundMonitor();
         _sharedThumbnails = new SharedThumbnailSource(() => _config.Overview.SharedThumbnails);
-        _presenter = new OverviewPresenter(_ui, () => _config.Overview, _sharedThumbnails);
+        _virtualDesktops = VirtualDesktopService.Start(Log.Info); // 总览桌面条与四指切桌面共用
+        _presenter = new OverviewPresenter(_ui, () => _config.Overview, _sharedThumbnails, _virtualDesktops);
         _overview = new OverviewController(_presenter, () => _config.Overview);
         _presenter.Attach(_overview);
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
         _switcherPresenter = new SwitcherPresenter(_ui);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
-        _virtualDesktops = VirtualDesktopService.Start(Log.Info);
         _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops, _sharedThumbnails);
         _desktopSwitch = new DesktopSwitchController(_desktopPresenter, () => _config.Desktops);
         _desktopPresenter.Attach(_desktopSwitch);
@@ -183,6 +183,9 @@ internal sealed class AppHost
     /// </summary>
     private void StartSimulation(string name)
     {
+        // overview-bar：三指上滑展开总览，再（不动鼠标）展开桌面条、点相邻的桌面——验证桌面条与放大进入
+        bool bar = name == "overview-bar";
+        if (bar) name = "overview";
         if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
         {
             Log.Warn($"未知的模拟脚本 {name}，可用：{string.Join("、", SyntheticTouch.Scripts.Keys)}");
@@ -200,6 +203,20 @@ internal sealed class AppHost
                 _recognizer?.Process(ContactFrame.Create(now, now, contacts));
             }
             Log.Info($"模拟手势 {name} 回放完毕");
+            if (bar)
+            {
+                Thread.Sleep(700);
+                _ui.Post(() => _overview.SetBarHovered(true, HostClock.NowUs()));
+                Thread.Sleep(700);
+                Log.Info("模拟：桌面条已展开");
+                _ui.Post(() =>
+                {
+                    var d = _overview.Desktops;
+                    int target = d.Current == 0 ? 1 : d.Current - 1;
+                    Log.Info($"模拟：点桌面 {target + 1}（共 {d.Count} 个）");
+                    _overview.GoToDesktop(target, HostClock.NowUs());
+                });
+            }
             Thread.Sleep(1500);
             _ui.Quit();
         }) { IsBackground = true, Name = "GlideShell.Simulate" };

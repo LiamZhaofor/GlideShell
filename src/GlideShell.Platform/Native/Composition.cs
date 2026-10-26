@@ -62,6 +62,14 @@ internal static unsafe partial class Dcomp
     public static int SetTransform(void* visual, Matrix3x2* matrix) // D2D_MATRIX_3X2_F 与 Matrix3x2 布局相同
         => ((delegate* unmanaged[Stdcall]<void*, Matrix3x2*, int>)Vtbl(visual)[8])(visual, matrix);
     public static int SetContent(void* visual, void* content) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(visual)[15])(visual, content);
+    /// <summary>D2D_RECT_F：left / top / right / bottom。</summary>
+    public struct D2D_RECT_F
+    {
+        public float Left, Top, Right, Bottom;
+    }
+
+    /// <summary>矩形裁剪（视觉自己的坐标系里，随它的变换一起缩放）。头文件里 SetClip 的两个重载在 vtable 里倒序，矩形版在 14。</summary>
+    public static int SetClip(void* visual, D2D_RECT_F* rect) => ((delegate* unmanaged[Stdcall]<void*, D2D_RECT_F*, int>)Vtbl(visual)[14])(visual, rect);
     public static int SetBitmapInterpolationMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[11])(visual, mode);
     /// <summary>insertAbove=false 且 reference=null：加到兄弟的最上层。</summary>
     public static int AddVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, 0, null);

@@ -287,13 +287,38 @@ internal sealed unsafe class OverlayComposition : IDisposable
     }
 
     /// <summary>渲染线程：整体平移（不提交，随后由层的 Apply 或 <see cref="SharedThumbnailBackend.Commit"/> 一起生效）。</summary>
-    public void SetOffset(double x, double y)
+    public void SetOffset(double x, double y) => SetTransform(1, x, y);
+
+    /// <summary>渲染线程：整体等比缩放 <paramref name="scale"/> 再平移（不提交）。</summary>
+    public void SetTransform(double scale, double x, double y)
     {
         lock (_backend.Gate)
         {
             if (_root == null || _backend.Device == null) return;
-            var m = Matrix3x2.CreateTranslation((float)x, (float)y);
+            var m = new Matrix3x2((float)scale, 0, 0, (float)scale, (float)x, (float)y);
             Dcomp.SetTransform(_root, &m);
+        }
+    }
+
+    /// <summary>裁剪到自己坐标系里的 (0,0)–(width,height)（缩放后随之缩小）。</summary>
+    public void SetClip(double width, double height)
+    {
+        lock (_backend.Gate)
+        {
+            if (_root == null) return;
+            var r = new Dcomp.D2D_RECT_F { Right = (float)width, Bottom = (float)height };
+            Dcomp.SetClip(_root, &r);
+        }
+    }
+
+    /// <summary>分支：挪到兄弟的最上层（不提交）。</summary>
+    public void BringToFront()
+    {
+        lock (_backend.Gate)
+        {
+            if (_root == null || _parent == null) return;
+            Dcomp.RemoveVisual(_parent, _root);
+            Dcomp.AddVisual(_parent, _root);
         }
     }
 

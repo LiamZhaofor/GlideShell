@@ -194,7 +194,15 @@ internal static unsafe partial class User32
 internal static unsafe partial class Gdi32
 {
     public const int TRANSPARENT = 1;
-    public const int FW_NORMAL = 400;
+    public const int FW_NORMAL = 400, FW_SEMIBOLD = 600;
+    public const int NULL_PEN = 8;
+
+    [LibraryImport("gdi32.dll")]
+    public static partial nint GetStockObject(int index);
+
+    [LibraryImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool RoundRect(nint hdc, int left, int top, int right, int bottom, int width, int height);
 
     [LibraryImport("gdi32.dll")]
     public static partial nint CreateSolidBrush(uint color);

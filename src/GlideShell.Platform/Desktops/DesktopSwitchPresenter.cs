@@ -145,7 +145,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         long now = Environment.TickCount64;
         bool switched = _desktops.State.Current == target;
         if (switched && switchedMs < 0) switchedMs = now;
-        bool settled = switched && CloakSettled(target, previous);
+        bool settled = switched && DesktopHandoff.CloakSettled(_windows, target, previous);
         if (!settled && now - startedMs < HideWaitTimeoutMs)
         {
             _ui.PostDelayed(5, () => WaitForSwitchThenHide(target, previous, startedMs, switchedMs));
@@ -155,28 +155,10 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         else if (!settled) Log.Warn("等待窗口 cloak 状态切换超时，直接撤层");
         Log.Info($"切桌面撤层：切换通知 {(switchedMs < 0 ? -1 : switchedMs - startedMs)}ms，窗口到位 {now - startedMs}ms");
 
-        // 焦点交给新桌面 Z 序最上面的窗口；空桌面交给桌面本身，避免键盘输入打进旧桌面上看不见的窗口（S3）
-        var top = _windows.FirstOrDefault(w => w.DesktopId == target);
-        nint hwnd = top is not null ? (nint)top.Id : User32.FindWindowW("Progman", null);
-        if (!WindowActivator.Activate(hwnd)) Log.Warn($"切桌面后未能把焦点交给 {(top?.Title ?? "桌面")}");
+        DesktopHandoff.ActivateTop(_windows, target);
         Dwmapi.DwmFlush();
         Dwmapi.DwmFlush();
         HideNow();
-    }
-
-    /// <summary>新桌面的窗口都没有外壳 cloak、旧桌面的窗口都有（只看外壳那一位，应用自己的 cloak 不算）。</summary>
-    private unsafe bool CloakSettled(Guid target, Guid? previous)
-    {
-        const int DWM_CLOAKED_SHELL = 2;
-        foreach (var w in _windows)
-        {
-            if (w.DesktopId != target && w.DesktopId != previous) continue;
-            int cloaked = 0;
-            if (Dwmapi.DwmGetWindowAttribute((nint)w.Id, Dwmapi.DWMWA_CLOAKED, &cloaked, sizeof(int)) != 0) continue; // 窗口已关闭
-            bool shellCloaked = (cloaked & DWM_CLOAKED_SHELL) != 0;
-            if (w.DesktopId == target ? shellCloaked : !shellCloaked) return false;
-        }
-        return true;
     }
 
     private void HideNow()
