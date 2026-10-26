@@ -2,75 +2,101 @@
 
 > 让 Windows 触摸板手势真正跟手：手指走多少，画面走多少；停住就停住，反向就倒退，松手才决定去留。
 
-Windows 原生的多指手势大多是「识别到手势 → 播放一段固定动画」，不可交互、不跟手。GlideShell 直接读取精确式触摸板（PTP）的原始触点流，用自建的合成界面重做多任务交互：
+Windows 原生的多指手势大多是「识别到手势 → 播放一段固定动画」。GlideShell 直接读取精确式触摸板（PTP）的原始触点，用自己的合成界面重做多任务交互，体验对标 macOS 调度中心：
 
-- **三指上滑**：窗口从原位逐渐飞向总览布局，进度由手指位移连续驱动
-- **三指横滑**：跟手切换窗口
-- **四指横滑**：连续切换虚拟桌面
-- **物理反馈**：惯性、阻尼、弹簧回弹、可打断动画，松手按距离和速度决定完成或取消
-- **可定制**：手势映射、灵敏度、排除程序；三指轻点中键、三指拖移互不冲突
-- **轻量稳定**：不装内核驱动，开机启动、异常恢复、一键退回 Windows 原生手势
+- **三指上滑 · 窗口总览**：每个窗口从原位飞向总览布局，进度完全由手指位移驱动。停住，画面就停在半路；往回滑，画面就倒退。
+- **三指横滑 · 切换窗口**：窗口条随手指平移，松手吸附到最近的窗口并切到前台。
+- **四指横滑 · 切换虚拟桌面**：相邻桌面跟着手指滑入，没有起滑死区。到首尾桌面时有橡皮筋，切换结束时没有闪烁。
+- **macOS 式物理**：松手时按距离和速度决定完成还是取消，松手速度直接传给弹簧动画。动画随时可以被新手势接住。
+- **与系统一致的细节**：缩略图带有按真机校准的窗口阴影，收起总览的那一刻画面与真实桌面无缝衔接。
+- **可定制**：手势映射、灵敏度、排除程序、三指拖移。三指轻点（中键）始终交给系统。
+- **轻量、可退回**：
+  - 不装驱动，4.6MB 的原生程序，常驻私有内存约 13MB。
+  - 退出、暂停或崩溃时，自动把系统手势还原成你原来的设置。
 
-首发平台：Windows 11 + 精确式触摸板。
+## 系统要求
 
-## 当前状态
-
-**分层重建中，主要功能已有首个可运行版本**（分支 `glideshell/p0`）：三指上滑总览、三指横滑切换窗口、四指横滑切换虚拟桌面、三指拖移、托盘快捷设置、看门狗与一键回退、单文件发布。阈值目前是先验值，要等真机轨迹录制（S1）后再校准。
-
-旧原型 MissionFlow 已归档在 [`legacy/`](legacy/README.md)（基线 tag `missionflow-final`）。规划、接手评估、架构、各阶段实测结果与待定决策见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
+- Windows 11（在 24H2 / 26300 上开发与验证）
+- 精确式触摸板（设置 → 蓝牙和其他设备 → 触摸板里显示「你的电脑具有精确式触摸板」）
 
 ## 安装
 
-```powershell
-pwsh build\install.ps1      # 没有发布产物时会先发布；装到 %LOCALAPPDATA%\Programs\GlideShell，加开始菜单与开机启动
-pwsh build\uninstall.ps1    # 退出、确认系统手势已还原、删除程序（加 -Purge 连配置与日志一起删）
-```
+从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-1.0.0-win-x64.zip`，解压后双击 **安装.cmd**。
 
-`pwsh build\package.ps1` 打出 `artifacts\GlideShell-<版本>-win-x64.zip`：解压后双击「安装.cmd」/「卸载.cmd」即可，不需要源码与 .NET SDK。
+- 程序装到 `%LOCALAPPDATA%\Programs\GlideShell`，并添加开始菜单与开机启动，不需要管理员权限。
+- 卸载：双击 **卸载.cmd**。它会先退出程序、确认系统手势已还原，再删除程序。配置与日志会保留；要连同它们一起删除，运行 `uninstall.ps1 -Purge`。
+- 程序没有正式签名，第一次运行时 Windows 可能提示「无法验证发布者」。
 
-**UIAccess 版**（覆盖层能盖住开始菜单等系统界面，切换前台更可靠；只对这台电脑有效）：
-
-```powershell
-pwsh build\publish.ps1 -Aot -UIAccess   # NativeAOT（需要 MSVC）+ uiAccess 清单 + 本机自签名证书签名（首次会弹 UAC 信任证书）
-pwsh build\install.ps1 -UIAccess        # 装到 %ProgramFiles%\GlideShell（只有复制这一步弹 UAC，程序以普通权限运行）
-```
-
-普通版的两个脚本都不需要管理员权限（Windows PowerShell 5.1 也可以运行），重装即升级：运行中的 GlideShell 会先正常退出（`GlideShell.exe --quit`）。
+重装即升级：运行中的 GlideShell 会先正常退出，再被替换。
 
 ## 使用
 
-运行 `GlideShell.exe` 后常驻托盘。GlideShell 只接管它已实现的那几个系统手势，三指轻点（中键）等其余手势始终归系统；退出、暂停或进程崩溃时都会把系统手势还原成你原来的设置。
+运行后常驻在任务栏通知区域。GlideShell 只接管它实现了的那几个系统手势，其余手势照旧由 Windows 处理。
 
 | 手势 | 默认 | 开启「三指拖移」后 |
 |---|---|---|
 | 三指上 / 下滑 | 总览（跟手展开 / 收起） | 拖移 |
 | 三指左 / 右滑 | 切换窗口 | 拖移 |
-| 四指上 / 下滑 | 归系统 | 总览 |
+| 四指上 / 下滑 | 系统默认 | 总览 |
 | 四指左 / 右滑 | 切换虚拟桌面 | 切换虚拟桌面 |
-| 三指轻点 | 归系统（中键） | 归系统（中键） |
+| 三指轻点 | 系统默认（中键） | 系统默认（中键） |
 
-- **托盘菜单**：打开总览（也可按 Ctrl+Alt+O）；暂停（即退回 Windows 原生手势）；设置…；三指拖移；四指切桌面；灵敏度高 / 标准 / 低；不使用手势的程序（把最近的前台程序加进去，或逐个恢复）；全屏时暂停手势；开机启动；打开日志目录。
-- **设置窗口**：每个三指 / 四指手势做什么、灵敏度与行程、总览背景变暗、三指拖移速度、不使用手势的程序、开机启动。
-- **总览里**：点击窗口切过去；三指左右滑、方向键或 Tab（Shift+Tab 反向）移动选中的窗口，三指下滑或 Enter 切过去；Esc 收起。
-- **配置文件** `%APPDATA%\GlideShell\config.json`（可带注释，保存即生效，写错了会回退默认值并记日志）：手势映射、滑动阈值、各功能行程与弹簧参数、背景变暗、拖移速度、排除程序等，逐项说明见 [docs/CONFIG.md](docs/CONFIG.md)。
-- **日志** `%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
-- **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`；`GlideShell.exe --quit` 让运行中的实例正常退出。
+**总览里**
+- 点击窗口，或三指下滑 / Enter，切到选中的窗口；Esc 收起。
+- 三指左右滑、方向键或 Tab（Shift+Tab 反向）移动选中项。
+- Ctrl+Alt+O 也能打开总览。
 
-## 目录结构
+**托盘菜单**
+- 打开总览；暂停（立即退回 Windows 原生手势）；设置…
+- 三指拖移、四指切桌面开关；灵敏度高 / 标准 / 低。
+- 不使用手势的程序；全屏时暂停手势；开机启动；打开日志目录。
+
+**设置窗口**
+- 每个手势做什么。
+- 灵敏度与各功能的行程、总览背景变暗、拖移速度。
+- 排除程序、开机启动。
+
+**进阶**
+- **配置文件**：`%APPDATA%\GlideShell\config.json`（可带注释，保存即生效）。弹簧参数等不常用的选项也在这里，逐项说明见 [docs/CONFIG.md](docs/CONFIG.md)。
+- **日志**：`%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
+- **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`。`GlideShell.exe --quit` 可以让运行中的实例正常退出。
+
+## 性能（1.0.0，本机实测）
+
+测试机：Radeon 780M、2560×1600、150% 缩放、165Hz。
+
+| 项目 | 数值 |
+|---|---|
+| 程序大小 | 4.6MB（NativeAOT） |
+| 常驻内存 | 工作集约 50MB、私有约 13MB |
+| 总览 / 切桌面帧间隔 | P50 6.1ms / P95 6.2ms（跟满 165Hz） |
+| 输入到上屏 | 约 1 帧（按合成器时钟晚取样） |
+| 再次打开总览的预热 | 约 3–6ms |
+
+## 工作原理
 
 ```
-GlideShell.slnx
-src/
-  GlideShell.Core/       纯逻辑：手势识别、仲裁、物理、布局、交互模型（禁止 P/Invoke）
-  GlideShell.Platform/   Windows 实现：Raw Input、DWM、DirectComposition、虚拟桌面、注册表
-  GlideShell/            常驻宿主：托盘、线程编排、配置、控制器装配
-tests/GlideShell.Tests/  单元测试、轨迹回放测试、架构守卫测试
-tools/PtpProbe/          只读探针：打印报告描述符、录制与分析输入轨迹
-legacy/                  MissionFlow 旧原型（只读参考）
-docs/                    路线图与设计记录
+输入线程   Raw Input 读 PTP 原始触点（零分配解析，坐标换算成毫米，时间用硬件 ScanTime）
+    ↓
+纯逻辑     手势识别（只有抬指才决定）→ 手势映射与排除 → 总览 / 切换窗口 / 切桌面控制器 → 物理（速度、落点、弹簧）
+    ↓
+渲染线程   按显示器刷新取样，驱动 DirectComposition + DWM 实时缩略图
 ```
 
-## 构建
+- 覆盖层只显示画面，不抢焦点。真正切换前台窗口或虚拟桌面，都在覆盖层下面完成，结束时撤掉覆盖层，画面无缝衔接。
+- 接管系统手势时写注册表，并通知 Explorer 刷新设置缓存。接管前先落盘一份记录，看门狗进程在主进程意外退出时按这份记录还原。
+- 用到两个未公开接口：虚拟桌面 COM 和共享缩略图（dwmapi#147）。启动时都会自检，不通过就自动退回：把四指手势交还系统，或改用普通缩略图。
+
+设计、各阶段的实测结论和后续路线见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
+
+## 已知限制
+
+- 只在一台机器上完整验证过（单显示器、150% 缩放、ASUS 精确式触摸板），多显示器与其他缩放比例还需要更多验证。
+- 四指切桌面时，缩略图还没有窗口阴影，切换结束的那一刻可能看到阴影轻微出现。
+- 发布包是普通权限版。覆盖层盖不住开始菜单等系统界面；需要的话可以从源码构建 UIAccess 版（见下文）。
+- 还不支持 Windows 10。
+
+## 从源码构建
 
 需要 [.NET 10 SDK](https://dotnet.microsoft.com/download)。
 
@@ -78,33 +104,57 @@ docs/                    路线图与设计记录
 dotnet build GlideShell.slnx
 dotnet test GlideShell.slnx
 
-# 发布自包含单文件（裁剪 + ReadyToRun），产物在 artifacts\publish\win-x64\GlideShell.exe
-pwsh build\publish.ps1
-# 装有 MSVC（Visual Studio「使用 C++ 的桌面开发」）时可发布 NativeAOT
-pwsh build\publish.ps1 -Aot
-
-# 不碰触摸板，用合成手势演示：overview / switch / desktop-right 等，脚本列表见 SyntheticTouch
-dotnet run --project src\GlideShell -- --simulate overview
+pwsh build\publish.ps1                 # 自包含单文件 → artifacts\publish\win-x64\GlideShell.exe
+pwsh build\publish.ps1 -Aot            # NativeAOT（需要 Visual Studio「使用 C++ 的桌面开发」）
+pwsh build\package.ps1 -Aot            # 发布包 → artifacts\GlideShell-<版本>-win-x64.zip
+pwsh build\install.ps1                 # 安装到本机（没有发布产物时会先发布）
 ```
 
-诊断工具 `tools/PtpProbe`（只读）：
+**UIAccess 版**：覆盖层能盖住开始菜单等系统界面，切换前台也更可靠。它使用本机自签名证书，只对这台电脑有效。
 
 ```powershell
-dotnet run --project tools\PtpProbe                 # 报告描述符（触点槽数、TipSwitch/Confidence、物理尺寸）
-dotnet run --project tools\PtpProbe -- live         # 实时打印手势识别结果
-dotnet run --project tools\PtpProbe -- record       # 按场景录制输入轨迹（S1）
-dotnet run --project tools\PtpProbe -- analyze artifacts\traces\<时间>
-dotnet run --project tools\PtpProbe -- calibrate artifacts\traces\<时间>   # 由轨迹给出识别参数建议，按场景回放验证
-dotnet run --project tools\PtpProbe -- windows      # 窗口收录诊断
-dotnet run --project tools\PtpProbe -- native       # 系统手势：注册表值与 Explorer 生效值对照
-dotnet run --project tools\PtpProbe -- desktops     # 虚拟桌面接口自检
-dotnet run --project tools\PtpProbe -- thumbnails   # 缩略图后端自检（左下角显示约 1 秒测试小窗）
+pwsh build\publish.ps1 -Aot -UIAccess  # 首次会弹 UAC，信任本机证书
+pwsh build\install.ps1 -UIAccess       # 装到 %ProgramFiles%\GlideShell；只有复制这一步需要管理员权限
+```
+
+不碰触摸板，用合成手势演示：
+
+```powershell
+dotnet run --project src\GlideShell -- --simulate overview   # 还有 switch / desktop-right / desktop-left 等
+```
+
+### 诊断工具 `tools/PtpProbe`
+
+```powershell
+dotnet run --project tools\PtpProbe                         # 触摸板报告描述符（触点槽数、物理尺寸等）
+dotnet run --project tools\PtpProbe -- live                 # 实时打印手势识别结果
+dotnet run --project tools\PtpProbe -- record               # 按场景录制输入轨迹
+dotnet run --project tools\PtpProbe -- calibrate <轨迹目录>  # 由轨迹给出识别参数建议并回放验证
+dotnet run --project tools\PtpProbe -- windows              # 总览会收录哪些窗口
+dotnet run --project tools\PtpProbe -- native               # 系统手势：注册表值与 Explorer 生效值对照
+dotnet run --project tools\PtpProbe -- desktops             # 虚拟桌面接口自检
+dotnet run --project tools\PtpProbe -- thumbnails           # 缩略图后端自检
+dotnet run --project tools\PtpProbe -- thumbnails --shadow  # 自画阴影与系统真实阴影逐点对照
+```
+
+### 目录结构
+
+```
+src/
+  GlideShell.Core/       纯逻辑：手势识别、映射、物理、布局、交互控制器（不调用 Windows API，可回放测试）
+  GlideShell.Platform/   Windows 实现：Raw Input、DWM、DirectComposition、虚拟桌面、系统手势接管
+  GlideShell/            常驻程序：托盘、设置窗口、线程编排、配置
+tests/GlideShell.Tests/  单元测试、真机轨迹回放测试、架构守卫测试
+tools/PtpProbe/          诊断探针
+build/                   发布、打包、安装、证书脚本
+docs/                    路线图、配置说明、技术验证记录
+legacy/                  旧原型 MissionFlow（只读参考，tag missionflow-final）
 ```
 
 ## 致谢
 
-- [ClementGre/ThreeFingerDragOnWindows](https://github.com/ClementGre/ThreeFingerDragOnWindows)（MIT）— PTP 解析思路来自其 TouchpadHelper
-- [emoacht/RawInput.Touchpad](https://github.com/emoacht/RawInput.Touchpad)（MIT）— 上游的 Raw Input 触摸板读取方案
+- [ClementGre/ThreeFingerDragOnWindows](https://github.com/ClementGre/ThreeFingerDragOnWindows)（MIT）：PTP 解析思路来自它的 TouchpadHelper
+- [emoacht/RawInput.Touchpad](https://github.com/emoacht/RawInput.Touchpad)（MIT）：上游的 Raw Input 触摸板读取方案
 - 调研阶段参考了 GestureSign、TouchpadGestures_Advanced、windows-expose-clone、GNOME Shell workspace.js 等项目
 
 ## License

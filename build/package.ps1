@@ -4,22 +4,23 @@
 
 .DESCRIPTION
   包内容：
-    GlideShell.exe   自包含单文件（publish.ps1 的产物）
+    GlideShell.exe   publish.ps1 的产物（-Aot 时为 NativeAOT，约 4.6MB；否则为自包含单文件）
     安装.cmd / 卸载.cmd   双击入口（用 Windows PowerShell 5.1 绕过执行策略运行旁边的 ps1）
     install.ps1 / uninstall.ps1
     使用说明.txt
   程序尚未签名：下载的 zip 解压后，Windows 可能提示「无法验证发布者」，需要用户确认。
 
 .EXAMPLE
-  pwsh build/package.ps1
+  pwsh build/package.ps1 -Aot
 #>
 param(
-    [string]$Rid = "win-x64"
+    [string]$Rid = "win-x64",
+    [switch]$Aot
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-& (Join-Path $PSScriptRoot "publish.ps1") -Rid $Rid
+& (Join-Path $PSScriptRoot "publish.ps1") -Rid $Rid -Aot:$Aot
 
 $version = ([xml](Get-Content (Join-Path $root "Directory.Build.props"))).Project.PropertyGroup.Version
 $name = "GlideShell-$version-$Rid"
