@@ -40,4 +40,6 @@ public readonly record struct RectD(double X, double Y, double Width, double Hei
 
     public static RectD Union(RectD a, RectD b)
         => FromEdges(Math.Min(a.Left, b.Left), Math.Min(a.Top, b.Top), Math.Max(a.Right, b.Right), Math.Max(a.Bottom, b.Bottom));
+
+    public override string ToString() => $"({X:0.#},{Y:0.#} {Width:0.#}×{Height:0.#})";
 }

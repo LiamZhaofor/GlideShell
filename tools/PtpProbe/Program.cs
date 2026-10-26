@@ -13,6 +13,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   analyze     分析轨迹文件或目录，目录会额外输出 S1 结论草稿
 //   replay      把轨迹跑过 GlideShell.Core 的组帧器与手势识别器，打印识别结果（调参用）
 //   live        用 GlideShell.Platform 的输入线程实时识别，打印手势（真机验证 P2 管线）
+//   windows     列出显示器与总览会收录的窗口（及被排除的原因）
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -25,6 +26,7 @@ return command switch
     "analyze" when args.Length > 1 => Analyze(args[1]),
     "replay" when args.Length > 1 => Replay(args[1], args),
     "live" => Live(args),
+    "windows" => Windows(),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -41,6 +43,7 @@ static int Usage()
           PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]
                                            把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
           PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
+          PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -162,6 +165,25 @@ static int Live(string[] args)
     if (Console.IsInputRedirected) Thread.Sleep(1500); // 非交互运行（自检）时只跑一下就退出
     else Console.ReadLine();
     return 0;
+}
+
+static int Windows()
+{
+    var monitors = GlideShell.Platform.Shell.Monitors.Enumerate();
+    foreach (var m in monitors)
+        Console.WriteLine($"显示器 #{m.Index}{(m.IsPrimary ? "（主）" : "")}：{m.Bounds}，工作区 {m.WorkArea}，缩放 {m.DpiScale:P0}");
+    var rejected = new List<(string Window, string Reason)>();
+    var sw = Stopwatch.StartNew();
+    var windows = GlideShell.Platform.Shell.WindowCatalog.Snapshot(monitors, rejections: rejected);
+    Console.WriteLine($"收录 {windows.Count} 个窗口（枚举耗时 {sw.Elapsed.TotalMilliseconds:F1}ms）：");
+    foreach (var w in windows)
+        Console.WriteLine($"  ✓ {(w.IsForeground ? "[前台] " : "")}{(w.IsMinimized ? "[最小化] " : "")}{Short(w.Title)} — {w.ProcessName} @#{w.MonitorIndex} {w.Source}");
+    Console.WriteLine($"排除 {rejected.Count} 个（只列有标题的）：");
+    foreach (var (window, reason) in rejected.Where(r => !r.Window.StartsWith(" [", StringComparison.Ordinal)).Take(40))
+        Console.WriteLine($"  ✗ {Short(window)} — {reason}");
+    return 0;
+
+    static string Short(string s) => s.Length > 40 ? s[..40] + "…" : s;
 }
 
 static int SelfTest()

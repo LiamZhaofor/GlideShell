@@ -5,6 +5,8 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>GlideShell.Tools.PtpProbe</RootNamespace>
+    <!-- 与 GlideShell 一样 Per-Monitor V2：窗口与显示器坐标都按物理像素读取 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
