@@ -157,6 +157,8 @@ public class OverviewControllerTests
     {
         var (c, host) = Create();
         c.Toggle(0);
+        Assert.Equal(0, c.Sample(50_000).Progress); // 覆盖层显示出来之前不开始动画
+        c.OnShown(100_000);
         Assert.Equal(1, c.Sample(5_000_000).Progress);
         c.Toggle(5_000_000);
         Assert.Equal(0, c.Sample(10_000_000).Progress);

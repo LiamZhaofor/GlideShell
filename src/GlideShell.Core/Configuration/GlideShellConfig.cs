@@ -22,6 +22,9 @@ public sealed record OverviewConfig
     public SpringConfig Spring { get; init; } = new();
 
     public bool PrimaryMonitorOnly { get; init; }
+
+    /// <summary>展开后背景（桌面）变暗的程度：0 = 不变暗，1 = 全黑。</summary>
+    public double BackdropDim { get; init; } = 0.6;
 }
 
 public sealed record SwitcherConfig
@@ -125,6 +128,7 @@ public sealed record GlideShellConfig
             Overview = Overview with
             {
                 TravelMm = Clamp(Overview.TravelMm, 5, 100, "Overview.TravelMm"),
+                BackdropDim = Clamp(Overview.BackdropDim, 0, 1, "Overview.BackdropDim"),
                 Spring = FixSpring(Overview.Spring, "Overview.Spring"),
             },
             Switcher = Switcher with

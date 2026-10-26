@@ -61,6 +61,7 @@ public sealed class OverviewController : IGestureTarget
     private bool _tracking;
     private bool _ignoring;
     private bool _closingGesture;
+    private bool _openPending;
     private double _travelMm = 30;
     private double _valueAtBegin;
     private long? _hovered;
@@ -79,6 +80,9 @@ public sealed class OverviewController : IGestureTarget
     {
         get { lock (_gate) return _visible; }
     }
+
+    /// <summary>某时刻的进度（只读，不推进动画状态；UI 线程做命中测试用）。</summary>
+    public double ProgressAt(long hostUs) => _transition.Peek(hostUs);
 
     /// <summary>宿主预热完成后提供场景（整体替换）。</summary>
     public void SetScene(OverviewScene scene) => _scene = scene;
@@ -128,6 +132,7 @@ public sealed class OverviewController : IGestureTarget
             else
             {
                 _ignoring = false;
+                _openPending = false;
                 if (!_visible)
                 {
                     _visible = true;
@@ -197,18 +202,34 @@ public sealed class OverviewController : IGestureTarget
         bool show = false;
         lock (_gate)
         {
+            _focusTarget = null;
             if (!_visible)
             {
+                // 动画等覆盖层真正显示出来（OnShown）再开始，否则预热的那几十毫秒会吃掉动画开头
                 _visible = true;
+                _openPending = true;
                 show = true;
             }
-            _focusTarget = null;
-            _transition.AnimateTo(1, hostUs);
+            else
+            {
+                _transition.AnimateTo(1, hostUs);
+            }
         }
         if (show)
         {
             _host.Prewarm();
             _host.Show();
+        }
+    }
+
+    /// <summary>宿主在覆盖层真正显示出来后调用（UI 线程）。热键展开的动画从这一刻开始。</summary>
+    public void OnShown(long hostUs)
+    {
+        lock (_gate)
+        {
+            if (!_openPending) return;
+            _openPending = false;
+            _transition.AnimateTo(1, hostUs);
         }
     }
 

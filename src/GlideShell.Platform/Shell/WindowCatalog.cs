@@ -27,7 +27,6 @@ public static unsafe class WindowCatalog
         var handles = t_handles;
         t_handles = null;
 
-        var vdm = TryCreateVirtualDesktopManager();
         nint foreground = User32.GetForegroundWindow();
         var processNames = new Dictionary<uint, string>();
         var result = new List<OverviewWindow>();
@@ -35,19 +34,19 @@ public static unsafe class WindowCatalog
         foreach (nint hwnd in handles)
         {
             if (result.Count >= MaxWindows) break;
+
+            // 第一轮：只用本进程内的廉价查询过滤（绝大多数窗口在这里被排除）
+            bool visible = User32.IsWindowVisible(hwnd);
+            if (!visible && rejections is null) continue;
             string cls = ClassName(hwnd);
             long ex = User32.GetWindowLongPtrW(hwnd, User32.GWL_EXSTYLE);
             int cloaked = 0;
             Dwmapi.DwmGetWindowAttribute(hwnd, Dwmapi.DWMWA_CLOAKED, &cloaked, sizeof(int));
             bool minimized = User32.IsIconic(hwnd);
-            var monitor = minimized ? null : MonitorOf(User32.MonitorFromWindow(hwnd, User32.MONITOR_DEFAULTTONEAREST), monitors);
+            MonitorInfo? monitor = minimized ? null : MonitorOf(User32.MonitorFromWindow(hwnd, User32.MONITOR_DEFAULTTONEAREST), monitors);
             var bounds = minimized ? RestoreBounds(hwnd, monitors, out monitor) : VisibleBounds(hwnd);
-
-            bool? onCurrent = null;
-            if (vdm is not null && vdm.IsWindowOnCurrentVirtualDesktop(hwnd, out int on) == 0) onCurrent = on != 0;
-
             var probe = new WindowProbe(
-                Visible: User32.IsWindowVisible(hwnd),
+                Visible: visible,
                 ToolWindow: (ex & User32.WS_EX_TOOLWINDOW) != 0,
                 AppWindow: (ex & User32.WS_EX_APPWINDOW) != 0,
                 NoActivate: (ex & User32.WS_EX_NOACTIVATE) != 0,
@@ -57,8 +56,16 @@ public static unsafe class WindowCatalog
                 TitleLength: User32.GetWindowTextLengthW(hwnd),
                 Width: (int)bounds.Width,
                 Height: (int)bounds.Height,
-                OnCurrentDesktop: onCurrent,
+                OnCurrentDesktop: null,
                 IsOwnWindow: ownWindows?.Contains(hwnd) == true);
+
+            // 第二轮：只对候选窗口做跨进程的虚拟桌面查询（每次约几十微秒，逐个查 400 多个窗口要二十多毫秒）
+            if (WindowFilter.Reject(probe) is null && VirtualDesktops is { } vdm)
+            {
+                int hr = vdm.IsWindowOnCurrentVirtualDesktop(hwnd, out int on);
+                if (hr == 0) probe = probe with { OnCurrentDesktop = on != 0 };
+                else if (hr is RpcDisconnected or RpcServerUnavailable) s_vdmTried = false; // Explorer 重启过：下次重新连接
+            }
 
             if (WindowFilter.Reject(probe) is { } reason)
             {
@@ -146,6 +153,25 @@ public static unsafe class WindowCatalog
         foreach (var m in monitors)
             if (m.Handle == hmon) return m;
         return monitors.Count > 0 ? monitors[0] : null;
+    }
+
+    // 已文档化的虚拟桌面查询接口：创建一次、复用（只在 UI 线程上使用）
+    private const int RpcDisconnected = unchecked((int)0x80010108);
+    private const int RpcServerUnavailable = unchecked((int)0x800706BA);
+    private static IVirtualDesktopManager? s_vdm;
+    private static bool s_vdmTried;
+
+    private static IVirtualDesktopManager? VirtualDesktops
+    {
+        get
+        {
+            if (!s_vdmTried)
+            {
+                s_vdmTried = true;
+                s_vdm = TryCreateVirtualDesktopManager();
+            }
+            return s_vdm;
+        }
     }
 
     private static IVirtualDesktopManager? TryCreateVirtualDesktopManager()
