@@ -15,6 +15,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   live        用 GlideShell.Platform 的输入线程实时识别，打印手势（真机验证 P2 管线）
 //   windows     列出显示器与总览会收录的窗口（及被排除的原因）
 //   native      只读对照系统手势设置的注册表值与 Explorer 生效值，以及是否有未还原的接管记录
+//   desktops    只读：虚拟桌面接口自检结果、桌面列表与当前桌面
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -29,6 +30,7 @@ return command switch
     "live" => Live(args),
     "windows" => Windows(),
     "native" => Native(),
+    "desktops" => Desktops(),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -47,6 +49,7 @@ static int Usage()
           PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
           PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
+          PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -197,6 +200,17 @@ static int Native()
     foreach (var (name, reg, eff) in manager.Describe())
         Console.WriteLine($"{name,-26}{(reg?.ToString() ?? "（无）"),10}{(eff?.ToString() ?? "?"),10}{(reg is { } r && eff is { } e && r != e ? "   ← 不一致" : "")}");
     return 0;
+}
+
+static int Desktops()
+{
+    var sw = Stopwatch.StartNew();
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start(m => Console.WriteLine($"   [日志] {m}"));
+    Console.WriteLine($"自检：{(service.Available ? "通过" : "未通过")}（{service.Status}，{sw.Elapsed.TotalMilliseconds:F0}ms）");
+    var state = service.State;
+    for (int i = 0; i < state.Count; i++)
+        Console.WriteLine($"  {(i == state.CurrentIndex ? "▶" : " ")} 桌面 {i + 1}  {state.Desktops[i]}");
+    return service.Available ? 0 : 1;
 }
 
 static int SelfTest()
