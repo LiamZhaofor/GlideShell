@@ -9,6 +9,9 @@ namespace GlideShell.Platform.Ui;
 /// </summary>
 public sealed unsafe class UiThread : NativeWindow
 {
+    /// <summary>隐藏主窗口的类名（<see cref="InstanceControl"/> 按它找到运行实例）。</summary>
+    public const string WindowClass = "GlideShell.Ui";
+
     private const uint WM_DISPATCH = User32.WM_APP + 1;
 
     private readonly ConcurrentQueue<Action> _queue = new();
@@ -18,7 +21,7 @@ public sealed unsafe class UiThread : NativeWindow
     public UiThread()
     {
         _threadId = Environment.CurrentManagedThreadId;
-        Create("GlideShell.Ui", User32.WS_POPUP, User32.WS_EX_TOOLWINDOW_U, 0, 0, 0, 0);
+        Create(WindowClass, User32.WS_POPUP, User32.WS_EX_TOOLWINDOW_U, 0, 0, 0, 0);
     }
 
     public bool IsCurrentThread => Environment.CurrentManagedThreadId == _threadId;

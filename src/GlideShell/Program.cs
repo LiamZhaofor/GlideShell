@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.NativeGestures;
+using GlideShell.Platform.Ui;
 
 namespace GlideShell;
 
@@ -12,6 +13,8 @@ internal static class Program
         // 看门狗与紧急还原不受单实例限制
         if (args.Length >= 2 && args[0] == "--watchdog" && int.TryParse(args[1], out int pid)) return Watchdog(pid);
         if (args.Contains("--restore-native")) return RestoreNative();
+        // 安装 / 卸载脚本用：让运行中的实例正常退出（会还原系统手势），等它结束
+        if (args.Contains("--quit")) return InstanceControl.RequestQuit(TimeSpan.FromSeconds(10)) ? 0 : 4;
 
         using var instance = new Mutex(initiallyOwned: true, @"Local\GlideShell.Instance", out bool first);
         if (!first) return 1; // 已在运行

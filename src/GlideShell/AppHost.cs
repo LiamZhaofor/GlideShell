@@ -91,6 +91,12 @@ internal sealed class AppHost
         }
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
+        _ui.OnMessage(InstanceControl.QuitMessage, (_, _) =>
+        {
+            Log.Info("收到退出请求（--quit）");
+            _ui.Quit();
+            return 0;
+        });
         _hotkeys = new HotKeys(_ui);
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");

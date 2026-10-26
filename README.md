@@ -19,6 +19,15 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 
 旧原型 MissionFlow 已归档在 [`legacy/`](legacy/README.md)（基线 tag `missionflow-final`）。规划、接手评估、架构、各阶段实测结果与待定决策见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
 
+## 安装
+
+```powershell
+pwsh build\install.ps1      # 没有发布产物时会先发布；装到 %LOCALAPPDATA%\Programs\GlideShell，加开始菜单与开机启动
+pwsh build\uninstall.ps1    # 退出、确认系统手势已还原、删除程序（加 -Purge 连配置与日志一起删）
+```
+
+两个脚本都不需要管理员权限（Windows PowerShell 5.1 也可以运行），重装即升级：运行中的 GlideShell 会先正常退出（`GlideShell.exe --quit`）。
+
 ## 使用
 
 运行 `GlideShell.exe` 后常驻托盘。GlideShell 只接管它已实现的那几个系统手势，三指轻点（中键）等其余手势始终归系统；退出、暂停或进程崩溃时都会把系统手势还原成你原来的设置。
@@ -35,7 +44,7 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 - **总览里**：点击窗口切过去，Esc 收起，Enter 切到鼠标所指的窗口。
 - **配置文件** `%APPDATA%\GlideShell\config.json`（可带注释，保存即生效，写错了会回退默认值并记日志）：手势映射、滑动阈值、各功能行程与弹簧参数、背景变暗、拖移速度、排除程序等。
 - **日志** `%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
-- **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`。
+- **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`；`GlideShell.exe --quit` 让运行中的实例正常退出。
 
 ## 目录结构
 

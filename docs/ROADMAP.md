@@ -163,8 +163,9 @@ legacy/
 - **看门狗**：主进程启动一个 `--watchdog <pid>` 子进程；主进程非正常退出时按接管记录还原系统手势。实测：杀掉主进程后看门狗还原了全部 7 项，注册表与 Explorer 生效值对照无差异。
 - **一键回退**：托盘「暂停」即还原原生手势；`GlideShell.exe --restore-native` 是不依赖托盘的紧急还原；单实例互斥。
 - **开机启动**：HKCU Run。
+- **安装 / 卸载**：`build/install.ps1` 装到 `%LOCALAPPDATA%\Programs\GlideShell`（开始菜单、开机启动，无需管理员）；`build/uninstall.ps1` 退出实例、用 `--restore-native` 读回确认原生手势、删除启动项与文件（`-Purge` 连配置与日志）。重装即升级：`GlideShell.exe --quit` 通过注册的窗口消息让运行实例正常退出（会还原系统手势），脚本再等看门狗子进程放开文件。已实测覆盖安装（运行中的实例被正常退出后替换）与卸载。
 - **发布**：`build/publish.ps1` 产出自包含单文件（裁剪 + ReadyToRun）`GlideShell.exe` 14.0MB。代码已通过 NativeAOT / 裁剪分析（`IsAotCompatible`，警告即错误，JSON 全部源生成）。实测：启动约 0.15s 完成首次预热（38ms），常驻工作集 43MB / 私有 14.7MB，总览渲染 P95 6.1ms。
-- 还差：NativeAOT 产物（需要安装 MSVC，第 6 节）；代码签名与 UIAccess（需要证书，第 6 节）；安装包。
+- 还差：NativeAOT 产物（需要安装 MSVC，第 6 节）；代码签名与 UIAccess（需要证书，第 6 节）；正式安装包（MSIX / 安装程序，签名之后再做）。
 
 ## 5. P1 技术验证项
 

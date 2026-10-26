@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   发布 GlideShell：自包含单文件（裁剪 + ReadyToRun），装有 MSVC 时可改为 NativeAOT。
 
