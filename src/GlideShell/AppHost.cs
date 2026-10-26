@@ -340,31 +340,46 @@ internal sealed class AppHost
     {
         var cfg = _config;
         string? lastApp = _foreground?.Current.ProcessName is { Length: > 0 } name && !name.Equals("explorer", StringComparison.OrdinalIgnoreCase) ? name : null;
-        var items = new List<TrayMenuItem>
+        var sensitivity = SensitivityPresets
+            .Select(p => new TrayMenuItem(p.Label, () => UpdateConfig(p.Apply), Checked: p.Apply(cfg) == cfg))
+            .ToList();
+        string? current = SensitivityPresets.FirstOrDefault(p => p.Apply(cfg) == cfg).Label;
+
+        // 不使用手势的程序：最近的前台程序可一键加入；已排除的逐个点击即恢复
+        var excluded = new List<TrayMenuItem>();
+        if (lastApp is not null && !cfg.IsExcluded(lastApp))
+            excluded.Add(new($"在 {lastApp} 中不使用手势", () => UpdateConfig(c => c with { ExcludedProcesses = [.. c.ExcludedProcesses, lastApp] })));
+        if (cfg.ExcludedProcesses.Count > 0)
         {
+            if (excluded.Count > 0) excluded.Add(TrayMenuItem.Separator);
+            foreach (string app in cfg.ExcludedProcesses)
+                excluded.Add(new(app, () => UpdateConfig(c => c with
+                {
+                    ExcludedProcesses = c.ExcludedProcesses.Where(p => !p.Equals(app, StringComparison.OrdinalIgnoreCase)).ToList(),
+                }), Checked: true));
+            excluded.Add(TrayMenuItem.Separator);
+            excluded.Add(new("全部恢复", () => UpdateConfig(c => c with { ExcludedProcesses = [] })));
+        }
+        if (excluded.Count == 0) excluded.Add(new("（没有）", Enabled: false));
+
+        return
+        [
             new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
             new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
             TrayMenuItem.Separator,
             new("三指拖移（总览、切桌面改为四指）", () => UpdateConfig(c => c with { ThreeFingerDrag = !c.ThreeFingerDrag }), Checked: cfg.ThreeFingerDrag),
             new("四指横滑切换虚拟桌面", () => UpdateConfig(c => c with { Desktops = c.Desktops with { Enabled = !c.Desktops.Enabled } }),
                 Checked: cfg.Desktops.Enabled, Enabled: _virtualDesktops.Available),
-        };
-        foreach (var (label, preset) in SensitivityPresets)
-            items.Add(new($"灵敏度：{label}", () => UpdateConfig(preset), Checked: preset(cfg) == cfg));
-        items.Add(TrayMenuItem.Separator);
-        if (lastApp is not null && !cfg.IsExcluded(lastApp))
-            items.Add(new($"在 {lastApp} 中不使用手势", () => UpdateConfig(c => c with { ExcludedProcesses = [.. c.ExcludedProcesses, lastApp] })));
-        if (cfg.ExcludedProcesses.Count > 0)
-            items.Add(new($"恢复在全部程序中使用手势（已排除 {cfg.ExcludedProcesses.Count} 个）", () => UpdateConfig(c => c with { ExcludedProcesses = [] })));
-        items.AddRange(
-        [
+            new(current is null ? "灵敏度：自定义" : $"灵敏度：{current}", Children: sensitivity),
+            new(cfg.ExcludedProcesses.Count > 0 ? $"不使用手势的程序（{cfg.ExcludedProcesses.Count}）" : "不使用手势的程序", Children: excluded),
+            new("全屏时暂停手势", () => UpdateConfig(c => c with { PauseInFullscreen = !c.PauseInFullscreen }), Checked: cfg.PauseInFullscreen),
+            TrayMenuItem.Separator,
             new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
-            new("打开配置文件", () => OpenPath(ConfigStore.DefaultPath)),
+            new("打开配置文件（高级设置）", () => OpenPath(ConfigStore.DefaultPath)),
             new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
             TrayMenuItem.Separator,
             new("退出", () => _ui.Quit()),
-        ]);
-        return items;
+        ];
     }
 
     /// <summary>灵敏度预设：同时调整滑动阈值和各动作的行程（越灵敏，手指走得越短）。</summary>

@@ -2,8 +2,9 @@ using GlideShell.Platform.Native;
 
 namespace GlideShell.Platform.Ui;
 
-/// <summary>托盘菜单项。<see cref="Text"/> 为 null 表示分隔线。</summary>
-public sealed record TrayMenuItem(string? Text, Action? OnClick = null, bool Checked = false, bool Enabled = true)
+/// <summary>托盘菜单项。<see cref="Text"/> 为 null 表示分隔线；有 <see cref="Children"/> 时是子菜单（自身不可点击）。</summary>
+public sealed record TrayMenuItem(string? Text, Action? OnClick = null, bool Checked = false, bool Enabled = true,
+    IReadOnlyList<TrayMenuItem>? Children = null)
 {
     public static TrayMenuItem Separator { get; } = new((string?)null);
 }
@@ -105,30 +106,42 @@ public sealed unsafe class TrayIcon : IDisposable
 
     private void ShowMenu(int x, int y)
     {
-        var items = _menu();
-        nint menu = User32.CreatePopupMenu();
+        var commands = new List<TrayMenuItem>(); // 命令 ID = 下标 + 1
+        nint menu = Build(_menu(), commands);
         try
         {
-            for (int i = 0; i < items.Count; i++)
-            {
-                var it = items[i];
-                if (it.Text is null) User32.AppendMenuW(menu, User32.MF_SEPARATOR, 0, null);
-                else
-                {
-                    uint flags = User32.MF_STRING | (it.Checked ? User32.MF_CHECKED : 0) | (it.Enabled ? 0 : User32.MF_GRAYED);
-                    User32.AppendMenuW(menu, flags, (nuint)(i + 1), it.Text);
-                }
-            }
             // 弹出菜单前必须让本窗口成为前台，否则点菜单外面菜单不会消失（Win32 文档的要求）
             User32.SetForegroundWindow(_ui.Handle);
             int cmd = User32.TrackPopupMenuEx(menu, User32.TPM_RIGHTBUTTON | User32.TPM_RETURNCMD | User32.TPM_NONOTIFY, x, y, _ui.Handle, 0);
             User32.PostMessageW(_ui.Handle, User32.WM_NULL, 0, 0);
-            if (cmd > 0 && cmd <= items.Count) items[cmd - 1].OnClick?.Invoke();
+            if (cmd > 0 && cmd <= commands.Count) commands[cmd - 1].OnClick?.Invoke();
         }
         finally
         {
-            User32.DestroyMenu(menu);
+            User32.DestroyMenu(menu); // 连同挂在上面的子菜单一起销毁
         }
+    }
+
+    private static nint Build(IReadOnlyList<TrayMenuItem> items, List<TrayMenuItem> commands)
+    {
+        nint menu = User32.CreatePopupMenu();
+        foreach (var it in items)
+        {
+            if (it.Text is null)
+            {
+                User32.AppendMenuW(menu, User32.MF_SEPARATOR, 0, null);
+                continue;
+            }
+            uint flags = User32.MF_STRING | (it.Checked ? User32.MF_CHECKED : 0) | (it.Enabled ? 0 : User32.MF_GRAYED);
+            if (it.Children is { Count: > 0 } children)
+            {
+                User32.AppendMenuW(menu, flags | User32.MF_POPUP, (nuint)Build(children, commands), it.Text);
+                continue;
+            }
+            commands.Add(it);
+            User32.AppendMenuW(menu, flags, (nuint)commands.Count, it.Text);
+        }
+        return menu;
     }
 }
 
