@@ -86,44 +86,9 @@ public class RecordedTraceTests
         foreach (var file in files.Order(StringComparer.Ordinal))
         {
             var trace = PtpTrace.Load(file);
-            var events = new List<GestureEvent>();
-            var recognizer = new GestureRecognizer(new GestureSettings(), events.Add);
-            trace.Replay(new FrameAssembler(trace.Header.Device.ToGeometry(), recognizer.Process));
-            string? problem = Check(trace.Header.Scenario, events);
+            string? problem = ScenarioExpectations.Check(trace.Header.Scenario, ScenarioExpectations.Recognize(trace, new GestureSettings()));
             if (problem is not null) failures.Add($"{Path.GetFileName(file)}（{trace.Header.Scenario}）：{problem}");
         }
         Assert.True(failures.Count == 0, string.Join("\n", failures));
     }
-
-    private static string? Check(string scenario, List<GestureEvent> events)
-    {
-        var swipes = events.Where(e => e.Kind == GestureKind.Swipe && e.Phase == GesturePhase.Ended).ToList();
-        var taps = events.Where(e => e.Kind == GestureKind.Tap).ToList();
-        if (events.Any(e => e.Phase == GesturePhase.Cancelled)) return "出现了 Cancelled（正常录制里不应该有）";
-
-        string? Expect(bool ok, string message) => ok ? null : $"{message}；实际 滑动 {Describe(swipes)}，轻点 {taps.Count} 次";
-        bool All(int fingers, params GestureDirection[] dirs) => swipes.All(s => s.Fingers >= fingers && dirs.Contains(s.Direction));
-
-        return scenario switch
-        {
-            "three-up-release" => Expect(swipes.Count >= 3 && All(3, GestureDirection.Up), "应有 ≥3 次三指上滑"),
-            "three-up-hold" => Expect(swipes.Count >= 3 && All(3, GestureDirection.Up) && swipes.All(s => Math.Abs(s.AlongVelocityMmS) < 30),
-                "应有 ≥3 次三指上滑，且停住后松手速度 < 30mm/s"),
-            "three-flick-up" => Expect(swipes.Count >= 3 && All(3, GestureDirection.Up) && swipes.All(s => s.AlongVelocityMmS > 150),
-                "应有 ≥3 次三指上甩，松手速度 > 150mm/s"),
-            "three-down" => Expect(swipes.Count >= 3 && All(3, GestureDirection.Down), "应有 ≥3 次三指下滑"),
-            "three-horizontal" => Expect(swipes.Count >= 4 && All(3, GestureDirection.Left, GestureDirection.Right), "应有 ≥4 次三指横滑"),
-            "three-tap" => Expect(taps.Count >= 4 && swipes.Count == 0, "应有 ≥4 次三指轻点、没有滑动"),
-            "three-reverse" => Expect(swipes.Count >= 2 && All(3, GestureDirection.Up), "应有 ≥2 次三指上滑（含反向）"),
-            "staggered-landing" => Expect(swipes.Count >= 2 && swipes.All(s => s.Fingers == 3), "应有 ≥2 次三指滑动"),
-            "finger-change" => Expect(swipes.Count >= 2, "应有 ≥2 次滑动且不中断"),
-            "four-up" => Expect(swipes.Count >= 2 && All(4, GestureDirection.Up), "应有 ≥2 次四指上滑"),
-            "four-horizontal" => Expect(swipes.Count >= 2 && All(4, GestureDirection.Left, GestureDirection.Right), "应有 ≥2 次四指横滑"),
-            "two-scroll" or "palm" or "warmup" => Expect(swipes.Count == 0 && taps.Count == 0, "不应识别出任何三指以上手势"),
-            _ => null,
-        };
-    }
-
-    private static string Describe(List<GestureEvent> swipes)
-        => swipes.Count == 0 ? "0 次" : string.Join(" ", swipes.Select(s => $"{s.Fingers}指{s.Direction}({s.AlongMm:F0}mm,{s.AlongVelocityMmS:F0}mm/s)"));
 }

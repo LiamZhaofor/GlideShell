@@ -85,6 +85,7 @@ dotnet run --project tools\PtpProbe                 # 报告描述符（触点�
 dotnet run --project tools\PtpProbe -- live         # 实时打印手势识别结果
 dotnet run --project tools\PtpProbe -- record       # 按场景录制输入轨迹（S1）
 dotnet run --project tools\PtpProbe -- analyze artifacts\traces\<时间>
+dotnet run --project tools\PtpProbe -- calibrate artifacts\traces\<时间>   # 由轨迹给出识别参数建议，按场景回放验证
 dotnet run --project tools\PtpProbe -- windows      # 窗口收录诊断
 dotnet run --project tools\PtpProbe -- native       # 系统手势：注册表值与 Explorer 生效值对照
 dotnet run --project tools\PtpProbe -- desktops     # 虚拟桌面接口自检

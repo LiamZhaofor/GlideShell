@@ -12,6 +12,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   record      按场景引导录制轨迹（JSON Lines），见 Scenarios.cs
 //   analyze     分析轨迹文件或目录，目录会额外输出 S1 结论草稿
 //   replay      把轨迹跑过 GlideShell.Core 的组帧器与手势识别器，打印识别结果（调参用）
+//   calibrate   S1 校准：从轨迹量出轻点 / 落指特征，给出识别参数建议，并按场景回放对比当前参数与建议参数
 //   live        用 GlideShell.Platform 的输入线程实时识别，打印手势（真机验证 P2 管线）
 //   windows     列出显示器与总览会收录的窗口（及被排除的原因）
 //   native      只读对照系统手势设置的注册表值与 Explorer 生效值，以及是否有未还原的接管记录
@@ -27,6 +28,7 @@ return command switch
     "record" => Recorder.Run(Option(args, "--out"), SelectScenarios(Option(args, "--only"))),
     "analyze" when args.Length > 1 => Analyze(args[1]),
     "replay" when args.Length > 1 => Replay(args[1], args),
+    "calibrate" when args.Length > 1 => Calibrate(args[1], args.Contains("--apply"), args.Contains("--fixtures")),
     "live" => Live(args),
     "windows" => Windows(),
     "native" => Native(),
@@ -47,6 +49,9 @@ static int Usage()
           PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]
                                            把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
           PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
+          PtpProbe calibrate <目录> [--apply] [--fixtures]
+                                           S1 校准：给出识别参数建议并按场景回放验证；--apply 写进 GlideShell 配置，
+                                           --fixtures 把轨迹复制到 tests/GlideShell.Tests/Traces 作为回放测试夹具
           PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
@@ -155,6 +160,78 @@ static int Replay(string path, string[] args)
         trace.Replay(new FrameAssembler(trace.Header.Device.ToGeometry(), recognizer.Process));
     }
     return 0;
+}
+
+static int Calibrate(string dir, bool apply, bool fixtures)
+{
+    var files = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.jsonl").Order(StringComparer.Ordinal).ToList() : [];
+    if (files.Count == 0)
+    {
+        Console.Error.WriteLine($"{dir} 里没有轨迹文件（先运行 PtpProbe record）");
+        return 1;
+    }
+    var traces = files.Select(f => (File: f, Trace: PtpTrace.Load(f))).ToList();
+    var configPath = GlideShell.Core.Configuration.ConfigStore.DefaultPath;
+    var (config, _) = GlideShell.Core.Configuration.ConfigStore.Load(configPath);
+    var current = config.Recognition;
+
+    var stats = GlideShell.Core.Tracing.Calibration.Measure(traces.Select(t => t.Trace));
+    var (suggested, notes) = GlideShell.Core.Tracing.Calibration.Suggest(stats, current);
+    Console.WriteLine($"== 量得：轻点 {stats.TapDurationsMs.Count} 次，落指 {stats.LandingSpreadsMs.Count} 次");
+    if (notes.Count == 0) Console.WriteLine("   数据不足（需要 three-tap 与三指滑动场景），保持当前参数。");
+    foreach (var n in notes)
+        Console.WriteLine($"   {n.Parameter,-18} {n.Current,6:0.##} → {n.Suggested,6:0.##}   依据：{n.Reason}");
+
+    Console.WriteLine();
+    Console.WriteLine($"== 按场景回放（当前 / 建议）");
+    int passCurrent = 0, passSuggested = 0;
+    foreach (var (file, trace) in traces)
+    {
+        string scenario = trace.Header.Scenario;
+        string? a = GlideShell.Core.Tracing.ScenarioExpectations.Check(scenario, GlideShell.Core.Tracing.ScenarioExpectations.Recognize(trace, current));
+        string? b = GlideShell.Core.Tracing.ScenarioExpectations.Check(scenario, GlideShell.Core.Tracing.ScenarioExpectations.Recognize(trace, suggested));
+        if (a is null) passCurrent++;
+        if (b is null) passSuggested++;
+        Console.WriteLine($"   {(a is null ? "✓" : "✗")} {(b is null ? "✓" : "✗")}  {scenario,-18} {Path.GetFileName(file)}");
+        if (a is not null) Console.WriteLine($"         当前：{a}");
+        if (b is not null) Console.WriteLine($"         建议：{b}");
+    }
+    Console.WriteLine($"   通过：当前 {passCurrent}/{traces.Count}，建议 {passSuggested}/{traces.Count}");
+
+    bool better = passSuggested >= passCurrent && notes.Count > 0;
+    Console.WriteLine();
+    Console.WriteLine(better ? "== 建议写进配置的 recognition（其余字段保持不变）：" : "== 建议参数没有更好，保留当前参数。");
+    if (better)
+        Console.WriteLine($"   \"slopMm\": {suggested.SlopMm}, \"fingerSettleMs\": {suggested.FingerSettleMs}, " +
+                          $"\"tapMaxDurationMs\": {suggested.TapMaxDurationMs}, \"tapMaxMoveMm\": {suggested.TapMaxMoveMm}");
+
+    if (apply && better)
+    {
+        var (updated, problems) = (config with { Recognition = suggested }).Sanitize();
+        foreach (var p in problems) Console.WriteLine($"   配置：{p}");
+        GlideShell.Core.Configuration.ConfigStore.Save(updated, configPath);
+        Console.WriteLine($"   已写入 {configPath}（运行中的 GlideShell 会自动重载）");
+    }
+    if (fixtures)
+    {
+        string? root = FindRepoRoot();
+        if (root is null) Console.Error.WriteLine("找不到仓库根目录（GlideShell.slnx），没有复制夹具");
+        else
+        {
+            string target = Path.Combine(root, "tests", "GlideShell.Tests", "Traces");
+            Directory.CreateDirectory(target);
+            foreach (var (file, _) in traces) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), overwrite: true);
+            Console.WriteLine($"   已复制 {traces.Count} 个轨迹到 {target}（dotnet test 会按场景回放它们）");
+        }
+    }
+    return passSuggested == traces.Count || passCurrent == traces.Count ? 0 : 3;
+
+    static string? FindRepoRoot()
+    {
+        for (var d = new DirectoryInfo(Environment.CurrentDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "GlideShell.slnx"))) return d.FullName;
+        return null;
+    }
 }
 
 static int Live(string[] args)

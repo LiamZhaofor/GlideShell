@@ -178,6 +178,8 @@ legacy/
   - `record`：专用输入线程 + 消息窗口（RIDEV_INPUTSINK），逐份记录每个触点槽的 ContactId、TipSwitch、Confidence、X/Y，以及 ScanTime、ContactCount、物理按键和到达时刻。按 14 个场景引导，每个场景一个 JSON Lines 文件，默认写到 `artifacts/traces/<时间>/`（已被 git 忽略）。
   - `analyze <目录>`：逐文件统计报告率、成批到达、触摸段（指数变化、落指错开、位移、速度、段内空档、结束方式），并归并成「S1 结论草稿」。
   - `selftest`：注入 1 像素鼠标移动验证消息窗口能收到 WM_INPUT（本机已通过）。
+  - `calibrate <目录> [--apply] [--fixtures]`：从轨迹量出轻点时长 / 抖动、落指错开时间，推出 `SlopMm`、`FingerSettleMs`、`TapMaxDurationMs`、`TapMaxMoveMm` 的建议值（在实测最大值上留余量），再把每个场景按当前参数和建议参数各回放一遍、按场景期望判定（`Core/Tracing/ScenarioExpectations`，与回放测试共用），建议参数不更差才推荐；`--apply` 写进配置，`--fixtures` 把轨迹复制成回放测试夹具。已用合成轨迹验证（280ms 的轻点：当前参数漏判，建议参数 4/4 通过）。
+  - 录完之后的流程：`PtpProbe calibrate artifacts\traces\<时间> --fixtures` → 看回放对比 → 把建议值改成 `GestureSettings` 的默认值并提交夹具。
   - 分析逻辑已用合成轨迹验证：分段、ScanTime 回绕、静止空档、触点 ID 复用下的抬指判定。
 - 场景（`PtpProbe scenarios` 可列出）：单指自检、三指上滑后抬起、三指上滑后停住、三指快甩、三指中途反向、三指下滑、三指横滑、三指轻点、三↔四指切换、手指依次落下、四指上滑、四指横滑、两指滚动、手掌误触。
 - 要回答的问题：抬指是否总有 TipSwitch=0 的报文？按住不动时设备是否停发？报告率与成批到达？轻点与滑动的区分阈值？落指错开多久？手掌误触时 Confidence 的表现？
