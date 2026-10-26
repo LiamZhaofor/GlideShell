@@ -102,7 +102,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         string? captures = ScreenCapture.EnabledDirectory("capture-dismiss");
         string stamp = DateTime.Now.ToString("HHmmss-fff");
         if (captures is not null) ScreenCapture.Save(Path.Combine(captures, $"{stamp}-1-before.bmp"));
-        foreach (var o in _overlays) o.HideOverlay();
+        // 交叉淡出撤层：缩略图没有窗口阴影、激活的程序还要重绘，直接撤层这些差异会一下子出现
+        OverlayFade.FadeOutThenHide(_overlays.Where(o => o.IsShown).Select(o => o.Handle).ToList(), () =>
+        {
+            foreach (var o in _overlays) o.HideOverlay();
+        });
         _shown = false;
         ReleaseScene();
         if (captures is not null)

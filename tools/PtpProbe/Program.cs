@@ -34,7 +34,7 @@ return command switch
     "windows" => Windows(),
     "native" => Native(),
     "desktops" => Desktops(),
-    "thumbnails" => Thumbnails(!args.Contains("--classic")),
+    "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -293,9 +293,9 @@ static int Desktops()
     return service.Available ? 0 : 1;
 }
 
-static int Thumbnails(bool shared)
+static int Thumbnails(bool shared, bool fade)
 {
-    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.Run(shared, m => Console.WriteLine($"   {m}"));
+    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.Run(shared, m => Console.WriteLine($"   {m}"), fade);
     Console.WriteLine($"{(shared ? "共享缩略图视觉" : "经典缩略图")}：{(ok ? "通过" : "未通过")}");
     return ok ? 0 : 1;
 }

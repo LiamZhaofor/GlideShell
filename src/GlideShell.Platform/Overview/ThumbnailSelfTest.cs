@@ -13,7 +13,7 @@ public static unsafe partial class ThumbnailSelfTest
 {
     private const int W = 320, H = 200;
 
-    public static bool Run(bool shared, Action<string> log)
+    public static bool Run(bool shared, Action<string> log, bool fadeProbe = false)
     {
         SharedThumbnailBackend? backend = null;
         if (shared)
@@ -65,7 +65,23 @@ public static unsafe partial class ThumbnailSelfTest
             bool red = (left & 0xFF) > 180 && ((left >> 16) & 0xFF) < 80;
             bool blue = ((right >> 16) & 0xFF) > 180 && (right & 0xFF) < 80;
             log($"Apply 0x{applied:X8} · 左半 {Rgb(left)} · 右半 {Rgb(right)} · 外部 {Rgb(outside)}（期望：红 / 蓝 / 黑）");
-            return applied == 0 && red && blue;
+            bool ok = applied == 0 && red && blue;
+            if (fadeProbe)
+            {
+                // 实验：把目标窗口改成分层窗口并整体调透明度，看缩略图 / 共享视觉是否跟着淡出（撤层交叉淡出方案的前提）
+                const int GWL_EXSTYLE = -20;
+                nint ex = User32.GetWindowLongPtrW(dest.Handle, GWL_EXSTYLE);
+                User32.SetWindowLongPtrW(dest.Handle, GWL_EXSTYLE, ex | 0x00080000); // WS_EX_LAYERED
+                foreach (byte alpha in new byte[] { 255, 128, 0 })
+                {
+                    SetLayeredWindowAttributes(dest.Handle, 0, alpha, 2); // LWA_ALPHA
+                    for (int i = 0; i < 4; i++) Dwmapi.DwmFlush();
+                    Pump(60);
+                    uint l = ScreenPixel(x + 110, y + 100), o = ScreenPixel(x + 20, y + 20);
+                    log($"分层透明度 {alpha}：缩略图处 {Rgb(l)} · 黑底处 {Rgb(o)}");
+                }
+            }
+            return ok;
         }
         finally
         {
@@ -140,6 +156,10 @@ public static unsafe partial class ThumbnailSelfTest
             return 0;
         }
     }
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags);
 
     [System.Runtime.InteropServices.LibraryImport("user32.dll")]
     private static partial nint GetDC(nint hwnd);
