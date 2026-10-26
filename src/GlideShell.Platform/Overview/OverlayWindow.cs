@@ -120,8 +120,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     public void HideOverlay()
     {
-        _layer.HideAll();
+        // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
         User32.ShowWindow(Handle, User32.SW_HIDE);
+        _layer.HideAll();
         IsShown = false;
     }
 

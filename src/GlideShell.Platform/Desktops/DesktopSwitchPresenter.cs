@@ -82,8 +82,8 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     {
         var target = committedOffset != 0 ? _committedTarget : null;
         _committedTarget = null;
-        if (target is { } id) WaitForSwitchThenHide(id, Environment.TickCount64);
-        else HideNow(null);
+        if (target is { } id) WaitForSwitchThenHide(id, _sessionState.Current, Environment.TickCount64, -1);
+        else HideNow();
     });
 
     public void Dispose()
@@ -130,31 +130,56 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         _prepared = false;
     }
 
-    // 撤层要等真实桌面已经切过去（收到切换通知），再多等 3 个合成帧，盖住 explorer 逐个解除 cloak 的那一帧中间态
-    private void WaitForSwitchThenHide(Guid target, long startedMs)
+    /// <summary>
+    /// 撤层前要等真实桌面完全切好：先等切换通知，再等 explorer 把窗口的外壳 cloak 换过来——
+    /// 新桌面的窗口都解除了 cloak、旧桌面的窗口都 cloak 上了。只等通知的话，有窗口的桌面（真机反馈：桌面 1 ↔ 2 闪、
+    /// 只有壁纸的 2 ↔ 3 不闪）会在撤层后才看到旧窗口消失 / 新窗口出现，就是一次闪烁。
+    /// 然后在覆盖层还盖着时把焦点交出去（标题栏的激活变化也藏在下面），等两帧再撤层。
+    /// </summary>
+    private void WaitForSwitchThenHide(Guid target, Guid? previous, long startedMs, long switchedMs)
     {
+        long now = Environment.TickCount64;
         bool switched = _desktops.State.Current == target;
-        if (!switched && Environment.TickCount64 - startedMs < HideWaitTimeoutMs)
+        if (switched && switchedMs < 0) switchedMs = now;
+        bool settled = switched && CloakSettled(target, previous);
+        if (!settled && now - startedMs < HideWaitTimeoutMs)
         {
-            _ui.PostDelayed(5, () => WaitForSwitchThenHide(target, startedMs));
+            _ui.PostDelayed(5, () => WaitForSwitchThenHide(target, previous, startedMs, switchedMs));
             return;
         }
         if (!switched) Log.Warn("等待桌面切换通知超时，直接撤层");
-        for (int i = 0; i < 3; i++) Dwmapi.DwmFlush();
-        HideNow(target);
-    }
-
-    private void HideNow(Guid? switchedTo)
-    {
-        _shown = false;
-        foreach (var o in _overlays) o.HideOverlay();
-        Release();
-        if (switchedTo is not { } target) return;
+        else if (!settled) Log.Warn("等待窗口 cloak 状态切换超时，直接撤层");
+        Log.Info($"切桌面撤层：切换通知 {(switchedMs < 0 ? -1 : switchedMs - startedMs)}ms，窗口到位 {now - startedMs}ms");
 
         // 焦点交给新桌面 Z 序最上面的窗口；空桌面交给桌面本身，避免键盘输入打进旧桌面上看不见的窗口（S3）
         var top = _windows.FirstOrDefault(w => w.DesktopId == target);
         nint hwnd = top is not null ? (nint)top.Id : User32.FindWindowW("Progman", null);
         if (!WindowActivator.Activate(hwnd)) Log.Warn($"切桌面后未能把焦点交给 {(top?.Title ?? "桌面")}");
+        Dwmapi.DwmFlush();
+        Dwmapi.DwmFlush();
+        HideNow();
+    }
+
+    /// <summary>新桌面的窗口都没有外壳 cloak、旧桌面的窗口都有（只看外壳那一位，应用自己的 cloak 不算）。</summary>
+    private unsafe bool CloakSettled(Guid target, Guid? previous)
+    {
+        const int DWM_CLOAKED_SHELL = 2;
+        foreach (var w in _windows)
+        {
+            if (w.DesktopId != target && w.DesktopId != previous) continue;
+            int cloaked = 0;
+            if (Dwmapi.DwmGetWindowAttribute((nint)w.Id, Dwmapi.DWMWA_CLOAKED, &cloaked, sizeof(int)) != 0) continue; // 窗口已关闭
+            bool shellCloaked = (cloaked & DWM_CLOAKED_SHELL) != 0;
+            if (w.DesktopId == target ? shellCloaked : !shellCloaked) return false;
+        }
+        return true;
+    }
+
+    private void HideNow()
+    {
+        _shown = false;
+        foreach (var o in _overlays) o.HideOverlay();
+        Release();
     }
 
     private void EnsureOverlays(List<MonitorInfo> monitors)
@@ -225,8 +250,9 @@ internal sealed unsafe class DesktopOverlay : NativeWindow
 
     public void HideOverlay()
     {
-        _layer.HideAll();
+        // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
         User32.ShowWindow(Handle, User32.SW_HIDE);
+        _layer.HideAll();
     }
 
     protected override nint? WndProc(uint msg, nint wParam, nint lParam)

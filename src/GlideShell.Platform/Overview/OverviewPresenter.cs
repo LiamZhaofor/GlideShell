@@ -89,9 +89,21 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             Dwmapi.DwmFlush();
             Dwmapi.DwmFlush();
         }
+        // 诊断：日志目录旁放了 capture-dismiss 标记文件时，截下撤层前、撤层后、300ms 后三张图，排查撤层瞬间的画面突变
+        string? captures = ScreenCapture.EnabledDirectory("capture-dismiss");
+        string stamp = DateTime.Now.ToString("HHmmss-fff");
+        if (captures is not null) ScreenCapture.Save(Path.Combine(captures, $"{stamp}-1-before.bmp"));
         foreach (var o in _overlays) o.HideOverlay();
         _shown = false;
         ReleaseScene();
+        if (captures is not null)
+        {
+            for (int i = 0; i < 3; i++) Dwmapi.DwmFlush();
+            ScreenCapture.Save(Path.Combine(captures, $"{stamp}-2-after.bmp"));
+            Thread.Sleep(300);
+            ScreenCapture.Save(Path.Combine(captures, $"{stamp}-3-later.bmp"));
+            Log.Info($"已截下撤层前后三张图：{Path.Combine(captures, stamp)}-*.bmp");
+        }
     });
 
     /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
