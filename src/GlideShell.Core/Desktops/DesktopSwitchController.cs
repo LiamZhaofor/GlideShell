@@ -152,21 +152,25 @@ public sealed class DesktopSwitchController : IGestureTarget
     public DesktopSwitchFrame Sample(long hostUs)
     {
         var s = _transition.Sample(hostUs);
-        Action? hide = null;
+        bool hide = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
+        int committed = 0;
         bool visible;
         lock (_gate)
         {
             if (s.JustSettled && _visible && !_tracking)
             {
                 _visible = false;
-                int committed = _committed;
+                committed = _committed;
                 _committed = 0;
-                hide = () => _host.Hide(committed);
+                hide = true;
             }
-            visible = _visible || hide is not null;
+            visible = _visible || hide;
         }
-        hide?.Invoke();
-        if (hide is not null) _transition.SnapTo(0); // 下一次从（新的）当前桌面开始
+        if (hide)
+        {
+            _host.Hide(committed);
+            _transition.SnapTo(0); // 下一次从（新的）当前桌面开始
+        }
         return new DesktopSwitchFrame(s.Value, s.Phase, visible);
     }
 

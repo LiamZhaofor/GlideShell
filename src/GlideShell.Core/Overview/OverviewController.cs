@@ -249,7 +249,8 @@ public sealed class OverviewController : IGestureTarget
     public OverviewFrame Sample(long hostUs)
     {
         var s = _transition.Sample(hostUs);
-        Action? settled = null;
+        bool hide = false, activate = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
+        long? focus = null;
         bool visible;
         long? emphasized;
         lock (_gate)
@@ -259,19 +260,20 @@ public sealed class OverviewController : IGestureTarget
                 if (s.Value <= SettleEpsilon)
                 {
                     _visible = false;
-                    long? focus = _focusTarget;
+                    focus = _focusTarget;
                     _focusTarget = null;
-                    settled = () => _host.Hide(focus);
+                    hide = true;
                 }
                 else if (s.Value >= 1 - SettleEpsilon)
                 {
-                    settled = _host.Activate;
+                    activate = true;
                 }
             }
-            visible = _visible || settled is not null;
+            visible = _visible || hide || activate;
             emphasized = _focusTarget ?? (_closingGesture ? _hovered : null);
         }
-        settled?.Invoke();
+        if (hide) _host.Hide(focus);
+        else if (activate) _host.Activate();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
             s.Phase, visible, emphasized);
     }

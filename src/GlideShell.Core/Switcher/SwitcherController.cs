@@ -151,7 +151,8 @@ public sealed class SwitcherController : IGestureTarget
     {
         var s = _transition.Sample(hostUs);
         var scene = _scene;
-        Action? hide = null;
+        bool hide = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
+        long? activate = null;
         bool visible;
         double appear;
         lock (_gate)
@@ -160,14 +161,14 @@ public sealed class SwitcherController : IGestureTarget
             {
                 _visible = false;
                 int selected = scene.Count == 0 ? 0 : (int)Math.Clamp(Math.Round(s.Value), 0, scene.Count - 1);
-                long? activate = selected > 0 ? scene.Windows[selected].Id : null;
-                hide = () => _host.Hide(activate);
+                activate = selected > 0 ? scene.Windows[selected].Id : null;
+                hide = true;
                 _transition.SnapTo(0); // 下一次切换从当前（新的前台）窗口开始
             }
-            visible = _visible || hide is not null;
+            visible = _visible || hide;
             appear = Math.Clamp((hostUs - _shownAtUs) / 1000.0 / AppearMs, 0, 1);
         }
-        hide?.Invoke();
+        if (hide) _host.Hide(activate);
         int nearest = scene.Layout.Nearest(s.Value);
         return new SwitcherFrame(s.Value, nearest, appear, s.Phase, visible);
     }
