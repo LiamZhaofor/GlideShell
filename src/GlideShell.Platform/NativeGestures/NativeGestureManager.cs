@@ -62,7 +62,11 @@ public sealed class NativeGestureManager(string? recordPath = null)
     }
 
     /// <summary>按接管记录还原。无记录时什么也不做。</summary>
-    public NativeGestureResult Restore()
+    /// <param name="refreshShell">
+    /// false = 只写注册表、不调用 Explorer 的设置缓存（注销 / 关机时 Explorer 也在退出，跨进程调用可能卡住；
+    /// 注册表是下次登录时 Explorer 读取的值，写回就够了）。
+    /// </param>
+    public NativeGestureResult Restore(bool refreshShell = true)
     {
         var messages = new List<string>();
         var record = LoadRecord();
@@ -89,12 +93,13 @@ public sealed class NativeGestureManager(string? recordPath = null)
         }
 
         // 期望值：写回原值的项 = 原值；删除的项 = 缺省值（由 GetValue 自己给出，这里不强求具体数值）
-        bool verified = RefreshAndVerify(
+        bool verified = !refreshShell || RefreshAndVerify(
             plan.Where(p => p.Action is RestoreAction.WriteOriginal or RestoreAction.Delete)
                 .Select(p => (p.Change.Id, p.Change.Name, p.Action == RestoreAction.WriteOriginal ? p.Change.Original : null)),
             messages);
         File.Delete(RecordPath);
-        messages.Add($"已还原系统手势（{plan.Count(p => p.Action is RestoreAction.WriteOriginal or RestoreAction.Delete)} 项）");
+        int restored = plan.Count(p => p.Action is RestoreAction.WriteOriginal or RestoreAction.Delete);
+        messages.Add(refreshShell ? $"已还原系统手势（{restored} 项）" : $"已还原系统手势的注册表（{restored} 项，下次登录时生效）");
         return new NativeGestureResult(true, verified, messages);
     }
 

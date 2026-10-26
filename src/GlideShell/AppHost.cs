@@ -91,6 +91,7 @@ internal sealed class AppHost
         }
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
+        _ui.SessionEnding += OnSessionEnding;
         _ui.OnMessage(InstanceControl.QuitMessage, (_, _) =>
         {
             Log.Info("收到退出请求（--quit）");
@@ -215,6 +216,26 @@ internal sealed class AppHost
         else TakeOverNativeGestures();
         if (_tray is not null) _tray.Tooltip = paused ? "GlideShell（已暂停，使用系统手势）" : "GlideShell";
         Log.Info(paused ? "已暂停：系统手势已还原" : "已恢复接管");
+    }
+
+    /// <summary>
+    /// 注销 / 关机：处理完 WM_ENDSESSION 后进程随时会被结束，看门狗也一样，没人能再还原系统手势；
+    /// 如果不在这里还原，下次登录时（尤其没开开机启动时）用户会失去系统手势。所以同步写回注册表
+    /// （Explorer 也在退出，不调用它的设置缓存）。下次 GlideShell 启动时会重新接管。
+    /// 重启管理器要求关闭本程序（会话没结束）时走正常退出流程。
+    /// </summary>
+    private void OnSessionEnding(bool closeAppOnly)
+    {
+        if (closeAppOnly)
+        {
+            Log.Info("重启管理器要求关闭：正常退出");
+            _ui.Quit();
+            return;
+        }
+        Log.Info("会话结束（注销 / 关机 / 重启）：还原系统手势");
+        if (_simulate is null)
+            foreach (var m in _native.Restore(refreshShell: false).Messages) Log.Info($"系统手势：{m}");
+        Log.Flush(TimeSpan.FromSeconds(1));
     }
 
     private void StartWatchdog()

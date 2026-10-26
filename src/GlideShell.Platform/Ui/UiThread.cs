@@ -44,6 +44,12 @@ public sealed unsafe class UiThread : NativeWindow
         }, null, delayMs, Timeout.Infinite);
     }
 
+    /// <summary>
+    /// 注销 / 关机 / 重启（WM_ENDSESSION）：处理器返回后进程随时可能被结束，必须同步做完收尾。
+    /// 参数为 true 表示只是有程序要求本程序关闭（重启管理器，ENDSESSION_CLOSEAPP），会话并没有结束。
+    /// </summary>
+    public event Action<bool>? SessionEnding;
+
     /// <summary>为某个消息挂处理器（托盘回调、热键等）；处理器返回 null 表示继续默认处理。</summary>
     public void OnMessage(uint message, Func<nint, nint, nint?> handler) => _handlers[message] = handler;
 
@@ -75,6 +81,11 @@ public sealed unsafe class UiThread : NativeWindow
                     Diagnostics.Log.Error("UI 线程任务异常", ex);
                 }
             }
+            return 0;
+        }
+        if (msg == User32.WM_ENDSESSION)
+        {
+            if (wParam != 0) SessionEnding?.Invoke((lParam & User32.ENDSESSION_CLOSEAPP) != 0);
             return 0;
         }
         return _handlers.TryGetValue(msg, out var handler) ? handler(wParam, lParam) : null;

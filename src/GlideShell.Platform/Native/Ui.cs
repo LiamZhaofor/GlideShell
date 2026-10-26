@@ -7,6 +7,8 @@ internal static unsafe partial class User32
 {
     public const uint WM_NCCREATE = 0x0081;
     public const uint WM_NCDESTROY = 0x0082;
+    public const uint WM_ENDSESSION = 0x0016;
+    public const nint ENDSESSION_CLOSEAPP = 0x1;
     public const uint WM_COMMAND = 0x0111;
     public const uint WM_HOTKEY = 0x0312;
     public const uint WM_NULL = 0x0000;
