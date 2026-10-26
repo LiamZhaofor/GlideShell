@@ -49,6 +49,14 @@ public sealed class GestureRouter(Func<GestureMap> map, Func<GestureAction, IGes
                 break;
 
             case GesturePhase.Began:
+                // 同一个识别器不会出现（上一次一定先 Ended / Cancelled）；识别器被替换（配置重载）时兜底，
+                // 免得上一个动作卡在跟踪中（例如三指拖移的左键一直按着）
+                if (_active is not null)
+                {
+                    _active.End(e with { Phase = GesturePhase.Cancelled });
+                    _active = null;
+                    ActiveAction = GestureAction.None;
+                }
                 var chosen = suppressed?.Invoke() == true ? GestureAction.None : map().Resolve(e.Fingers, e.Axis);
                 var target = chosen == GestureAction.None ? null : targets(chosen);
                 // 没被选中的预热作废

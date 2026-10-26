@@ -107,6 +107,22 @@ public class GestureRouterTests
     }
 
     [Fact]
+    public void Replacing_the_recognizer_mid_gesture_cancels_the_orphaned_action()
+    {
+        var (log, router) = Setup();
+        // 第一个识别器开始了总览手势后被丢弃（配置重载），新识别器从手指还在板上的状态接着识别出切换窗口
+        Feed(new TouchScript().Down(0, Fingers(3, 40, 60)).Move(3, 40, 60, 0, -1, 20, 200), router);
+        Feed(new TouchScript().Down(0, Fingers(3, 40, 40)).Move(3, 40, 40, 1, 0, 20, 200).Lift(4, Ids(3)), router);
+
+        Assert.Equal(new[]
+        {
+            "overview.Prepare", "switcher.Prepare", "switcher.Unprepare", "overview.Begin", "overview.Update",
+            "overview.Prepare", "switcher.Prepare",
+            "overview.End:Cancelled", "overview.Unprepare", "switcher.Begin", "switcher.Update", "switcher.End:Ended",
+        }, log);
+    }
+
+    [Fact]
     public void Unbound_gesture_is_ignored()
     {
         var (log, router) = Setup();
