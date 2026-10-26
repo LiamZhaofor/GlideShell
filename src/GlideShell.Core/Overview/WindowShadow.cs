@@ -38,8 +38,7 @@ public static class WindowShadow
 {
     /// <summary>
     /// 画出某个大小窗口的阴影图（物理像素尺寸 <paramref name="widthPx"/>×<paramref name="heightPx"/>，DPI 缩放 <paramref name="dpiScale"/>）。
-    /// 窗口下面也照常画：缩略图不透明、盖在上面；真实阴影本来也延伸到窗口下面，圆角露出来的正是它。
-    /// （早先把窗口区域挖空，放大插值时在窗口边外留下 2–4px 的浅边，撤层时这一圈「闪一下」。）
+    /// 窗口下面也要有值（缩略图不透明、盖在上面，但圆角会露出来，放大插值也会用到），取最近那条边外的值，见下文。
     /// </summary>
     public static ShadowImage Render(ShadowStyle style, double widthPx, double heightPx, double dpiScale, int downscale = 4)
     {
@@ -63,16 +62,52 @@ public static class WindowShadow
                 gy[k][j] = Interval(-margin + (j + 0.5) * downscale, dy, heightPx + dy, l.SigmaY * dpiScale);
         }
 
+        // 窗口里面的格子取「离它最近的那条边外第一个像素」的值：缩略图盖住窗口里面，那里画什么看不见，
+        // 但放大插值会把它带到窗口外 1–2px——取模型值会把里面的深色渗出去（175% 实测贴边偏深 0.035、左右不对称），
+        // 挖空成 0 又会在边外留浅边。取边外的值，插出来的就是边外本来的值
+        var edge = new double[n][]; // 每层：左、右、上、下 四条边外第一个像素处的横向 / 纵向分量
+        for (int k = 0; k < n; k++)
+        {
+            var l = style.Layers[k];
+            double dy = l.OffsetY * dpiScale;
+            edge[k] =
+            [
+                l.Opacity * Interval(-0.5, 0, widthPx, l.SigmaX * dpiScale),
+                l.Opacity * Interval(widthPx + 0.5, 0, widthPx, l.SigmaX * dpiScale),
+                Interval(-0.5, dy, heightPx + dy, l.SigmaY * dpiScale),
+                Interval(heightPx + 0.5, dy, heightPx + dy, l.SigmaY * dpiScale),
+            ];
+        }
+
         int size = w * h * 4;
         var bgra = System.Buffers.ArrayPool<byte>.Shared.Rent(size);
         Array.Clear(bgra, 0, size);
         for (int j = 0; j < h; j++)
+        {
+            double y = -margin + (j + 0.5) * downscale;
             for (int i = 0; i < w; i++)
             {
+                double x = -margin + (i + 0.5) * downscale;
+                // 在窗口里面：找最近的边（0 左 1 右 2 上 3 下）
+                int side = -1;
+                if (x > 0 && x < widthPx && y > 0 && y < heightPx)
+                {
+                    double best = x;
+                    side = 0;
+                    if (widthPx - x < best) (best, side) = (widthPx - x, 1);
+                    if (y < best) (best, side) = (y, 2);
+                    if (heightPx - y < best) side = 3;
+                }
                 double clear = 1;
-                for (int k = 0; k < n; k++) clear *= 1 - gx[k][i] * gy[k][j];
+                for (int k = 0; k < n; k++)
+                {
+                    double cx = side is 0 or 1 ? edge[k][side] : gx[k][i];
+                    double cy = side is 2 or 3 ? edge[k][side] : gy[k][j];
+                    clear *= 1 - cx * cy;
+                }
                 bgra[(j * w + i) * 4 + 3] = (byte)Math.Round(255 * Math.Clamp(1 - clear, 0, 1)); // 黑色预乘：只有 alpha
             }
+        }
         return new ShadowImage(w, h, downscale, margin, bgra);
     }
 

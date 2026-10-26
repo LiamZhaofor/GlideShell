@@ -34,8 +34,9 @@ return command switch
     "windows" => Windows(),
     "native" => Native(),
     "desktops" => Desktops(),
-    "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump")),
+    "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump"), Option(args, "--monitor")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
+    "testwindow" when args.Length >= 6 => TestWindow(args),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -59,8 +60,10 @@ static int Usage()
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
           PtpProbe thumbnails [--classic]  缩略图后端自检（左下角显示约 1 秒测试小窗）
-          PtpProbe thumbnails --shadow [--size 600x400]
+          PtpProbe thumbnails --shadow [--size 600x400] [--monitor 序号]
                                            阴影对照：逐点比较系统画的窗口阴影与总览自画的阴影（屏幕中央闪现约 3 秒）
+          PtpProbe testwindow x y 宽 高 毫秒
+                                           显示一个橙色测试窗口（多显示器实测用，物理像素坐标）
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -303,12 +306,20 @@ static int Thumbnails(bool shared, bool fade)
     return ok ? 0 : 1;
 }
 
-static int ShadowCompare(string? size, string? dump)
+static int ShadowCompare(string? size, string? dump, string? monitor)
 {
     var wh = (size ?? "600x400").Split('x');
-    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.CompareShadows(m => Console.WriteLine($"   {m}"), int.Parse(wh[0]), int.Parse(wh[1]), dump);
+    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.CompareShadows(m => Console.WriteLine($"   {m}"), int.Parse(wh[0]), int.Parse(wh[1]), dump,
+        monitor is null ? null : int.Parse(monitor));
     Console.WriteLine($"阴影对照：{(ok ? "一致" : "有差异")}");
     return ok ? 0 : 1;
+}
+
+static int TestWindow(string[] args)
+{
+    int[] v = args[1..6].Select(int.Parse).ToArray();
+    GlideShell.Platform.Overview.ThumbnailSelfTest.ShowTestWindow(v[0], v[1], v[2], v[3], v[4]);
+    return 0;
 }
 
 static int SelfTest()

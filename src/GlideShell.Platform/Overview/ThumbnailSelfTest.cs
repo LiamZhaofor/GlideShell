@@ -125,7 +125,7 @@ public static unsafe partial class ThumbnailSelfTest
     /// 阴影对照（PtpProbe thumbnails --shadow）：白底上放一个普通窗口，分别截下它活动 / 非活动时系统画的真实阴影，
     /// 再用总览同一套代码（共享缩略图 + 自画阴影）在同一位置画一遍，逐点比较四条边的变暗比例。
     /// </summary>
-    public static bool CompareShadows(Action<string> log, int sourceWidth = 600, int sourceHeight = 400, string? dumpPath = null)
+    public static bool CompareShadows(Action<string> log, int sourceWidth = 600, int sourceHeight = 400, string? dumpPath = null, int? monitorIndex = null)
     {
         using var backend = SharedThumbnailBackend.TryCreate(out string status);
         if (backend is null)
@@ -133,7 +133,8 @@ public static unsafe partial class ThumbnailSelfTest
             log(status);
             return false;
         }
-        var monitor = Shell.Monitors.Enumerate().First(m => m.IsPrimary);
+        var monitors = Shell.Monitors.Enumerate();
+        var monitor = monitors.FirstOrDefault(m => m.Index == monitorIndex) ?? monitors.First(m => m.IsPrimary);
         double scale = monitor.DpiScale;
         var area = monitor.WorkArea;
         int bw = sourceWidth + 500, bh = sourceHeight + 420, bx = (int)(area.Left + (area.Width - bw) / 2), by = (int)(area.Top + (area.Height - bh) / 2);
@@ -146,7 +147,7 @@ public static unsafe partial class ThumbnailSelfTest
         User32.RECT bounds;
         Dwmapi.DwmGetWindowAttribute(source.Handle, Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, (uint)sizeof(User32.RECT));
         var vb = bounds;
-        log($"缩放 {scale:P0} · 测试窗口可见边界 {vb.Left},{vb.Top} {vb.Width}×{vb.Height}（白底 {bx},{by} {bw}×{bh}）");
+        log($"显示器 #{monitor.Index}{(monitor.IsPrimary ? "（主）" : "")} · 缩放 {scale:P0} · 测试窗口可见边界 {vb.Left},{vb.Top} {vb.Width}×{vb.Height}（白底 {bx},{by} {bw}×{bh}）");
 
         uint[] Shot(nint foreground)
         {
@@ -250,6 +251,18 @@ public static unsafe partial class ThumbnailSelfTest
         }
 
         static double Dark(uint argb) => 1 - ((argb >> 8) & 0xFF) / 255.0; // 白底：绿色通道的变暗比例
+    }
+
+    /// <summary>
+    /// 多显示器实测用（PtpProbe testwindow）：在指定位置（物理像素）显示一个橙色的普通窗口（标题栏 + 可调边框，置顶），
+    /// 保持 <paramref name="ms"/> 毫秒。例如横跨两块屏的交界，配合 GlideShell --simulate 检查覆盖层两侧是否都画出了它。
+    /// </summary>
+    public static void ShowTestWindow(int x, int y, int w, int h, int ms)
+    {
+        using var window = new PlainWindow(0x008CFF, User32.WS_CAPTION | User32.WS_SYSMENU | 0x00040000, User32.WS_EX_TOPMOST, x, y, w, h, activate: true);
+        User32.SetWindowTextW(window.Handle, "GlideShell 多显示器测试窗口"); // 没有标题的窗口不进总览
+        User32.SetWindowPos(window.Handle, User32.HWND_TOPMOST, x, y, w, h, 0x0040 /* SWP_SHOWWINDOW */);
+        Pump(ms);
     }
 
     /// <summary>纯色窗口（颜色 0xBBGGRR）。</summary>
