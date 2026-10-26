@@ -43,12 +43,26 @@ public class WindowShadowTests
     public void Inactive_shadow_matches_the_measured_profile(string side, double d, double measured) =>
         AssertProfile(ShadowStyle.Inactive, side, d, measured);
 
-    private static void AssertProfile(ShadowStyle style, string side, double d, double measured)
+    // 125% 下的同一组实测（可见边界 584×392）：系统阴影随 DPI 等比缩放，同一套逻辑像素参数照样吻合
+    [Theory]
+    [InlineData("下", 1, 0.306, true)]
+    [InlineData("下", 25, 0.192, true)]
+    [InlineData("下", 50, 0.086, true)]
+    [InlineData("右", 1, 0.165, true)]
+    [InlineData("右", 12, 0.098, true)]
+    [InlineData("上", 8, 0.067, true)]
+    [InlineData("下", 1, 0.216, false)]
+    [InlineData("下", 35, 0.094, false)]
+    [InlineData("右", 1, 0.114, false)]
+    [InlineData("上", 4, 0.043, false)]
+    public void Shadows_scale_with_dpi_at_125_percent(string side, double d, double measured, bool active) =>
+        AssertProfile(active ? ShadowStyle.Active : ShadowStyle.Inactive, side, d, measured, 584, 392, 1.25);
+
+    private static void AssertProfile(ShadowStyle style, string side, double d, double measured, double W = 582, double H = 391, double dpi = 1.5)
     {
-        double W = 582, H = 391;
         // 可见边界最外一圈像素算第 0 个，d=1 是紧贴着的第一个窗口外像素（像素中心）
         var (x, y) = side switch { "右" => (W - 0.5 + d, H / 2), "下" => (W / 2, H - 0.5 + d), _ => (W / 2, 0.5 - d) };
-        Assert.InRange(WindowShadow.Coverage(style, x, y, W, H, 1.5), measured - 0.025, measured + 0.025);
+        Assert.InRange(WindowShadow.Coverage(style, x, y, W, H, dpi), measured - 0.025, measured + 0.025);
     }
 
     [Fact]
