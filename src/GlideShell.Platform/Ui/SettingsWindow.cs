@@ -289,6 +289,10 @@ public sealed unsafe class SettingsWindow : NativeWindow
                 Gdi32.SetBkColor(wParam, User32.GetSysColor(User32.COLOR_WINDOW));
                 if (_notes.Contains(lParam)) Gdi32.SetTextColor(wParam, User32.GetSysColor(User32.COLOR_GRAYTEXT));
                 return User32.GetSysColorBrush(User32.COLOR_WINDOW);
+            case User32.WM_SETCURSOR when wParam == Handle && (lParam & 0xFFFF) == HTCLIENT:
+                // NativeWindow 注册的窗口类没有光标：空白处不处理的话会沿用上一个光标形状（调整大小、忙碌等）
+                User32.SetCursor(User32.LoadCursorW(0, User32.IDC_ARROW));
+                return 1;
             case User32.WM_DPICHANGED:
                 OnDpiChanged((uint)(wParam & 0xFFFF), (User32.RECT*)lParam);
                 return 0;
@@ -456,6 +460,7 @@ public sealed unsafe class SettingsWindow : NativeWindow
     // ---------- 小工具 ----------
 
     private const uint WM_SETICON = 0x0080;
+    private const nint HTCLIENT = 1;
     private const nint ICON_SMALL = 0, ICON_BIG = 1;
 
     private static void AddString(nint hwnd, uint msg, string text)
