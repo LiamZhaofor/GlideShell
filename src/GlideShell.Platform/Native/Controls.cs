@@ -101,6 +101,10 @@ internal static unsafe partial class User32
     [LibraryImport("user32.dll")]
     public static partial nint GetParent(nint hwnd);
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AllowSetForegroundWindow(uint processId);
+
     public const int VK_SHIFT = 0x10;
 
     [LibraryImport("user32.dll")]

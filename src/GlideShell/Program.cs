@@ -17,7 +17,13 @@ internal static class Program
         if (args.Contains("--quit")) return InstanceControl.RequestQuit(TimeSpan.FromSeconds(10)) ? 0 : 4;
 
         using var instance = new Mutex(initiallyOwned: true, @"Local\GlideShell.Instance", out bool first);
-        if (!first) return 1; // 已在运行
+        if (!first)
+        {
+            // 已在运行：用户再次启动（开始菜单、双击）多半是想调设置，交给运行实例打开设置窗口；
+            // 开机启动的重复实例直接退出
+            if (args.Contains("--autostart")) return 1;
+            return InstanceControl.RequestShowSettings() ? 0 : 1;
+        }
 
         int sim = Array.IndexOf(args, "--simulate");
         return new AppHost(sim >= 0 && sim + 1 < args.Length ? args[sim + 1] : null).Run();

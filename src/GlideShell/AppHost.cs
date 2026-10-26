@@ -55,6 +55,7 @@ internal sealed class AppHost
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
     private int _takeoverGeneration; // UI 线程
+    private bool _firstRun; // 启动时还没有配置文件
     private readonly string? _simulate;
 
     /// <param name="simulate">开发用：不启动真实输入，按名称回放一段合成手势（见 <see cref="SyntheticTouch.Scripts"/>）。</param>
@@ -93,6 +94,11 @@ internal sealed class AppHost
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
         _ui.SessionEnding += OnSessionEnding;
+        _ui.OnMessage(InstanceControl.ShowSettingsMessage, (_, _) =>
+        {
+            OpenSettings();
+            return 0;
+        });
         _ui.OnMessage(InstanceControl.QuitMessage, (_, _) =>
         {
             Log.Info("收到退出请求（--quit）");
@@ -106,6 +112,7 @@ internal sealed class AppHost
         _presenter.WarmUp();
         if (_simulate is not null) StartSimulation(_simulate);
         if (inputProblem is not null) _tray.ShowBalloon("GlideShell 收不到触摸板输入", inputProblem, warning: true);
+        else if (_firstRun && _simulate is null) _tray.ShowBalloon("GlideShell 已在后台运行", Welcome(_activeMap));
 
         _ui.Run();
         Shutdown();
@@ -281,6 +288,21 @@ internal sealed class AppHost
 
     // ---------- 配置 ----------
 
+    /// <summary>首次运行的说明：实际接管了哪些手势（按生效映射生成），以及去哪里设置。</summary>
+    private static string Welcome(GestureMap map)
+    {
+        var lines = map.Bindings
+            .Where(b => b.Action != GestureAction.None)
+            .OrderBy(b => b.Fingers).ThenByDescending(b => b.Axis == GestureAxis.Vertical)
+            .Select(b => $"{FingerName(b.Fingers)}{(b.Axis == GestureAxis.Vertical ? "上下" : "左右")}滑：{SettingsModel.ActionLabel(b.Action)}")
+            .Distinct()
+            .ToList();
+        lines.Add("其他手势照旧由 Windows 处理。右键托盘图标可以设置或暂停。");
+        return string.Join("\n", lines);
+    }
+
+    private static string FingerName(int fingers) => fingers switch { 3 => "三指", 4 => "四指", 5 => "五指", _ => $"{fingers} 指" };
+
     private void LoadConfig()
     {
         string path = ConfigStore.DefaultPath;
@@ -288,6 +310,7 @@ internal sealed class AppHost
         foreach (var p in problems) Log.Warn($"配置：{p}");
         if (!File.Exists(path))
         {
+            _firstRun = true;
             try
             {
                 ConfigStore.Save(config, path);
