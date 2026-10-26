@@ -15,9 +15,27 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 
 ## 当前状态
 
-**分层重建中。** 旧原型 MissionFlow 已验证输入侧（Raw Input 读 PTP 触点流）和渲染侧（DWM 实时缩略图）可行，但结构无法承载上面的目标，现归档在 [`legacy/`](legacy/README.md)（基线 tag `missionflow-final`）。
+**分层重建中，主要功能已有首个可运行版本**（分支 `glideshell/p0`）：三指上滑总览、三指横滑切换窗口、四指横滑切换虚拟桌面、三指拖移、托盘快捷设置、看门狗与一键回退、单文件发布。阈值目前是先验值，要等真机轨迹录制（S1）后再校准。
 
-规划、接手评估、架构与阶段完成标准见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
+旧原型 MissionFlow 已归档在 [`legacy/`](legacy/README.md)（基线 tag `missionflow-final`）。规划、接手评估、架构、各阶段实测结果与待定决策见 **[docs/ROADMAP.md](docs/ROADMAP.md)**。
+
+## 使用
+
+运行 `GlideShell.exe` 后常驻托盘。GlideShell 只接管它已实现的那几个系统手势，三指轻点（中键）等其余手势始终归系统；退出、暂停或进程崩溃时都会把系统手势还原成你原来的设置。
+
+| 手势 | 默认 | 开启「三指拖移」后 |
+|---|---|---|
+| 三指上 / 下滑 | 总览（跟手展开 / 收起） | 拖移 |
+| 三指左 / 右滑 | 切换窗口 | 拖移 |
+| 四指上 / 下滑 | 归系统 | 总览 |
+| 四指左 / 右滑 | 切换虚拟桌面 | 切换虚拟桌面 |
+| 三指轻点 | 归系统（中键） | 归系统（中键） |
+
+- **托盘菜单**：打开总览（也可按 Ctrl+Alt+O）；暂停（即退回 Windows 原生手势）；三指拖移；四指切桌面；灵敏度高 / 标准 / 低；在当前程序中不使用手势；开机启动；打开配置文件 / 日志目录。
+- **总览里**：点击窗口切过去，Esc 收起，Enter 切到鼠标所指的窗口。
+- **配置文件** `%APPDATA%\GlideShell\config.json`（可带注释，保存即生效，写错了会回退默认值并记日志）：手势映射、滑动阈值、各功能行程与弹簧参数、背景变暗、拖移速度、排除程序等。
+- **日志** `%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
+- **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`。
 
 ## 目录结构
 
@@ -41,12 +59,25 @@ docs/                    路线图与设计记录
 dotnet build GlideShell.slnx
 dotnet test GlideShell.slnx
 
-# 查看本机触摸板的报告描述符（触点槽数、TipSwitch/Confidence、物理尺寸）
-dotnet run --project tools\PtpProbe
+# 发布自包含单文件（裁剪 + ReadyToRun），产物在 artifacts\publish\win-x64\GlideShell.exe
+pwsh build\publish.ps1
+# 装有 MSVC（Visual Studio「使用 C++ 的桌面开发」）时可发布 NativeAOT
+pwsh build\publish.ps1 -Aot
 
-# 按场景录制输入轨迹（S1），再汇总分析
-dotnet run --project tools\PtpProbe -- record
+# 不碰触摸板，用合成手势演示：overview / switch / desktop-right 等，脚本列表见 SyntheticTouch
+dotnet run --project src\GlideShell -- --simulate overview
+```
+
+诊断工具 `tools/PtpProbe`（只读）：
+
+```powershell
+dotnet run --project tools\PtpProbe                 # 报告描述符（触点槽数、TipSwitch/Confidence、物理尺寸）
+dotnet run --project tools\PtpProbe -- live         # 实时打印手势识别结果
+dotnet run --project tools\PtpProbe -- record       # 按场景录制输入轨迹（S1）
 dotnet run --project tools\PtpProbe -- analyze artifacts\traces\<时间>
+dotnet run --project tools\PtpProbe -- windows      # 窗口收录诊断
+dotnet run --project tools\PtpProbe -- native       # 系统手势：注册表值与 Explorer 生效值对照
+dotnet run --project tools\PtpProbe -- desktops     # 虚拟桌面接口自检
 ```
 
 ## 致谢
