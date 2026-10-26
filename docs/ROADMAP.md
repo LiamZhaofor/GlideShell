@@ -191,7 +191,7 @@ legacy/
 
 ### S2 原生手势的程序化开关
 
-- 状态：**完成，可以全自动，已经手指验证**（详见分支 `claude/spike-s2-native-gestures-8782f9` 的 `docs/spikes/S2-native-gestures.md`）。
+- 状态：**完成，可以全自动，已经手指验证**（详见 `docs/spikes/S2-native-gestures.md`，验证工具在分支 `claude/spike-s2-native-gestures-8782f9`）。
 - 结论：三指 / 四指手势的生效值在 Explorer（twinui.dll）的设置缓存里，注册表只是持久化层，Explorer 不监听它。正确做法 = 写注册表 + 调设置缓存服务的 `Refresh(SettingId)`（与「设置」应用同一路径），可用 `GetValue(SettingId)` 读回校验。只写注册表、广播 `WM_SETTINGCHANGE`、SPI 回写都无效——这就是旧原型「写了不一定生效」的原因。
 - 已落地：`Core/NativeGestures`（设置编号表、只接管绑定方向的接管规划、不覆盖用户改动的还原规划）+ `Platform/NativeGestures`（设置缓存连接、先落盘接管记录再写注册表、读回校验、不可用时降级）。`PtpProbe native` 可只读对照注册表值与生效值。
 - 手指验证（2026-10-26，用户在本机执行 F1–F8，全部符合预期）：只写注册表时三指上滑没有反应，`Refresh` 后立刻出现任务视图；`FourFingerSlideEnabled=0` 后四指滑动完全不触发；还原后恢复原状；三指轻点（中键）始终不受影响。之后注册表与动手前的导出逐行一致。
@@ -199,7 +199,7 @@ legacy/
 
 ### S3 虚拟桌面
 
-- 状态：**完成**（分支 `claude/spike-s3-virtual-desktop-7532a3` 的 `docs/spikes/S3-virtual-desktop.md`）。
+- 状态：**完成**（`docs/spikes/S3-virtual-desktop.md`，验证工具在分支 `claude/spike-s3-virtual-desktop-7532a3`）。
 - 接口：26300 是 24H2 布局，`IVirtualDesktopManagerInternal` {53F5CA0B…} 25 个方法，用系统代理 DLL 的 MIDL 格式串逐槽核对过。同一 IID 在 23H2 / 24H2 布局不同，**必须按方法数与槽位签名自检**，不通过就禁用 P5、交还原生四指手势。
 - `SwitchDesktop`（槽 9）**本身无动画**，5–13ms 返回、一帧切完；动画版（槽 22）不要用（并发可能让 explorer 崩溃）。
 - 置顶 `WS_EX_TOOLWINDOW` 覆盖层在无动画切换全程可见；**其他桌面（被 cloak）窗口的 DWM 缩略图照样是实时的**，不需要「离开时截图」。
@@ -209,7 +209,7 @@ legacy/
 
 ### S4 渲染延迟
 
-- 状态：**完成**（分支 `claude/spike-s4-render-latency-5ac2c3` 的 `docs/spikes/S4-render-latency.md`，含原始数据）。
+- 状态：**完成**（`docs/spikes/S4-render-latency.md`，验证工具与原始数据在分支 `claude/spike-s4-render-latency-5ac2c3`）。
 - 结论：非分层覆盖层 + 渲染线程 + 合成器时钟可行，渲染线程本身不是瓶颈（每帧 < 1ms、零分配，UI 线程卡死不影响画面）；在渲染线程调用 `DwmUpdateThumbnailProperties` 是可靠的（旧原型「缩略图不动」的问题来自分层窗口）。
 - 延迟取决于帧内取样时机：tick 时取样固定 2 帧；晚取样（下一帧起点前留余量）约 1 帧——已落地（`FramePacer`）。
 - 已知约束：`DwmUpdateThumbnailProperties` 每秒一次阻塞（N=5 时 6–16ms）；经典缩略图多了 DWM 自己掉帧，165Hz 下尤其明显（N=2 呈现率就降到 0.63）。
@@ -224,7 +224,7 @@ legacy/
 - ~~NativeAOT~~ **已完成**（装了 MSVC，见 4.7）。
 - ~~签名与 UIAccess~~ **已决定：先用本机自签名证书**，UIAccess 版已装好运行（见 4.7）；对外分发时再买正式证书。
 - ~~GitHub 仓库名~~ **已改名为 `LiamZhaofor/GlideShell`**（2026-10-26），`glideshell/p0` 已推送备份。
-- **验证分支是否合并**：`claude/spike-s2/s3/s4-*` 三个分支的结论已汇总到本文，代码（spike 工具与原始数据）是否并入主线由用户决定。
+- ~~验证分支是否合并~~ **已合并结论文档**（`docs/spikes/S2–S4`），验证工具与原始测量数据留在各自分支存档。
 
 ## 7. 本机测试环境
 
