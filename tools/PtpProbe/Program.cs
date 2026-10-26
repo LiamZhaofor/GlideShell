@@ -14,6 +14,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   replay      把轨迹跑过 GlideShell.Core 的组帧器与手势识别器，打印识别结果（调参用）
 //   live        用 GlideShell.Platform 的输入线程实时识别，打印手势（真机验证 P2 管线）
 //   windows     列出显示器与总览会收录的窗口（及被排除的原因）
+//   native      只读对照系统手势设置的注册表值与 Explorer 生效值，以及是否有未还原的接管记录
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -27,6 +28,7 @@ return command switch
     "replay" when args.Length > 1 => Replay(args[1], args),
     "live" => Live(args),
     "windows" => Windows(),
+    "native" => Native(),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -44,6 +46,7 @@ static int Usage()
                                            把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
           PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
           PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
+          PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -184,6 +187,16 @@ static int Windows()
     return 0;
 
     static string Short(string s) => s.Length > 40 ? s[..40] + "…" : s;
+}
+
+static int Native()
+{
+    var manager = new GlideShell.Platform.NativeGestures.NativeGestureManager();
+    Console.WriteLine($"接管记录：{(manager.HasPendingTakeover ? $"存在未还原的接管（{manager.RecordPath}）" : "无")}");
+    Console.WriteLine($"{"设置",-26}{"注册表",10}{"生效值",10}");
+    foreach (var (name, reg, eff) in manager.Describe())
+        Console.WriteLine($"{name,-26}{(reg?.ToString() ?? "（无）"),10}{(eff?.ToString() ?? "?"),10}{(reg is { } r && eff is { } e && r != e ? "   ← 不一致" : "")}");
+    return 0;
 }
 
 static int SelfTest()
