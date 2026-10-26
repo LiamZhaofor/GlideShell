@@ -31,6 +31,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long? _hoveredId;
     private long _sessionStartUs;
     private volatile bool _applyErrorLogged;
+    private long? _raisedId; // UI 线程：本次会话已提到最上层的窗口
+    private long? _renderEmphasized; // 渲染线程：上一帧强调的窗口
     private SharedThumbnailBackend? _shared;
     private bool _sharedUnavailable; // 探测或注册失败过：本次运行不再尝试
 
@@ -215,6 +217,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Controller.SetScene(OverviewScene.Empty);
         _prepared = false;
         _hoveredId = null;
+        _raisedId = null;
         Controller.SetHovered(null);
     }
 
@@ -247,7 +250,9 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         var scene = Controller.Scene;
         int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
-        Controller.Close(index >= 0 ? scene.Windows[index].Id : null, HostClock.NowUs());
+        long? id = index >= 0 ? scene.Windows[index].Id : null;
+        if (id is { } chosen) RaiseForDismiss(chosen);
+        Controller.Close(id, HostClock.NowUs());
     }
 
     private bool OnKey(uint vk)
@@ -259,6 +264,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 Controller.Close(null, HostClock.NowUs());
                 return true;
             case VkReturn:
+                if (_hoveredId is { } chosen) RaiseForDismiss(chosen);
                 Controller.Close(_hoveredId, HostClock.NowUs());
                 return true;
             case VkTab:
@@ -300,18 +306,27 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Select(index);
     }
 
-    /// <summary>
-    /// 选中（悬停 / 键盘 / 三指横滑）某个窗口，-1 = 不选。选中的窗口同时提到最上层：
-    /// 平铺时窗口互不重叠、看不出区别，收起飞回原位时它才不会被别的窗口挡住、到最后才「凭空出现」。
-    /// </summary>
+    /// <summary>选中（悬停 / 键盘 / 三指横滑）某个窗口，-1 = 不选。只改高亮，不改层次。</summary>
     private void Select(int index)
     {
         var scene = Controller.Scene;
         _hoveredId = index >= 0 ? scene.Windows[index].Id : null;
         Controller.SetHovered(_hoveredId);
-        if (index >= 0)
-            foreach (var o in _overlays) o.RaiseWindow(index);
         UpdateDecorations();
+    }
+
+    /// <summary>
+    /// 收起时要成为前台的窗口提到缩略图最上层，飞回原位途中才不会被别的窗口挡住、到最后「凭空出现」。
+    /// 只在真正开始收起时提这一个（点击、Enter、或三指下滑开始强调它时）：悬停时就提的话，
+    /// 鼠标扫过的每个窗口都会被提一次，其余窗口的层次被打乱，撤层瞬间「选中窗口下面那层」会突变（真机截图确认）。
+    /// </summary>
+    private void RaiseForDismiss(long windowId)
+    {
+        if (_raisedId == windowId) return;
+        int index = Controller.Scene.IndexOf(windowId);
+        if (index < 0) return;
+        foreach (var o in _overlays) o.RaiseWindow(index);
+        _raisedId = windowId;
     }
 
     private void UpdateDecorations()
@@ -327,6 +342,12 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         var controller = Controller;
         var frame = controller.Sample(nowUs);
+        if (frame.EmphasizedWindow != _renderEmphasized)
+        {
+            // 三指下滑收起开始强调某个窗口：交给 UI 线程把它提到最上层（只在强调对象变化时投递一次）
+            _renderEmphasized = frame.EmphasizedWindow;
+            if (frame.EmphasizedWindow is { } emphasized) _ui.Post(() => RaiseForDismiss(emphasized));
+        }
         var scene = controller.Scene;
         var rects = _rects;
         var opacity = _opacity;
