@@ -12,24 +12,40 @@ public class WindowShadowTests
         Assert.Equal(-0.9953222650, WindowShadow.Erf(-2), 6);
     }
 
-    [Fact]
-    public void Shadow_reproduces_the_measured_profile()
+    [Theory]
+    // 150% 缩放下真机实测的活动窗口阴影（物理像素，到窗口可见边的距离 → 变暗比例）
+    [InlineData("右", 9, 0.294)]
+    [InlineData("右", 25, 0.137)]
+    [InlineData("右", 49, 0.024)]
+    [InlineData("下", 9, 0.545)]
+    [InlineData("下", 41, 0.307)]
+    [InlineData("下", 81, 0.078)]
+    [InlineData("上", 9, 0.169)]
+    [InlineData("上", 25, 0.059)]
+    public void Active_shadow_matches_the_measured_profile(string side, double d, double measured)
     {
-        // 150% 缩放下实测（物理像素）：活动窗口右侧 11px 处约 0.275、底部 11px 处约 0.53、顶部比底部浅得多
-        var s = ShadowStyle.Active;
-        double W = 1729, H = 922, dpi = 1.5;
-        double At(double x, double y) => s.Opacity
-            * WindowShadow.Interval(x, 0, W, s.SigmaX * dpi) * WindowShadow.Interval(y, s.OffsetY * dpi, H + s.OffsetY * dpi, s.SigmaY * dpi);
-        Assert.InRange(At(W + 11, H / 2), 0.22, 0.30);
-        Assert.InRange(At(W / 2, H + 11), 0.45, 0.56);
-        Assert.InRange(At(W / 2, -11), 0.05, 0.16);
-        Assert.True(At(W + 150, H / 2) < 0.005);
+        double W = 1729, H = 922;
+        var (x, y) = side switch { "右" => (W + d, H / 2), "下" => (W / 2, H + d), _ => (W / 2, -d) };
+        Assert.InRange(WindowShadow.Coverage(ShadowStyle.Active, x, y, W, H, 1.5), measured - 0.015, measured + 0.015);
+    }
+
+    [Theory]
+    // 非活动窗口（400×300 测试窗口，150%）
+    [InlineData("右", 9, 0.063)]
+    [InlineData("下", 9, 0.176)]
+    [InlineData("下", 49, 0.078)]
+    [InlineData("上", 9, 0.024)]
+    public void Inactive_shadow_matches_the_measured_profile(string side, double d, double measured)
+    {
+        double W = 382, H = 291;
+        var (x, y) = side switch { "右" => (W + d, H / 2), "下" => (W / 2, H + d), _ => (W / 2, -d) };
+        Assert.InRange(WindowShadow.Coverage(ShadowStyle.Inactive, x, y, W, H, 1.5), measured - 0.015, measured + 0.015);
     }
 
     [Fact]
-    public void Image_leaves_the_window_area_clear_and_covers_the_margin()
+    public void Image_matches_the_model_and_is_not_hollowed_under_the_window()
     {
-        var img = WindowShadow.Render(ShadowStyle.Inactive, 400, 300, 1.5, downscale: 4);
+        var img = WindowShadow.Render(ShadowStyle.Active, 400, 300, 1.5, downscale: 4);
 
         Assert.True(img.Bgra.Length >= img.Width * img.Height * 4); // 池里借的缓冲可能更长
         byte Alpha(double xPx, double yPx)
@@ -37,10 +53,14 @@ public class WindowShadowTests
             int i = (int)((xPx + img.MarginPx) / 4), j = (int)((yPx + img.MarginPx) / 4);
             return img.Bgra[(j * img.Width + i) * 4 + 3];
         }
-        Assert.Equal(0, Alpha(200, 150)); // 窗口中间：留空
-        Assert.True(Alpha(200, 310) > Alpha(200, -10)); // 下方比上方深（向下偏移）
-        Assert.True(Alpha(200, 310) > 20);
+        // 窗口边内外不能有断层（挖空会在边外留浅边，撤层时闪一下）
+        Assert.True(Math.Abs(Alpha(200, 296) - Alpha(200, 304)) < 30);
+        Assert.True(Alpha(200, 150) > 0);
+        Assert.InRange(Alpha(200, 320) / 255.0, WindowShadow.Coverage(ShadowStyle.Active, 202, 322, 400, 300, 1.5) - 0.03,
+            WindowShadow.Coverage(ShadowStyle.Active, 202, 322, 400, 300, 1.5) + 0.03);
+        Assert.True(Alpha(200, 320) > Alpha(200, -20)); // 下方比上方深
         Assert.Equal(0, img.Bgra[0] | img.Bgra[1] | img.Bgra[2]); // 黑色
+        img.Return();
     }
 
     [Fact]

@@ -1,24 +1,30 @@
 namespace GlideShell.Core.Overview;
 
-/// <summary>
-/// Win11 窗口阴影的近似（真机实测拟合，2026-10-26，150% 缩放下测得后换算成 96 DPI 逻辑像素）：
-/// 一个向下偏移的模糊矩形，横竖模糊半径不同。缩略图不含阴影，总览自己按这个参数画，
-/// 撤层那一刻缩略图与真实窗口才一致（否则阴影会一下子压到下面的窗口上）。
-/// </summary>
-/// <param name="Opacity">阴影最深处的不透明度。</param>
-/// <param name="SigmaX">横向高斯模糊的标准差（逻辑像素）。</param>
-/// <param name="SigmaY">纵向高斯模糊的标准差（逻辑像素）。</param>
-/// <param name="OffsetY">整体向下偏移（逻辑像素）。</param>
-public readonly record struct ShadowStyle(double Opacity, double SigmaX, double SigmaY, double OffsetY)
-{
-    /// <summary>前台（活动）窗口：A=0.68、σx=29、σy=43、下移 34（物理像素，150%）。</summary>
-    public static ShadowStyle Active { get; } = new(0.68, 19.5, 28.5, 22.8);
+/// <summary>阴影的一层：一个向下偏移、横竖模糊半径不同的模糊矩形（96 DPI 逻辑像素）。</summary>
+/// <param name="Opacity">这一层最深处的不透明度。</param>
+/// <param name="SigmaX">横向高斯模糊的标准差。</param>
+/// <param name="SigmaY">纵向高斯模糊的标准差。</param>
+/// <param name="OffsetY">整体向下偏移。</param>
+public readonly record struct ShadowLayer(double Opacity, double SigmaX, double SigmaY, double OffsetY);
 
-    /// <summary>非活动窗口：A=0.23、σx=18、σy=36、下移 34（物理像素，150%）。</summary>
-    public static ShadowStyle Inactive { get; } = new(0.23, 12.0, 24.0, 22.7);
+/// <summary>
+/// Win11 窗口阴影的近似（真机实测拟合，2026-10-26，150% 缩放下测得后换算成 96 DPI 逻辑像素）。
+/// 缩略图不含阴影，总览自己按这个参数画，撤层那一刻缩略图与真实窗口才一致（否则阴影会一下子压到下面的窗口上）。
+/// 多层按「1 − ∏(1 − 各层)」叠加。
+/// </summary>
+public sealed record ShadowStyle(IReadOnlyList<ShadowLayer> Layers)
+{
+    /// <summary>
+    /// 前台（活动）窗口：贴边的深层 + 偏下的宽层（物理像素，150%：A=0.41 σ=17/21 不偏移；A=0.55 σ=29/34 下移 45），
+    /// 四条边逐点误差 &lt; 0.01（RMS 0.0033）。
+    /// </summary>
+    public static ShadowStyle Active { get; } = new([new(0.41, 11.6, 14.3, 0), new(0.55, 19.3, 22.3, 29.9)]);
+
+    /// <summary>非活动窗口：单层 A=0.23、σx=18、σy=36、下移 34（物理像素，150%，RMS 0.0045）。</summary>
+    public static ShadowStyle Inactive { get; } = new([new(0.23, 12.0, 24.0, 22.7)]);
 
     /// <summary>阴影图在窗口四周各留的边距（逻辑像素）：偏移 + 3σ 之外已经看不出来。</summary>
-    public double Margin => OffsetY + 3 * Math.Max(SigmaX, SigmaY);
+    public double Margin => Layers.Max(l => l.OffsetY + 3 * Math.Max(l.SigmaX, l.SigmaY));
 }
 
 /// <summary>阴影图：黑色、预乘 alpha 的 BGRA，按 <paramref name="Downscale"/> 缩小存储（阴影本身很虚，放大回去看不出差别）。</summary>
@@ -34,31 +40,29 @@ public static class WindowShadow
 {
     /// <summary>
     /// 画出某个大小窗口的阴影图（物理像素尺寸 <paramref name="widthPx"/>×<paramref name="heightPx"/>，DPI 缩放 <paramref name="dpiScale"/>）。
-    /// 窗口本身覆盖的区域留空：缩略图盖在上面，Win11 圆角窗口的四个角露出的是后面的内容，不是阴影。
+    /// 窗口下面也照常画：缩略图不透明、盖在上面；真实阴影本来也延伸到窗口下面，圆角露出来的正是它。
+    /// （早先把窗口区域挖空，放大插值时在窗口边外留下 2–4px 的浅边，撤层时这一圈「闪一下」。）
     /// </summary>
     public static ShadowImage Render(ShadowStyle style, double widthPx, double heightPx, double dpiScale, int downscale = 4)
     {
         double margin = Math.Ceiling(style.Margin * dpiScale);
-        double sx = style.SigmaX * dpiScale, sy = style.SigmaY * dpiScale, dy = style.OffsetY * dpiScale;
         int w = Math.Max(1, (int)Math.Ceiling((widthPx + 2 * margin) / downscale));
         int h = Math.Max(1, (int)Math.Ceiling((heightPx + 2 * margin) / downscale));
 
-        // 高斯模糊对横竖可分离：覆盖率 = 横向区间模糊 × 纵向区间模糊
-        var gx = new double[w];
-        var inX = new bool[w];
-        for (int i = 0; i < w; i++)
+        // 每层的高斯模糊横竖可分离：该层覆盖率 = 横向区间模糊 × 纵向区间模糊
+        int n = style.Layers.Count;
+        var gx = new double[n][];
+        var gy = new double[n][];
+        for (int k = 0; k < n; k++)
         {
-            double x = -margin + (i + 0.5) * downscale;
-            gx[i] = Interval(x, 0, widthPx, sx);
-            inX[i] = x > 0 && x < widthPx;
-        }
-        var gy = new double[h];
-        var inY = new bool[h];
-        for (int j = 0; j < h; j++)
-        {
-            double y = -margin + (j + 0.5) * downscale;
-            gy[j] = Interval(y, dy, heightPx + dy, sy);
-            inY[j] = y > 0 && y < heightPx;
+            var l = style.Layers[k];
+            gx[k] = new double[w];
+            for (int i = 0; i < w; i++)
+                gx[k][i] = l.Opacity * Interval(-margin + (i + 0.5) * downscale, 0, widthPx, l.SigmaX * dpiScale);
+            gy[k] = new double[h];
+            double dy = l.OffsetY * dpiScale;
+            for (int j = 0; j < h; j++)
+                gy[k][j] = Interval(-margin + (j + 0.5) * downscale, dy, heightPx + dy, l.SigmaY * dpiScale);
         }
 
         int size = w * h * 4;
@@ -67,10 +71,23 @@ public static class WindowShadow
         for (int j = 0; j < h; j++)
             for (int i = 0; i < w; i++)
             {
-                if (inX[i] && inY[j]) continue; // 窗口本身覆盖的区域
-                bgra[(j * w + i) * 4 + 3] = (byte)Math.Round(255 * Math.Clamp(style.Opacity * gx[i] * gy[j], 0, 1)); // 黑色预乘：只有 alpha
+                double clear = 1;
+                for (int k = 0; k < n; k++) clear *= 1 - gx[k][i] * gy[k][j];
+                bgra[(j * w + i) * 4 + 3] = (byte)Math.Round(255 * Math.Clamp(1 - clear, 0, 1)); // 黑色预乘：只有 alpha
             }
         return new ShadowImage(w, h, downscale, margin, bgra);
+    }
+
+    /// <summary>窗口外某点（相对窗口左上角，物理像素）的阴影不透明度，与 <see cref="Render"/> 同一个模型（测试与诊断用）。</summary>
+    public static double Coverage(ShadowStyle style, double x, double y, double widthPx, double heightPx, double dpiScale)
+    {
+        double clear = 1;
+        foreach (var l in style.Layers)
+        {
+            double dy = l.OffsetY * dpiScale;
+            clear *= 1 - l.Opacity * Interval(x, 0, widthPx, l.SigmaX * dpiScale) * Interval(y, dy, heightPx + dy, l.SigmaY * dpiScale);
+        }
+        return 1 - clear;
     }
 
     /// <summary>区间 [lo, hi] 的指示函数经标准差 <paramref name="sigma"/> 的高斯模糊后在 <paramref name="t"/> 处的值。</summary>
