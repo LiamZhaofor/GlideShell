@@ -10,6 +10,24 @@ internal static unsafe partial class Dcomp
 {
     public static readonly Guid IID_IDCompositionDesktopDevice = new("5F4633FE-1E08-4CB8-8C75-CE24333F5602");
     public static readonly Guid IID_IDCompositionVisual3 = new("2775F462-B6C1-4015-B0BE-B3E7D6A4976D");
+    public static readonly Guid IID_IDXGIDevice = new("54EC77FA-1377-44E6-8C32-88FD5F44C84C");
+    public static readonly Guid IID_ID3D11Texture2D = new("6F15AAF2-D208-4E89-9AB4-489535D34F9C");
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X, Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct D3D11_BOX
+    {
+        public uint left, top, front, right, bottom, back;
+    }
+
+    [LibraryImport("d3d11.dll")]
+    public static partial int D3D11CreateDevice(void* adapter, int driverType, nint software, uint flags, int* featureLevels, uint levels,
+        uint sdkVersion, void** device, int* featureLevel, void** context);
 
     [LibraryImport("dcomp.dll")]
     public static partial int DCompositionCreateDevice3(void* renderingDevice, Guid* iid, void** device);
@@ -21,6 +39,17 @@ internal static unsafe partial class Dcomp
     // ---- IDCompositionDesktopDevice（继承 IDCompositionDevice2）----
     public static int Commit(void* device) => ((delegate* unmanaged[Stdcall]<void*, int>)Vtbl(device)[3])(device);
     public static int CreateVisual(void* device, void** visual2) => ((delegate* unmanaged[Stdcall]<void*, void**, int>)Vtbl(device)[6])(device, visual2);
+    public static int CreateSurface(void* device, uint width, uint height, int format, int alphaMode, void** surface)
+        => ((delegate* unmanaged[Stdcall]<void*, uint, uint, int, int, void**, int>)Vtbl(device)[8])(device, width, height, format, alphaMode, surface);
+
+    // ---- IDCompositionSurface ----
+    public static int BeginDraw(void* surface, void* updateRect, Guid* iid, void** updateObject, POINT* offset)
+        => ((delegate* unmanaged[Stdcall]<void*, void*, Guid*, void**, POINT*, int>)Vtbl(surface)[3])(surface, updateRect, iid, updateObject, offset);
+    public static int EndDraw(void* surface) => ((delegate* unmanaged[Stdcall]<void*, int>)Vtbl(surface)[4])(surface);
+
+    // ---- ID3D11DeviceContext ----
+    public static void UpdateSubresource(void* context, void* resource, uint subresource, D3D11_BOX* box, void* data, uint rowPitch, uint depthPitch)
+        => ((delegate* unmanaged[Stdcall]<void*, void*, uint, D3D11_BOX*, void*, uint, uint, void>)Vtbl(context)[48])(context, resource, subresource, box, data, rowPitch, depthPitch);
     public static int CreateTargetForHwnd(void* device, nint hwnd, bool topmost, void** target)
         => ((delegate* unmanaged[Stdcall]<void*, nint, int, void**, int>)Vtbl(device)[24])(device, hwnd, topmost ? 1 : 0, target);
 
@@ -32,6 +61,7 @@ internal static unsafe partial class Dcomp
 
     public static int SetTransform(void* visual, Matrix3x2* matrix) // D2D_MATRIX_3X2_F 与 Matrix3x2 布局相同
         => ((delegate* unmanaged[Stdcall]<void*, Matrix3x2*, int>)Vtbl(visual)[8])(visual, matrix);
+    public static int SetContent(void* visual, void* content) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(visual)[15])(visual, content);
     public static int SetBitmapInterpolationMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[11])(visual, mode);
     /// <summary>insertAbove=false 且 reference=null：加到兄弟的最上层。</summary>
     public static int AddVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, 0, null);

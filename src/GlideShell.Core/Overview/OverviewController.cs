@@ -23,6 +23,12 @@ public interface IOverviewHost
     /// <summary>展开落定：覆盖层接管键盘与鼠标。</summary>
     void Activate();
 
+    /// <summary>
+    /// 收起已经确定（松手决定收起、或点击 / Enter）：宿主可以趁收起动画还在播，提前把 <paramref name="focusWindowId"/> 切到前台，
+    /// 动画落定时真实桌面就已经是最终的样子，撤层不用再等。动画中途被新手势接住也没关系（窗口已经在前台）。
+    /// </summary>
+    void Closing(long? focusWindowId);
+
     /// <summary>收起落定：隐藏覆盖层。<paramref name="focusWindowId"/> 非空时把它置前（最小化的先还原），否则还原原来的前台窗口。</summary>
     void Hide(long? focusWindowId);
 }
@@ -162,6 +168,8 @@ public sealed class OverviewController : IGestureTarget
 
     public void End(in GestureEvent e)
     {
+        bool closing = false;
+        long? focus = null;
         lock (_gate)
         {
             if (_ignoring)
@@ -180,10 +188,16 @@ public sealed class OverviewController : IGestureTarget
             else
             {
                 double target = _transition.Release(OpenAxisVelocity(e) / _travelMm, e.HostTimeUs);
-                if (target <= SettleEpsilon) _focusTarget = _closingGesture ? _hovered : null;
+                if (target <= SettleEpsilon)
+                {
+                    _focusTarget = _closingGesture ? _hovered : null;
+                    closing = true;
+                    focus = _focusTarget;
+                }
             }
             _closingGesture = false;
         }
+        if (closing) _host.Closing(focus);
     }
 
     // ---------- 非手势（UI 线程：热键、点击、Esc） ----------
@@ -242,6 +256,7 @@ public sealed class OverviewController : IGestureTarget
             _focusTarget = focusWindowId;
             _transition.AnimateTo(0, hostUs);
         }
+        _host.Closing(focusWindowId);
     }
 
     // ---------- 渲染线程 ----------
@@ -279,6 +294,19 @@ public sealed class OverviewController : IGestureTarget
     }
 
     /// <summary>按帧计算每个窗口的当前矩形，写进 <paramref name="dest"/>（长度 ≥ 场景窗口数，零分配）。</summary>
+    /// <summary>
+    /// 按帧计算每个窗口用「活动阴影」的权重（零分配）：原前台窗口是活动的；收起时被强调（要成为前台）的窗口随进度逐渐接过来。
+    /// </summary>
+    public static void ActiveShadowWeights(OverviewScene scene, in OverviewFrame frame, Span<double> dest)
+    {
+        long? target = frame.EmphasizedWindow;
+        for (int i = 0; i < scene.Count; i++)
+        {
+            var w = scene.Windows[i];
+            dest[i] = WindowShadow.ActiveWeight(w.IsForeground, target == w.Id, target is not null, frame.Progress);
+        }
+    }
+
     public static void WindowRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest, Span<double> opacity)
     {
         for (int i = 0; i < scene.Count; i++)

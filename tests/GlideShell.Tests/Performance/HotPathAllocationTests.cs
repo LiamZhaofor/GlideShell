@@ -20,6 +20,7 @@ public class HotPathAllocationTests
         public void CancelPrewarm() { }
         public void Show() { }
         public void Activate() { }
+        public void Closing(long? focusWindowId) { }
         public void Hide(long? focusWindowId) { }
     }
 

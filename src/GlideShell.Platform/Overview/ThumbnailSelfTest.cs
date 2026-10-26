@@ -43,7 +43,7 @@ public static unsafe partial class ThumbnailSelfTest
                     log($"创建 DComp 目标失败 0x{hr:X8}");
                     return false;
                 }
-                layer = SharedThumbnailLayer.Register(backend, composition, dest.Handle, workArea, windows, null, out hr);
+                layer = SharedThumbnailLayer.Register(backend, composition, dest.Handle, workArea, 1.0, windows, null, out hr);
                 if (layer is null)
                 {
                     log($"创建共享缩略图视觉失败 0x{hr:X8}");
@@ -57,15 +57,22 @@ public static unsafe partial class ThumbnailSelfTest
 
             // 缩小一半放在测试窗口中间：同时验证缩放、平移与不透明度
             var rect = new RectD(x + 80, y + 50, 160, 100);
-            int applied = layer.Apply([rect], [1.0], 0);
+            int applied = layer.Apply([rect], [1.0], [1.0], 0); // 活动阴影
             for (int i = 0; i < 4; i++) Dwmapi.DwmFlush();
             Pump(100);
 
             uint left = ScreenPixel(x + 110, y + 100), right = ScreenPixel(x + 210, y + 100), outside = ScreenPixel(x + 20, y + 20);
             bool red = (left & 0xFF) > 180 && ((left >> 16) & 0xFF) < 80;
             bool blue = ((right >> 16) & 0xFF) > 180 && (right & 0xFF) < 80;
-            log($"Apply 0x{applied:X8} · 左半 {Rgb(left)} · 右半 {Rgb(right)} · 外部 {Rgb(outside)}（期望：红 / 蓝 / 黑）");
+            uint below = ScreenPixel(x + 160, y + 158); // 缩略图下沿往下 8px：活动阴影最深的一侧
+            log($"Apply 0x{applied:X8} · 左半 {Rgb(left)} · 右半 {Rgb(right)} · 外部 {Rgb(outside)} · 下方阴影 {Rgb(below)}（期望：红 / 蓝 / 白 / 灰）");
             bool ok = applied == 0 && red && blue;
+            if (layer.DrawsShadows)
+            {
+                bool shadow = (below & 0xFF) < 230 && (outside & 0xFF) > 245;
+                log(shadow ? "窗口阴影：已画出" : "窗口阴影：没有画出来");
+                ok &= shadow;
+            }
             if (fadeProbe)
             {
                 // 实验：把目标窗口改成分层窗口并整体调透明度，看缩略图 / 共享视觉是否跟着淡出（撤层交叉淡出方案的前提）
@@ -129,7 +136,9 @@ public static unsafe partial class ThumbnailSelfTest
         public TestWindow(int x, int y, bool paint)
         {
             _paint = paint;
-            Create("GlideShell.ThumbnailSelfTest", User32.WS_POPUP, User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U, x, y, W, H);
+            // 测试源带标题栏与可调边框（有系统阴影的普通窗口），才会给它画阴影；目标是无边框的
+            uint style = paint ? User32.WS_CAPTION | 0x00040000 /* WS_THICKFRAME */ : User32.WS_POPUP;
+            Create("GlideShell.ThumbnailSelfTest", style, User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U, x, y, W, H);
             User32.ShowWindow(Handle, User32.SW_SHOWNOACTIVATE);
         }
 
@@ -148,7 +157,12 @@ public static unsafe partial class ThumbnailSelfTest
                 User32.FillRect(hdc, &l, red);
                 User32.FillRect(hdc, &r, blue);
             }
-            else User32.FillRect(hdc, &all, black);
+            else
+            {
+                nint white = Gdi32.CreateSolidBrush(Gdi32.Rgb(255, 255, 255)); // 白底：看得出阴影
+                User32.FillRect(hdc, &all, white);
+                Gdi32.DeleteObject(white);
+            }
             Gdi32.DeleteObject(black);
             Gdi32.DeleteObject(red);
             Gdi32.DeleteObject(blue);

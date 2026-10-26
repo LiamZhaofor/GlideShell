@@ -62,7 +62,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             }
             _composition ??= OverlayComposition.Create(shared, Handle, out sharedFailure);
             if (_composition is not null)
-                next = SharedThumbnailLayer.Register(shared, _composition, Handle, Monitor.WorkArea, windows, _layer as SharedThumbnailLayer, out sharedFailure);
+                next = SharedThumbnailLayer.Register(shared, _composition, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, _layer as SharedThumbnailLayer, out sharedFailure);
             if (next is null && sharedFailure == 0) sharedFailure = unchecked((int)0x80004005);
         }
         if (next is null)

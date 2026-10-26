@@ -178,11 +178,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     private void HideNow()
     {
         _shown = false;
-        // 交叉淡出撤层：缩略图没有窗口阴影，直接撤层时真实窗口的阴影会一下子出现
-        OverlayFade.FadeOutThenHide(_overlays.Select(o => o.Handle).ToList(), () =>
-        {
-            foreach (var o in _overlays) o.HideOverlay();
-        });
+        foreach (var o in _overlays) o.HideOverlay(); // 不淡出：淡出期间画面停在最后一帧，用户感觉是「卡一下」
         Release();
     }
 

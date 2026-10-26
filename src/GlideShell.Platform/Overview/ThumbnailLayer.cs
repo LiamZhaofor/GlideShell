@@ -108,7 +108,7 @@ internal sealed unsafe class ThumbnailLayer : IThumbnailLayer
     /// 渲染线程：按本帧的窗口矩形（屏幕坐标）、窗口不透明度与壁纸不透明度更新全部缩略图。
     /// 返回第一个失败的 HRESULT（0 = 全部成功）。
     /// </summary>
-    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, double wallpaperOpacity)
+    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity)
     {
         int firstError = 0;
         var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES();
@@ -145,6 +145,9 @@ internal sealed unsafe class ThumbnailLayer : IThumbnailLayer
     }
 
     public bool HasWallpaper => _wallpaper != 0;
+
+    /// <summary>经典缩略图画不了阴影（壁纸也是缩略图，盖在覆盖层自己的 GDI 内容上面）：撤层时要靠淡出过渡。</summary>
+    public bool DrawsShadows => false;
 
     /// <summary>
     /// UI 线程：按真实 Z 序重排。经典缩略图的层次由注册顺序决定：按新顺序重新注册一遍（沿用上一帧的属性），再注销旧的。

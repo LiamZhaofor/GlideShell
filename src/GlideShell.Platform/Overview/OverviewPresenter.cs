@@ -25,6 +25,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private OverviewController? _controller;
     private RectD[] _rects = new RectD[WindowCatalog.MaxWindows];
     private double[] _opacity = new double[WindowCatalog.MaxWindows];
+    private double[] _active = new double[WindowCatalog.MaxWindows];
     private bool _prepared;
     private bool _shown;
     private volatile bool _labelsShown;
@@ -32,6 +33,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long _sessionStartUs;
     private volatile bool _applyErrorLogged;
     private long? _raisedId; // UI 线程：本次会话已提到最上层的窗口
+    private long? _activatedId; // UI 线程：本次会话收起时已经切到前台的窗口
     private long? _renderEmphasized; // 渲染线程：上一帧强调的窗口
     private SharedThumbnailBackend? _shared;
     private bool _sharedUnavailable; // 探测或注册失败过：本次运行不再尝试
@@ -80,43 +82,48 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Log.Info($"总览展开（{(HostClock.NowUs() - _sessionStartUs) / 1000.0:F0}ms），{Controller.Scene.Count} 个窗口");
     });
 
+    /// <summary>收起已经确定（输入线程 / UI 线程）：趁收起动画还在播，在覆盖层下面把选中的窗口提到最上层并切到前台。</summary>
+    public void Closing(long? focusWindowId) => _ui.Post(() =>
+    {
+        if (focusWindowId is not { } id || !_shown) return;
+        RaiseForDismiss(id);
+        if (_activatedId == id) return;
+        if (!WindowActivator.Activate((nint)id, instant: true)) Log.Warn($"无法把窗口 0x{id:X} 置为前台");
+        _activatedId = id;
+    });
+
     public void Hide(long? focusWindowId) => _ui.Post(() =>
     {
         _keys.Uninstall();
-        // 先在覆盖层还盖着的时候把选中的窗口切到前台（最小化的无动画还原），等 DWM 呈现两帧再撤层：
-        // 撤层那一刻屏幕上已经是它在最上面的样子，不会「撤层后窗口才跳到前面 / 播还原动画」
+        // 选中的窗口通常已经在收起开始时切到前台了（Closing）；没有的话现在切，并等它真正成为前台（激活由目标程序的线程处理）
         if (focusWindowId is { } id)
         {
-            if (!WindowActivator.Activate((nint)id, instant: true)) Log.Warn($"无法把窗口 0x{id:X} 置为前台");
-            // 激活由目标程序的线程处理，Z 序不是立刻就变：等它真正成为前台（最多约 100ms）
-            long deadline = Environment.TickCount64 + 100;
-            do Dwmapi.DwmFlush();
-            while (User32.GetForegroundWindow() != (nint)id && Environment.TickCount64 < deadline);
+            if (_activatedId != id && !WindowActivator.Activate((nint)id, instant: true)) Log.Warn($"无法把窗口 0x{id:X} 置为前台");
+            long deadline = Environment.TickCount64 + 50;
+            while (User32.GetForegroundWindow() != (nint)id && Environment.TickCount64 < deadline) Dwmapi.DwmFlush();
         }
-        // 缩略图按「此刻」真实桌面的 Z 序重排再撤层：会话开始时拍下的 Z 序可能已经过时
+        // 缩略图按「此刻」真实桌面的 Z 序重排：会话开始时拍下的 Z 序可能已经过时
         // （真机截图：上一次切换刚激活的窗口在快照里还没到上面，撤层时选中窗口下面那层就变了）
         var zOrder = WindowCatalog.ZOrder();
         foreach (var o in _overlays) o.Restack(zOrder);
-        Dwmapi.DwmFlush();
-        // 诊断：日志目录旁放了 capture-dismiss 标记文件时，截下撤层前、撤层后、300ms 后三张图，排查撤层瞬间的画面突变
-        string? captures = ScreenCapture.EnabledDirectory("capture-dismiss");
-        string stamp = DateTime.Now.ToString("HHmmss-fff");
-        if (captures is not null) ScreenCapture.Save(Path.Combine(captures, $"{stamp}-1-before.bmp"));
-        // 交叉淡出撤层：缩略图没有窗口阴影、激活的程序还要重绘，直接撤层这些差异会一下子出现
-        OverlayFade.FadeOutThenHide(_overlays.Where(o => o.IsShown).Select(o => o.Handle).ToList(), () =>
+
+        // 画了窗口阴影：最后一帧与真实桌面一致，直接撤层，不等不淡出（不卡）。
+        // 经典缩略图画不了阴影，才用约 100ms 的淡出把阴影的出现过渡掉
+        var shown = _overlays.Where(o => o.IsShown).ToList();
+        if (shown.All(o => o.Layer.DrawsShadows))
         {
+            Dwmapi.DwmFlush(); // 让重排后的层次先上屏
             foreach (var o in _overlays) o.HideOverlay();
-        });
+        }
+        else
+        {
+            OverlayFade.FadeOutThenHide(shown.Select(o => o.Handle).ToList(), () =>
+            {
+                foreach (var o in _overlays) o.HideOverlay();
+            });
+        }
         _shown = false;
         ReleaseScene();
-        if (captures is not null)
-        {
-            for (int i = 0; i < 3; i++) Dwmapi.DwmFlush();
-            ScreenCapture.Save(Path.Combine(captures, $"{stamp}-2-after.bmp"));
-            Thread.Sleep(300);
-            ScreenCapture.Save(Path.Combine(captures, $"{stamp}-3-later.bmp"));
-            Log.Info($"已截下撤层前后三张图：{Path.Combine(captures, stamp)}-*.bmp");
-        }
     });
 
     /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
@@ -175,6 +182,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         {
             _rects = new RectD[scene.Count];
             _opacity = new double[scene.Count];
+            _active = new double[scene.Count];
         }
 
         var shared = SharedBackend(cfg);
@@ -217,9 +225,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var rects = new RectD[scene.Count];
         var opacity = new double[scene.Count];
         var frame = new OverviewFrame(progress, 0, 0, TransitionPhase.Tracking, true, null);
+        var active = new double[scene.Count];
         OverviewController.WindowRects(scene, frame, rects, opacity);
+        OverviewController.ActiveShadowWeights(scene, frame, active);
         double wallpaper = 1 - _config().BackdropDim * Math.Clamp(progress, 0, 1);
-        foreach (var o in _overlays) o.Layer.Apply(rects, opacity, wallpaper);
+        foreach (var o in _overlays) o.Layer.Apply(rects, opacity, active, wallpaper);
     }
 
     private void ReleaseScene()
@@ -229,6 +239,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _prepared = false;
         _hoveredId = null;
         _raisedId = null;
+        _activatedId = null;
         Controller.SetHovered(null);
     }
 
@@ -362,14 +373,16 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var scene = controller.Scene;
         var rects = _rects;
         var opacity = _opacity;
-        int count = Math.Min(scene.Count, Math.Min(rects.Length, opacity.Length));
+        var active = _active;
+        int count = Math.Min(scene.Count, Math.Min(rects.Length, Math.Min(opacity.Length, active.Length)));
         OverviewController.WindowRects(scene, frame, rects.AsSpan(0, count), opacity.AsSpan(0, count));
+        OverviewController.ActiveShadowWeights(scene, frame, active.AsSpan(0, count));
 
         double wallpaper = 1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1);
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
-            int hr = o.Layer.Apply(rects.AsSpan(0, count), opacity.AsSpan(0, count), wallpaper);
+            int hr = o.Layer.Apply(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper);
             if (hr != 0 && !_applyErrorLogged)
             {
                 _applyErrorLogged = true; // 每次会话只记一次

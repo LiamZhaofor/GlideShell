@@ -15,6 +15,7 @@ public class OverviewControllerTests
         public void CancelPrewarm() => Calls.Add("CancelPrewarm");
         public void Show() => Calls.Add("Show");
         public void Activate() => Calls.Add("Activate");
+        public void Closing(long? focusWindowId) => Calls.Add($"Closing:{focusWindowId?.ToString() ?? "-"}");
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
     }
 
@@ -162,7 +163,7 @@ public class OverviewControllerTests
         Assert.Equal(1, c.Sample(5_000_000).Progress);
         c.Toggle(5_000_000);
         Assert.Equal(0, c.Sample(10_000_000).Progress);
-        Assert.Equal(new[] { "Prewarm", "Show", "Activate", "Hide:-" }, host.Calls);
+        Assert.Equal(new[] { "Prewarm", "Show", "Activate", "Closing:-", "Hide:-" }, host.Calls);
     }
 
     [Fact]

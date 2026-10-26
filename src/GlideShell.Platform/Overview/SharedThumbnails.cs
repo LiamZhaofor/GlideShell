@@ -1,5 +1,6 @@
 using System.Numerics;
 using GlideShell.Core.Geometry;
+using GlideShell.Core.Overview;
 using GlideShell.Platform.Native;
 
 namespace GlideShell.Platform.Overview;
@@ -7,8 +8,14 @@ namespace GlideShell.Platform.Overview;
 /// <summary>覆盖层上的一组窗口缩略图：经典 DWM 缩略图（<see cref="ThumbnailLayer"/>）或共享缩略图视觉（<see cref="SharedThumbnailLayer"/>）。</summary>
 internal interface IThumbnailLayer
 {
-    /// <summary>渲染线程：按本帧的窗口矩形（屏幕坐标）、窗口不透明度与壁纸不透明度更新。返回第一个失败的 HRESULT（0 = 全部成功）。</summary>
-    int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, double wallpaperOpacity);
+    /// <summary>
+    /// 渲染线程：按本帧的窗口矩形（屏幕坐标）、窗口不透明度、「活动阴影」权重（<see cref="WindowShadow.ActiveWeight"/>）
+    /// 与壁纸不透明度更新。返回第一个失败的 HRESULT（0 = 全部成功）。
+    /// </summary>
+    int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity);
+
+    /// <summary>是否画窗口阴影：画了的话撤层那一刻缩略图与真实窗口一致，可以直接撤层，不用淡出。</summary>
+    bool DrawsShadows { get; }
 
     void HideAll();
 
@@ -44,34 +51,112 @@ internal static class Stacking
 }
 
 /// <summary>
-/// 共享缩略图视觉后端（实验，默认关闭，见 docs/CONFIG.md 的 overview.sharedThumbnails）：一个 DComp 桌面设备，
+/// 共享缩略图视觉后端（默认开启，见 docs/CONFIG.md 的 overview.sharedThumbnails）：一个 DComp 桌面设备，
 /// 所有 DComp 调用都在 <see cref="Gate"/> 锁内——UI 线程注册 / 注销、渲染线程逐帧改属性与 Commit 互不踩踏。
 /// 依赖未公开的 dwmapi#147（S4），任何一步失败都退回经典缩略图。
+/// 设备挂在一个 D3D11 设备上，用来上传窗口阴影图（DComp 表面）；D3D 不可用时照常工作，只是不画阴影。
 /// </summary>
 internal sealed unsafe class SharedThumbnailBackend : IDisposable
 {
     private void* _device;
+    private void* _d3d;
+    private void* _context;
 
-    private SharedThumbnailBackend(void* device) => _device = device;
+    private SharedThumbnailBackend(void* device, void* d3d, void* context)
+    {
+        _device = device;
+        _d3d = d3d;
+        _context = context;
+    }
 
     public object Gate { get; } = new();
 
     public void* Device => _device;
 
+    /// <summary>能不能画窗口阴影（需要 D3D11 设备上传表面）。</summary>
+    public bool CanDrawShadows => _context != null;
+
     public static SharedThumbnailBackend? TryCreate(out string status)
     {
         status = SharedThumbnailApi.Load();
         if (!SharedThumbnailApi.Available) return null;
+
+        void* d3d = null, context = null, dxgi = null;
+        int fl;
+        if (Dcomp.D3D11CreateDevice(null, 1 /* 硬件 */, 0, 0x20 /* BGRA_SUPPORT */, null, 0, 7, &d3d, &fl, &context) >= 0)
+        {
+            Guid dxgiIid = Dcomp.IID_IDXGIDevice;
+            if (Dcomp.QueryInterface(d3d, &dxgiIid, &dxgi) < 0) dxgi = null;
+        }
+
         Guid iid = Dcomp.IID_IDCompositionDesktopDevice;
         void* device;
-        int hr = Dcomp.DCompositionCreateDevice3(null, &iid, &device);
+        int hr = Dcomp.DCompositionCreateDevice3(dxgi, &iid, &device);
+        if (dxgi != null) Dcomp.Release(dxgi);
+        if (hr < 0 && dxgi != null) hr = Dcomp.DCompositionCreateDevice3(null, &iid, &device); // 带 D3D 失败就不画阴影
         if (hr < 0 || device == null)
         {
+            if (context != null) Dcomp.Release(context);
+            if (d3d != null) Dcomp.Release(d3d);
             status = $"创建 DirectComposition 设备失败 0x{hr:X8}";
             return null;
         }
-        status = "共享缩略图视觉可用（dwmapi#147 + DirectComposition）";
-        return new SharedThumbnailBackend(device);
+        if (context == null && d3d != null)
+        {
+            Dcomp.Release(d3d);
+            d3d = null;
+        }
+        status = context != null ? "共享缩略图视觉可用（dwmapi#147 + DirectComposition + 窗口阴影）" : "共享缩略图视觉可用（没有 D3D11，不画窗口阴影）";
+        return new SharedThumbnailBackend(device, d3d, context);
+    }
+
+    /// <summary>锁内调用：把阴影图上传成 DComp 表面，返回挂着它的视觉（IDCompositionVisual3，初始不透明度 0）。</summary>
+    public int CreateShadowVisual(ShadowImage image, out nint visual, out nint surface)
+    {
+        visual = surface = 0;
+        if (_context == null) return unchecked((int)0x80004001);
+        void* s;
+        int hr = Dcomp.CreateSurface(_device, (uint)image.Width, (uint)image.Height, 87 /* B8G8R8A8_UNORM */, 1 /* 预乘 */, &s);
+        if (hr < 0) return hr;
+        Guid texIid = Dcomp.IID_ID3D11Texture2D;
+        void* texture;
+        Dcomp.POINT offset;
+        hr = Dcomp.BeginDraw(s, null, &texIid, &texture, &offset);
+        if (hr < 0)
+        {
+            Dcomp.Release(s);
+            return hr;
+        }
+        // BeginDraw 给的可能是图集里的一块：只更新 offset 起的那一块
+        var box = new Dcomp.D3D11_BOX
+        {
+            left = (uint)offset.X, top = (uint)offset.Y, front = 0,
+            right = (uint)(offset.X + image.Width), bottom = (uint)(offset.Y + image.Height), back = 1,
+        };
+        fixed (byte* pixels = image.Bgra) Dcomp.UpdateSubresource(_context, texture, 0, &box, pixels, (uint)image.Width * 4, 0);
+        Dcomp.Release(texture);
+        hr = Dcomp.EndDraw(s);
+        void* v2, v3;
+        if (hr >= 0) hr = Dcomp.CreateVisual(_device, &v2);
+        else v2 = null;
+        if (hr >= 0) hr = Dcomp.SetContent(v2, s);
+        if (hr >= 0)
+        {
+            Dcomp.SetBitmapInterpolationMode(v2, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
+            hr = Dcomp.ToVisual3(v2, &v3);
+            v2 = null;
+        }
+        else v3 = null;
+        if (hr < 0)
+        {
+            if (v2 != null) Dcomp.Release(v2);
+            Dcomp.Release(s);
+            return hr;
+        }
+        Dcomp.SetOpacity(v3, 0);
+        visual = (nint)v3;
+        surface = (nint)s;
+        return 0;
     }
 
     public void Dispose()
@@ -79,7 +164,9 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         lock (Gate)
         {
             if (_device != null) Dcomp.Release(_device);
-            _device = null;
+            if (_context != null) Dcomp.Release(_context);
+            if (_d3d != null) Dcomp.Release(_d3d);
+            _device = _context = _d3d = null;
         }
     }
 }
@@ -131,13 +218,19 @@ internal sealed unsafe class OverlayComposition : IDisposable
 }
 
 /// <summary>
-/// 共享缩略图视觉版的 <see cref="IThumbnailLayer"/>：每个窗口一个 DComp 视觉，按源的可见尺寸 1:1 创建，
-/// 每帧只改变换矩阵（缩放 + 平移）、不透明度与可见性，最后一次 Commit 原子生效；没有逐帧同步的 DWM 调用。
+/// 共享缩略图视觉版的 <see cref="IThumbnailLayer"/>。每个窗口一个分组视觉，组内从下往上：非活动阴影、活动阴影、缩略图；
+/// 缩略图按源的可见尺寸 1:1 创建，阴影图按窗口真实大小画好（<see cref="WindowShadow"/>，1/4 分辨率），
+/// 每帧只改变换矩阵与不透明度，最后一次 Commit 原子生效；没有逐帧同步的 DWM 调用。
+/// 层次操作（复用前缀、提到最上层、按 Z 序重排）都以分组为单位，阴影始终紧贴在自己窗口的下面。
 /// 跨会话复用规则同经典路径（从最下层起、窗口与源矩形都没变的前缀），源矩形变了（窗口改过大小）就重建。
 /// </summary>
-internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
+internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 {
-    private readonly record struct Entry(nint Visual, nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent);
+    private readonly record struct Shadow(nint Visual, nint Surface, int Downscale, double MarginPx);
+
+    /// <param name="Group">挂在根视觉下的那个（壁纸就是缩略图视觉本身）。</param>
+    private readonly record struct Entry(nint Group, nint Visual, nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent,
+        Shadow Inactive, Shadow Active);
 
     private readonly SharedThumbnailBackend _backend;
     private readonly OverlayComposition _composition;
@@ -155,13 +248,15 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
         _origin = origin;
     }
 
+    public bool DrawsShadows => _backend.CanDrawShadows;
+
     /// <summary>
     /// 注册（不可见）。先把新视觉全部建好（加在最上层），成功后才撤掉上一层里不再复用的部分——
     /// 留下的复用前缀在最下面、新建的按 Z 序在上面，顺序自然正确。
     /// 任何一步失败：撤掉本次新建的、把上一层整个释放，返回 null，调用方退回经典缩略图。
     /// </summary>
     public static SharedThumbnailLayer? Register(SharedThumbnailBackend backend, OverlayComposition composition, nint overlay, RectD workArea,
-        IReadOnlyList<(int SceneIndex, nint Hwnd)> windows, SharedThumbnailLayer? previous, out int hr)
+        double dpiScale, IReadOnlyList<(int SceneIndex, nint Hwnd)> windows, SharedThumbnailLayer? previous, out int hr)
     {
         lock (backend.Gate)
         {
@@ -183,8 +278,10 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
                     Left = (int)workArea.Left - pr.Left, Top = (int)workArea.Top - pr.Top,
                     Right = (int)workArea.Right - pr.Left, Bottom = (int)workArea.Bottom - pr.Top,
                 };
-                hr = Create(backend, root, overlay, progman, source, out wallpaper);
+                hr = CreateThumbnail(backend, overlay, progman, source, out nint visual, out nint thumb);
+                if (hr >= 0) hr = Dcomp.AddVisual(root, (void*)visual);
                 if (hr < 0) return Fail();
+                wallpaper = new Entry(visual, visual, thumb, progman, -1, source, true, default, default);
                 created.Add(wallpaper);
             }
 
@@ -210,10 +307,10 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
                 var (source, hasContent) = SourceFor(overlay, hwnd);
                 if (!hasContent)
                 {
-                    entries.Add(new Entry(0, 0, hwnd, index, source, false));
+                    entries.Add(new Entry(0, 0, 0, hwnd, index, source, false, default, default));
                     continue;
                 }
-                hr = Create(backend, root, overlay, hwnd, source, out var entry);
+                hr = CreateWindowGroup(backend, root, overlay, hwnd, source, dpiScale, out var entry);
                 if (hr < 0) return Fail();
                 created.Add(entry);
                 entries.Add(entry with { SceneIndex = index });
@@ -253,7 +350,7 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
         return false;
     }
 
-    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, double wallpaperOpacity)
+    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity)
     {
         lock (_backend.Gate)
         {
@@ -264,11 +361,7 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
                 if (hr < 0 && firstError == 0) firstError = hr;
             }
 
-            if (_wallpaper.Visual != 0)
-            {
-                var v = (void*)_wallpaper.Visual;
-                Check(Dcomp.SetOpacity(v, (float)Math.Clamp(wallpaperOpacity, 0, 1)));
-            }
+            if (_wallpaper.Visual != 0) Check(Dcomp.SetOpacity((void*)_wallpaper.Visual, (float)Math.Clamp(wallpaperOpacity, 0, 1)));
             foreach (var e in _windows)
             {
                 if (e.Visual == 0) continue;
@@ -276,13 +369,31 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
                 if (e.SceneIndex >= sceneRects.Length)
                 {
                     Check(Dcomp.SetOpacity(v, 0));
+                    if (e.Inactive.Visual != 0) Check(Dcomp.SetOpacity((void*)e.Inactive.Visual, 0));
+                    if (e.Active.Visual != 0) Check(Dcomp.SetOpacity((void*)e.Active.Visual, 0));
                     continue;
                 }
                 var r = sceneRects[e.SceneIndex];
-                float sx = (float)(r.Width / Math.Max(1, e.Source.Width)), sy = (float)(r.Height / Math.Max(1, e.Source.Height));
-                var m = new Matrix3x2(sx, 0, 0, sy, (float)(r.Left - _origin.Left), (float)(r.Top - _origin.Top));
+                double sx = r.Width / Math.Max(1, e.Source.Width), sy = r.Height / Math.Max(1, e.Source.Height);
+                double left = r.Left - _origin.Left, top = r.Top - _origin.Top;
+                var m = new Matrix3x2((float)sx, 0, 0, (float)sy, (float)left, (float)top);
                 Check(Dcomp.SetTransform(v, &m));
-                Check(Dcomp.SetOpacity(v, (float)Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1)));
+                double opacity = Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1);
+                Check(Dcomp.SetOpacity(v, (float)opacity));
+
+                // 阴影图覆盖窗口四周 MarginPx，按 Downscale 缩小存储：缩放 = 窗口缩放 × Downscale，左上角再往外挪 MarginPx
+                double active = e.SceneIndex < sceneActive.Length ? Math.Clamp(sceneActive[e.SceneIndex], 0, 1) : 0;
+                ApplyShadow(e.Inactive, opacity * (1 - active));
+                ApplyShadow(e.Active, opacity * active);
+
+                void ApplyShadow(Shadow s, double alpha)
+                {
+                    if (s.Visual == 0) return;
+                    var sm = new Matrix3x2((float)(sx * s.Downscale), 0, 0, (float)(sy * s.Downscale),
+                        (float)(left - s.MarginPx * sx), (float)(top - s.MarginPx * sy));
+                    Check(Dcomp.SetTransform((void*)s.Visual, &sm));
+                    Check(Dcomp.SetOpacity((void*)s.Visual, (float)alpha));
+                }
             }
             Check(Dcomp.Commit(_backend.Device));
             return firstError;
@@ -294,11 +405,11 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
         lock (_backend.Gate)
         {
             int idx = Array.FindIndex(_windows, e => e.SceneIndex == sceneIndex);
-            if (_released || idx < 0 || idx == _windows.Length - 1 || _windows[idx].Visual == 0) return this;
+            if (_released || idx < 0 || idx == _windows.Length - 1 || _windows[idx].Group == 0) return this;
             void* root = _composition.Root;
-            void* v = (void*)_windows[idx].Visual;
-            Dcomp.RemoveVisual(root, v);
-            Dcomp.AddVisual(root, v); // 加回去就在兄弟的最上层
+            void* g = (void*)_windows[idx].Group;
+            Dcomp.RemoveVisual(root, g);
+            Dcomp.AddVisual(root, g); // 加回去就在兄弟的最上层（连同它的阴影）
             var entries = _windows.Where((_, i) => i != idx).Append(_windows[idx]).ToArray();
             _released = true; // 视觉转交给新层
             return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
@@ -313,10 +424,10 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
             if (_released || order.Select((v, i) => v == i).All(x => x)) return this;
             void* root = _composition.Root;
             foreach (var e in _windows)
-                if (e.Visual != 0) Dcomp.RemoveVisual(root, (void*)e.Visual);
+                if (e.Group != 0) Dcomp.RemoveVisual(root, (void*)e.Group);
             var entries = order.Select(i => _windows[i]).ToArray();
             foreach (var e in entries)
-                if (e.Visual != 0) Dcomp.AddVisual(root, (void*)e.Visual); // 依次加到最上层 = 从下往上
+                if (e.Group != 0) Dcomp.AddVisual(root, (void*)e.Group); // 依次加到最上层 = 从下往上
             Dcomp.Commit(_backend.Device);
             _released = true; // 视觉转交给新层
             return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
@@ -330,7 +441,11 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
             if (_released || _backend.Device == null) return;
             if (_wallpaper.Visual != 0) Dcomp.SetOpacity((void*)_wallpaper.Visual, 0);
             foreach (var e in _windows)
+            {
                 if (e.Visual != 0) Dcomp.SetOpacity((void*)e.Visual, 0);
+                if (e.Inactive.Visual != 0) Dcomp.SetOpacity((void*)e.Inactive.Visual, 0);
+                if (e.Active.Visual != 0) Dcomp.SetOpacity((void*)e.Active.Visual, 0);
+            }
             Dcomp.Commit(_backend.Device);
         }
     }
@@ -351,9 +466,9 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
 
     // ---------- 锁内的小工具 ----------
 
-    private static int Create(SharedThumbnailBackend backend, void* root, nint overlay, nint source, User32.RECT sourceRect, out Entry entry)
+    private static int CreateThumbnail(SharedThumbnailBackend backend, nint overlay, nint source, User32.RECT sourceRect, out nint visual, out nint thumbnail)
     {
-        entry = default;
+        visual = thumbnail = 0;
         var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES
         {
             dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_VISIBLE | Dwmapi.DWM_TNP_OPACITY,
@@ -362,28 +477,80 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
             opacity = 255,
             fVisible = 1,
         };
-        void* visual;
+        void* v;
         nint thumb;
-        int hr = SharedThumbnailApi.Create(overlay, source, &props, backend.Device, &visual, &thumb);
+        int hr = SharedThumbnailApi.Create(overlay, source, &props, backend.Device, &v, &thumb);
         if (hr < 0) return hr;
-        Dcomp.SetBitmapInterpolationMode(visual, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
-        Dcomp.SetOpacity(visual, 0); // 共享视觉不支持 SetVisible（返回 E_INVALIDARG），一律用不透明度 0 隐藏
-        hr = Dcomp.AddVisual(root, visual);
-        if (hr < 0)
-        {
-            Dcomp.Release(visual);
-            if (thumb != 0) Dwmapi.DwmUnregisterThumbnail(thumb);
-            return hr;
-        }
-        entry = new Entry((nint)visual, thumb, source, -1, sourceRect, true);
+        Dcomp.SetBitmapInterpolationMode(v, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
+        Dcomp.SetOpacity(v, 0); // 共享视觉不支持 SetVisible（返回 E_INVALIDARG），一律用不透明度 0 隐藏
+        visual = (nint)v;
+        thumbnail = thumb;
         return 0;
     }
 
+    /// <summary>建一个窗口的分组：非活动阴影、活动阴影（窗口有系统阴影时）、缩略图，挂到根视觉最上层。</summary>
+    private static int CreateWindowGroup(SharedThumbnailBackend backend, void* root, nint overlay, nint hwnd, User32.RECT source, double dpiScale, out Entry entry)
+    {
+        entry = default;
+        void* created;
+        int hr = Dcomp.CreateVisual(backend.Device, &created);
+        if (hr < 0) return hr;
+        nint group = (nint)created;
+        Shadow inactive = default, active = default;
+        if (backend.CanDrawShadows && CastsShadow(hwnd))
+        {
+            inactive = MakeShadow(ShadowStyle.Inactive);
+            active = MakeShadow(ShadowStyle.Active);
+        }
+        hr = CreateThumbnail(backend, overlay, hwnd, source, out nint visual, out nint thumb);
+        if (hr >= 0) hr = Dcomp.AddVisual((void*)group, (void*)visual);
+        if (hr >= 0) hr = Dcomp.AddVisual(root, (void*)group);
+        entry = new Entry(group, visual, thumb, hwnd, -1, source, true, inactive, active);
+        if (hr < 0)
+        {
+            Remove(null, entry);
+            entry = default;
+        }
+        return hr;
+
+        Shadow MakeShadow(ShadowStyle style)
+        {
+            var image = WindowShadow.Render(style, source.Width, source.Height, dpiScale);
+            if (backend.CreateShadowVisual(image, out nint v, out nint s) < 0) return default;
+            Dcomp.AddVisual((void*)group, (void*)v); // 先加的在下面：阴影垫在缩略图下
+            return new Shadow(v, s, image.Downscale, image.MarginPx);
+        }
+    }
+
+    /// <summary>
+    /// 窗口有没有系统阴影：有标题栏或可调边框、而且不是最大化（最大化窗口没有阴影；最小化前是最大化的，还原后也是最大化）。
+    /// </summary>
+    private static bool CastsShadow(nint hwnd)
+    {
+        const long WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000;
+        long style = User32.GetWindowLongPtrW(hwnd, User32.GWL_STYLE);
+        if ((style & (WS_CAPTION | WS_THICKFRAME)) == 0) return false;
+        if (IsZoomed(hwnd)) return false;
+        if (User32.IsIconic(hwnd))
+        {
+            var wp = new User32.WINDOWPLACEMENT { length = (uint)sizeof(User32.WINDOWPLACEMENT) };
+            if (User32.GetWindowPlacement(hwnd, &wp) && (wp.flags & User32.WPF_RESTORETOMAXIMIZED) != 0) return false;
+        }
+        return true;
+    }
+
+    /// <summary>从父视觉上摘下并释放（root 为 null 时只释放：还没挂上去）。</summary>
     private static void Remove(void* root, in Entry e)
     {
-        if (e.Visual == 0) return;
-        Dcomp.RemoveVisual(root, (void*)e.Visual);
-        Dcomp.Release((void*)e.Visual);
+        if (e.Group == 0 && e.Visual == 0) return;
+        if (root != null && e.Group != 0) Dcomp.RemoveVisual(root, (void*)e.Group);
+        foreach (var s in new[] { e.Inactive, e.Active })
+        {
+            if (s.Visual != 0) Dcomp.Release((void*)s.Visual);
+            if (s.Surface != 0) Dcomp.Release((void*)s.Surface);
+        }
+        if (e.Visual != 0) Dcomp.Release((void*)e.Visual);
+        if (e.Group != 0 && e.Group != e.Visual) Dcomp.Release((void*)e.Group);
         if (e.Thumb != 0) Dwmapi.DwmUnregisterThumbnail(e.Thumb);
     }
 
@@ -404,4 +571,8 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
     }
 
     private static bool SameRect(User32.RECT a, User32.RECT b) => a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool IsZoomed(nint hwnd);
 }
