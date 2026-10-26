@@ -182,7 +182,7 @@ internal static unsafe partial class Ole32
 
 /// <summary>已文档化的虚拟桌面查询接口（只读部分即可满足窗口过滤）。</summary>
 [GeneratedComInterface]
-[Guid("a5cd82ff-29be-454c-8d04-d82879fb3f1b")]
+[Guid("a5cd92ff-29be-454c-8d04-d82879fb3f1b")] // 旧原型误写成 a5cd82ff（S3 发现），导致查询一直失败
 internal partial interface IVirtualDesktopManager
 {
     [PreserveSig]

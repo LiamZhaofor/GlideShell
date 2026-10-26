@@ -161,6 +161,9 @@ public static unsafe class WindowCatalog
     private static IVirtualDesktopManager? s_vdm;
     private static bool s_vdmTried;
 
+    /// <summary>已文档化的虚拟桌面查询接口是否可用（诊断用）。</summary>
+    public static bool VirtualDesktopQueryAvailable => VirtualDesktops is not null;
+
     private static IVirtualDesktopManager? VirtualDesktops
     {
         get

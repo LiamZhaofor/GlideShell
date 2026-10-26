@@ -178,7 +178,7 @@ static int Windows()
     var rejected = new List<(string Window, string Reason)>();
     var sw = Stopwatch.StartNew();
     var windows = GlideShell.Platform.Shell.WindowCatalog.Snapshot(monitors, rejections: rejected);
-    Console.WriteLine($"收录 {windows.Count} 个窗口（枚举耗时 {sw.Elapsed.TotalMilliseconds:F1}ms）：");
+    Console.WriteLine($"收录 {windows.Count} 个窗口（枚举耗时 {sw.Elapsed.TotalMilliseconds:F1}ms，虚拟桌面查询{(GlideShell.Platform.Shell.WindowCatalog.VirtualDesktopQueryAvailable ? "可用" : "不可用")}）：");
     foreach (var w in windows)
         Console.WriteLine($"  ✓ {(w.IsForeground ? "[前台] " : "")}{(w.IsMinimized ? "[最小化] " : "")}{Short(w.Title)} — {w.ProcessName} @#{w.MonitorIndex} {w.Source}");
     Console.WriteLine($"排除 {rejected.Count} 个（只列有标题的）：");
