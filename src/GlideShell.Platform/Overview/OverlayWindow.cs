@@ -85,6 +85,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         if (_members.Contains(sceneIndex)) _layer = _layer.BringToTop(Handle, sceneIndex);
     }
 
+    /// <summary>UI 线程：按真实桌面当前的 Z 序重排本屏缩略图的层次（撤层前用）。</summary>
+    public void Restack(IReadOnlyList<nint> topFirst) => _layer = _layer.Restack(Handle, topFirst);
+
     /// <summary>会话结束：隐藏缩略图但保留注册，下次打开时复用。</summary>
     public void Release()
     {

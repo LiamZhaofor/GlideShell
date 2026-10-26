@@ -21,6 +21,26 @@ internal interface IThumbnailLayer
 
     /// <summary>UI 线程：把某个窗口提到最上层（选中的窗口飞回原位时不能被别的窗口挡住）。返回替换后的层。</summary>
     IThumbnailLayer BringToTop(nint overlay, int sceneIndex);
+
+    /// <summary>
+    /// UI 线程：按真实桌面当前的 Z 序（<paramref name="topFirst"/>，最上层在前）重排缩略图的层次，返回替换后的层。
+    /// 撤层前用：会话开始时的 Z 序可能已经过时（上一次切换的激活还没生效、程序自己把窗口提上来等）。
+    /// </summary>
+    IThumbnailLayer Restack(nint overlay, IReadOnlyList<nint> topFirst);
+}
+
+internal static class Stacking
+{
+    /// <summary>按真实 Z 序给出「从下往上」的新顺序（下标）；已经不在 Z 序里的窗口（关掉了）放最下面，保持原相对顺序。</summary>
+    public static int[] BottomUp<T>(IReadOnlyList<T> entries, Func<T, nint> hwnd, IReadOnlyList<nint> topFirst)
+    {
+        var rank = new Dictionary<nint, int>(topFirst.Count);
+        for (int i = 0; i < topFirst.Count; i++) rank.TryAdd(topFirst[i], i);
+        return Enumerable.Range(0, entries.Count)
+            .OrderByDescending(i => rank.TryGetValue(hwnd(entries[i]), out int r) ? r : int.MaxValue)
+            .ThenBy(i => i)
+            .ToArray();
+    }
 }
 
 /// <summary>
@@ -280,6 +300,24 @@ internal sealed unsafe class SharedThumbnailLayer : IThumbnailLayer
             Dcomp.RemoveVisual(root, v);
             Dcomp.AddVisual(root, v); // 加回去就在兄弟的最上层
             var entries = _windows.Where((_, i) => i != idx).Append(_windows[idx]).ToArray();
+            _released = true; // 视觉转交给新层
+            return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
+        }
+    }
+
+    public IThumbnailLayer Restack(nint overlay, IReadOnlyList<nint> topFirst)
+    {
+        lock (_backend.Gate)
+        {
+            var order = Stacking.BottomUp(_windows, e => e.Hwnd, topFirst);
+            if (_released || order.Select((v, i) => v == i).All(x => x)) return this;
+            void* root = _composition.Root;
+            foreach (var e in _windows)
+                if (e.Visual != 0) Dcomp.RemoveVisual(root, (void*)e.Visual);
+            var entries = order.Select(i => _windows[i]).ToArray();
+            foreach (var e in entries)
+                if (e.Visual != 0) Dcomp.AddVisual(root, (void*)e.Visual); // 依次加到最上层 = 从下往上
+            Dcomp.Commit(_backend.Device);
             _released = true; // 视觉转交给新层
             return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
         }

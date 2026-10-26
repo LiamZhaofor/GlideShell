@@ -88,9 +88,16 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         if (focusWindowId is { } id)
         {
             if (!WindowActivator.Activate((nint)id, instant: true)) Log.Warn($"无法把窗口 0x{id:X} 置为前台");
-            Dwmapi.DwmFlush();
-            Dwmapi.DwmFlush();
+            // 激活由目标程序的线程处理，Z 序不是立刻就变：等它真正成为前台（最多约 100ms）
+            long deadline = Environment.TickCount64 + 100;
+            do Dwmapi.DwmFlush();
+            while (User32.GetForegroundWindow() != (nint)id && Environment.TickCount64 < deadline);
         }
+        // 缩略图按「此刻」真实桌面的 Z 序重排再撤层：会话开始时拍下的 Z 序可能已经过时
+        // （真机截图：上一次切换刚激活的窗口在快照里还没到上面，撤层时选中窗口下面那层就变了）
+        var zOrder = WindowCatalog.ZOrder();
+        foreach (var o in _overlays) o.Restack(zOrder);
+        Dwmapi.DwmFlush();
         // 诊断：日志目录旁放了 capture-dismiss 标记文件时，截下撤层前、撤层后、300ms 后三张图，排查撤层瞬间的画面突变
         string? captures = ScreenCapture.EnabledDirectory("capture-dismiss");
         string stamp = DateTime.Now.ToString("HHmmss-fff");

@@ -147,6 +147,40 @@ internal sealed unsafe class ThumbnailLayer : IThumbnailLayer
     public bool HasWallpaper => _wallpaper != 0;
 
     /// <summary>
+    /// UI 线程：按真实 Z 序重排。经典缩略图的层次由注册顺序决定：按新顺序重新注册一遍（沿用上一帧的属性），再注销旧的。
+    /// </summary>
+    public IThumbnailLayer Restack(nint overlay, IReadOnlyList<nint> topFirst)
+    {
+        var order = Stacking.BottomUp(_windows, e => e.Hwnd, topFirst);
+        if (order.Select((v, i) => v == i).All(x => x)) return this;
+        var entries = new Entry[order.Length];
+        var last = new LastFrame[order.Length];
+        for (int k = 0; k < order.Length; k++)
+        {
+            var old = _windows[order[k]];
+            var frame = _last[order[k]];
+            nint thumb;
+            if (Dwmapi.DwmRegisterThumbnail(overlay, old.Hwnd, &thumb) != 0) thumb = 0;
+            var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES
+            {
+                dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_OPACITY | Dwmapi.DWM_TNP_VISIBLE,
+                rcDestination = frame.Destination,
+                rcSource = old.Source,
+                opacity = frame.Opacity,
+                fVisible = frame.Visible && old.HasContent ? 1 : 0,
+            };
+            if (thumb != 0) Dwmapi.DwmUpdateThumbnailProperties(thumb, &props);
+            entries[k] = old with { Thumb = thumb };
+            last[k] = frame;
+        }
+        foreach (var e in _windows) Dwmapi.DwmUnregisterThumbnail(e.Thumb);
+        var layer = new ThumbnailLayer(_wallpaper, _wallpaperSourceHwnd, _wallpaperSource, entries.Where(e => e.Thumb != 0).ToArray(), _origin);
+        for (int k = 0, j = 0; k < entries.Length; k++)
+            if (entries[k].Thumb != 0) layer._last[j++] = last[k];
+        return layer;
+    }
+
+    /// <summary>
     /// UI 线程：把某个窗口的缩略图提到最上层。经典缩略图的层次由注册顺序决定，只能重新注册一个：
     /// 新缩略图立刻沿用旧的那个上一帧的位置与不透明度（渲染线程记在 <see cref="_last"/> 里），再注销旧的，中间不会空一帧。
     /// </summary>

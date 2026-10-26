@@ -97,6 +97,16 @@ public static unsafe class WindowCatalog
         return result;
     }
 
+    /// <summary>当前全部顶层窗口的 Z 序（最上层在前）。</summary>
+    public static List<nint> ZOrder()
+    {
+        t_handles = [];
+        User32.EnumWindows(&Collect, 0);
+        var handles = t_handles;
+        t_handles = null;
+        return handles;
+    }
+
     public static string Title(nint hwnd)
     {
         int len = User32.GetWindowTextLengthW(hwnd);
