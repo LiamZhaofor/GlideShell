@@ -54,6 +54,7 @@ internal sealed class AppHost
     private DragController _drag = null!;
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
+    private int _takeoverGeneration; // UI 线程
     private readonly string? _simulate;
 
     /// <param name="simulate">开发用：不启动真实输入，按名称回放一段合成手势（见 <see cref="SyntheticTouch.Scripts"/>）。</param>
@@ -198,11 +199,34 @@ internal sealed class AppHost
     {
         var result = _native.TakeOver(_activeMap);
         foreach (var m in result.Messages) Log.Info($"系统手势：{m}");
-        if (!result.Verified) _tray?.ShowBalloon("系统手势未能立即切换", "已写入设置，重启资源管理器后生效。详见日志。", warning: true);
+        if (!result.Verified) RetryVerify(1, ++_takeoverGeneration);
+    }
+
+    /// <summary>
+    /// 开机启动时 Explorer 的设置缓存可能还没就绪（Refresh 失败）：注册表已经写好，隔几秒重试让它生效，
+    /// 几次都不行才提示用户。期间又接管 / 还原过（代数变了）就放弃这一轮。
+    /// </summary>
+    private void RetryVerify(int attempt, int generation)
+    {
+        const int MaxAttempts = 4;
+        _ui.PostDelayed(attempt * 3000, () =>
+        {
+            if (_paused || generation != _takeoverGeneration) return;
+            var result = _native.Reverify();
+            if (result.Verified)
+            {
+                Log.Info($"系统手势：第 {attempt} 次重试后已生效");
+                return;
+            }
+            foreach (var m in result.Messages) Log.Info($"系统手势（重试 {attempt}）：{m}");
+            if (attempt < MaxAttempts) RetryVerify(attempt + 1, generation);
+            else _tray?.ShowBalloon("系统手势未能立即切换", "已写入设置，重启资源管理器后生效。详见日志。", warning: true);
+        });
     }
 
     private void RestoreNativeGestures()
     {
+        _takeoverGeneration++;
         var result = _native.Restore();
         foreach (var m in result.Messages) Log.Info($"系统手势：{m}");
     }

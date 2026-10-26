@@ -103,6 +103,19 @@ public sealed class NativeGestureManager(string? recordPath = null)
         return new NativeGestureResult(true, verified, messages);
     }
 
+    /// <summary>
+    /// 对接管记录里的项重新 Refresh 并读回校验（注册表已写好，只差 Explorer 生效）。
+    /// 登录早期开机启动时，Explorer 的设置缓存可能还没就绪，用它隔几秒重试。
+    /// </summary>
+    public NativeGestureResult Reverify()
+    {
+        var messages = new List<string>();
+        var record = LoadRecord();
+        if (record is null || record.IsEmpty) return new NativeGestureResult(false, true, messages);
+        bool verified = RefreshAndVerify(record.Changes.Select(c => (c.Id, c.Name, (int?)c.Written)), messages);
+        return new NativeGestureResult(true, verified, messages);
+    }
+
     /// <summary>注册表值与 Explorer 生效值逐项对照（诊断用）。</summary>
     public IReadOnlyList<(string Name, int? Registry, int? Effective)> Describe()
     {
