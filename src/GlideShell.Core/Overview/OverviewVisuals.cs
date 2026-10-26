@@ -37,11 +37,14 @@ public static class OverviewVisuals
     public static double LabelOpacity(double p) => SmoothStep(0.75, 1.0, p);
 
     /// <summary>
-    /// 收起时指针下的窗口逐渐放大，暗示「松手后它会成为前台」（macOS 行为）。
-    /// p 从 1 降到 0 时放大量从 0 增长到 <paramref name="maxGrow"/>。
+    /// 收起时被选中的窗口在飞回途中略微放大，暗示「它会成为前台」（macOS 行为）。
+    /// 放大量在半程最大、两端为 0：落定那一刻必须正好是窗口的真实大小，撤掉覆盖层时才不会「先大一下再缩回」。
     /// </summary>
-    public static RectD EmphasizeForDismiss(RectD rect, double p, double maxGrow = 0.08)
-        => rect.ScaleAroundCenter(1 + maxGrow * (1 - Math.Clamp(p, 0, 1)));
+    public static RectD EmphasizeForDismiss(RectD rect, double p, double maxGrow = 0.06)
+    {
+        double t = Math.Clamp(p, 0, 1);
+        return rect.ScaleAroundCenter(1 + maxGrow * 4 * t * (1 - t));
+    }
 
     public static double SmoothStep(double edge0, double edge1, double x)
     {

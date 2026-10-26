@@ -26,6 +26,12 @@ public sealed record OverviewConfig
 
     /// <summary>展开后背景（桌面）变暗的程度：0 = 不变暗，1 = 全黑。</summary>
     public double BackdropDim { get; set; } = 0.6;
+
+    /// <summary>
+    /// 实验：用共享缩略图视觉（未公开的 dwmapi#147 + DirectComposition）代替经典 DWM 缩略图。
+    /// 高刷新率屏幕上明显更流畅（S4）；系统不支持时自动退回经典缩略图。
+    /// </summary>
+    public bool SharedThumbnails { get; set; } = true;
 }
 
 public sealed record SwitcherConfig

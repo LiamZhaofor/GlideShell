@@ -15,7 +15,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 {
     private readonly Action<OverlayWindow, double, double> _onMouseMove;
     private readonly Action<OverlayWindow, double, double> _onClick;
-    private volatile ThumbnailLayer _layer;
+    private volatile IThumbnailLayer _layer;
+    private OverlayComposition? _composition; // 共享缩略图视觉模式下才创建
     private OverviewScene _scene = OverviewScene.Empty;
     private IReadOnlyList<int> _members = [];
     private bool _labelsVisible;
@@ -35,19 +36,53 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     public MonitorInfo Monitor { get; }
 
-    public ThumbnailLayer Layer => _layer;
+    public IThumbnailLayer Layer => _layer;
 
     public bool IsShown { get; private set; }
 
-    /// <summary>UI 线程：为本屏的窗口注册缩略图（不可见），尽量复用上一次的注册。</summary>
-    public void Prepare(OverviewScene scene, IReadOnlyList<int> members)
+    /// <summary>
+    /// UI 线程：为本屏的窗口注册缩略图（不可见），尽量复用上一次的注册。
+    /// <paramref name="shared"/> 非空时用共享缩略图视觉；那条路失败就退回经典缩略图并返回失败的 HRESULT（0 = 正常）。
+    /// </summary>
+    public int Prepare(OverviewScene scene, IReadOnlyList<int> members, SharedThumbnailBackend? shared)
     {
         _scene = scene;
         _members = members;
         _hovered = -1;
         _labelsVisible = false;
-        _layer = ThumbnailLayer.Register(Handle, Monitor.WorkArea, members.Select(i => (i, (nint)scene.Windows[i].Id)).ToList(), _layer);
+        var windows = members.Select(i => (i, (nint)scene.Windows[i].Id)).ToList();
+        int sharedFailure = 0;
+        IThumbnailLayer? next = null;
+        if (shared is not null)
+        {
+            if (_layer is ThumbnailLayer classic)
+            {
+                classic.Unregister(); // 换后端：旧注册不能复用
+                _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
+            }
+            _composition ??= OverlayComposition.Create(shared, Handle, out sharedFailure);
+            if (_composition is not null)
+                next = SharedThumbnailLayer.Register(shared, _composition, Handle, Monitor.WorkArea, windows, _layer as SharedThumbnailLayer, out sharedFailure);
+            if (next is null && sharedFailure == 0) sharedFailure = unchecked((int)0x80004005);
+        }
+        if (next is null)
+        {
+            if (_layer is SharedThumbnailLayer old)
+            {
+                old.Unregister();
+                _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
+            }
+            next = ThumbnailLayer.Register(Handle, Monitor.WorkArea, windows, _layer as ThumbnailLayer);
+        }
+        _layer = next;
         User32.InvalidateRect(Handle, null, 1);
+        return sharedFailure;
+    }
+
+    /// <summary>UI 线程：把某个场景窗口的缩略图提到最上层（不是本屏的窗口时什么也不做）。</summary>
+    public void RaiseWindow(int sceneIndex)
+    {
+        if (_members.Contains(sceneIndex)) _layer = _layer.BringToTop(Handle, sceneIndex);
     }
 
     /// <summary>会话结束：隐藏缩略图但保留注册，下次打开时复用。</summary>
@@ -66,6 +101,13 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         old.Unregister();
         _scene = OverviewScene.Empty;
         _members = [];
+    }
+
+    public override void Dispose()
+    {
+        _composition?.Dispose();
+        _composition = null;
+        base.Dispose();
     }
 
     public void ShowOverlay()

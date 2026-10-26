@@ -54,6 +54,7 @@ public sealed record SettingsModel
     public double MmPerWindow { get; init; }
     public double DesktopTravelMm { get; init; }
     public double BackdropDim { get; init; }
+    public bool SharedThumbnails { get; init; }
     public double DragPixelsPerMm { get; init; }
     public double DragAcceleration { get; init; }
     public required IReadOnlyList<string> ExcludedProcesses { get; init; }
@@ -94,6 +95,7 @@ public sealed record SettingsModel
             MmPerWindow = c.Switcher.MmPerWindow,
             DesktopTravelMm = c.Desktops.TravelMm,
             BackdropDim = c.Overview.BackdropDim,
+            SharedThumbnails = c.Overview.SharedThumbnails,
             DragPixelsPerMm = c.Drag.PixelsPerMm,
             DragAcceleration = c.Drag.Acceleration,
             ExcludedProcesses = [.. c.ExcludedProcesses],
@@ -166,7 +168,7 @@ public sealed record SettingsModel
             ThreeFingerDrag = ThreeFingerDrag,
             PauseInFullscreen = PauseInFullscreen,
             Recognition = c.Recognition with { SlopMm = SlopMm, TapMaxMoveMm = Math.Min(c.Recognition.TapMaxMoveMm, SlopMm) },
-            Overview = c.Overview with { TravelMm = OverviewTravelMm, BackdropDim = BackdropDim },
+            Overview = c.Overview with { TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow },
             // 界面用「系统默认」表达不接管切桌面，旧的 Enabled 开关统一置为 true，免得两处说法不一致
             Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true },

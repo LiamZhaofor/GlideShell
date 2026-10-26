@@ -25,7 +25,7 @@ public sealed unsafe class SettingsWindow : NativeWindow
     private const int ClientWidth = 760, ClientHeight = 566;
     private const uint Style = User32.WS_OVERLAPPED | User32.WS_CAPTION | User32.WS_SYSMENU | User32.WS_MINIMIZEBOX;
     private const int IdOk = 1, IdCancel = 2; // IsDialogMessage 把 Enter / Esc 翻译成这两个命令
-    private const int IdGestureBase = 100, IdDrag = 110, IdFullscreen = 111, IdAutostart = 112;
+    private const int IdGestureBase = 100, IdDrag = 110, IdFullscreen = 111, IdAutostart = 112, IdShared = 113;
     private const int IdPresetBase = 120, IdRemove = 130, IdAdd = 131, IdDefaults = 140, IdOpenConfig = 141;
 
     private static SettingsWindow? s_current;
@@ -41,7 +41,7 @@ public sealed unsafe class SettingsWindow : NativeWindow
     private nint _hwnd;
     private nint _font;
     private uint _dpi = 96;
-    private nint _drag, _fullscreen, _autostart, _presetLabel, _desktopNote, _excludedList, _addCombo;
+    private nint _drag, _fullscreen, _autostart, _shared, _presetLabel, _desktopNote, _excludedList, _addCombo;
     private IReadOnlyList<string> _runningApps = [];
 
     private sealed class Slider(string label, double min, double max, double step, Func<double, string> format,
@@ -147,15 +147,16 @@ public sealed unsafe class SettingsWindow : NativeWindow
         AddSlider(new Slider("切换一个窗口", 10, 50, 1, v => $"{v:0} mm", m => m.MmPerWindow, (m, v) => m with { MmPerWindow = v }), 140);
         AddSlider(new Slider("切换桌面：滑满", 20, 100, 1, v => $"{v:0} mm", m => m.DesktopTravelMm, (m, v) => m with { DesktopTravelMm = v }), 174);
 
-        Group("外观", 392, 224, 352, 62);
+        Group("外观", 392, 224, 352, 88);
         AddSlider(new Slider("总览背景变暗", 0, 1, 0.05, v => $"{v * 100:0}%", m => m.BackdropDim, (m, v) => m with { BackdropDim = v }), 250);
+        _shared = Child("BUTTON", "共享缩略图（实验，高刷新率下更流畅）", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdShared, 408, 282, 320, 22);
 
-        Group("三指拖移", 392, 296, 352, 96);
-        AddSlider(new Slider("指针速度", 4, 40, 1, v => $"{v:0} px/mm", m => m.DragPixelsPerMm, (m, v) => m with { DragPixelsPerMm = v }), 322);
-        AddSlider(new Slider("加速", 0, 2, 0.1, v => $"{v:0.0}", m => m.DragAcceleration, (m, v) => m with { DragAcceleration = v }), 356);
+        Group("三指拖移", 392, 322, 352, 96);
+        AddSlider(new Slider("指针速度", 4, 40, 1, v => $"{v:0} px/mm", m => m.DragPixelsPerMm, (m, v) => m with { DragPixelsPerMm = v }), 348);
+        AddSlider(new Slider("加速", 0, 2, 0.1, v => $"{v:0.0}", m => m.DragAcceleration, (m, v) => m with { DragAcceleration = v }), 382);
 
-        Group("启动", 392, 402, 352, 56);
-        _autostart = Child("BUTTON", "登录 Windows 时自动启动 GlideShell", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAutostart, 408, 426, 320, 22);
+        Group("启动", 392, 428, 352, 56);
+        _autostart = Child("BUTTON", "登录 Windows 时自动启动 GlideShell", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAutostart, 408, 452, 320, 22);
 
         // 底部按钮
         Child("BUTTON", "恢复默认", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdDefaults, 16, 522, 96, 28);
@@ -204,6 +205,7 @@ public sealed unsafe class SettingsWindow : NativeWindow
         RefreshSliders();
         RefreshExcluded();
         Check(_autostart, _model.Autostart);
+        Check(_shared, _model.SharedThumbnails);
     }
 
     private void RefreshGestures()
@@ -328,6 +330,9 @@ public sealed unsafe class SettingsWindow : NativeWindow
                 break;
             case IdFullscreen:
                 _model = _model with { PauseInFullscreen = IsChecked(_fullscreen) };
+                break;
+            case IdShared:
+                _model = _model with { SharedThumbnails = IsChecked(_shared) };
                 break;
             case IdAutostart:
                 _model = _model with { Autostart = IsChecked(_autostart) };

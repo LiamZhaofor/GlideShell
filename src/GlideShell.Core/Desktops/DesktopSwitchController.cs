@@ -55,6 +55,9 @@ public sealed class DesktopSwitchController : IGestureTarget
         };
     }
 
+    /// <summary>某时刻的位置（不推进动画、无副作用），供呈现层在显示覆盖层之前先摆好第一帧。</summary>
+    public double PositionAt(long hostUs) => _transition.Peek(hostUs);
+
     public bool IsVisible
     {
         get { lock (_gate) return _visible; }

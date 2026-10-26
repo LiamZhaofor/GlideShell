@@ -8,12 +8,20 @@ namespace GlideShell.Platform.Overview;
 /// 第 0 个是桌面壁纸（不透明度兼作背景变暗），之后是窗口，按 Z 序从下往上注册（后注册的在上层）。
 /// 最小化窗口也是实时缩略图：DWM 保留着它最小化前的画面（见 <see cref="ThumbnailSource"/>）。
 /// </summary>
-internal sealed unsafe class ThumbnailLayer
+internal sealed unsafe class ThumbnailLayer : IThumbnailLayer
 {
     /// <param name="HasContent">false = 最小化窗口在 DWM 里没有留下画面，不显示缩略图，由覆盖层画占位卡片。</param>
     public readonly record struct Entry(nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent);
 
     private readonly Entry[] _windows; // 从下往上
+    private readonly LastFrame[] _last; // 与 _windows 同序：渲染线程上一帧给每个缩略图设的属性（换层次时沿用）
+
+    private struct LastFrame
+    {
+        public User32.RECT Destination;
+        public byte Opacity;
+        public bool Visible;
+    }
     private readonly nint _wallpaper;
     private readonly nint _wallpaperSourceHwnd;
     private readonly User32.RECT _wallpaperSource;
@@ -25,6 +33,7 @@ internal sealed unsafe class ThumbnailLayer
         _wallpaperSourceHwnd = wallpaperSourceHwnd;
         _wallpaperSource = wallpaperSource;
         _windows = windows;
+        _last = new LastFrame[windows.Length];
         _origin = origin;
     }
 
@@ -116,8 +125,9 @@ internal sealed unsafe class ThumbnailLayer
 
         props.dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_OPACITY | Dwmapi.DWM_TNP_VISIBLE;
         props.fVisible = 1;
-        foreach (var e in _windows)
+        for (int i = 0; i < _windows.Length; i++)
         {
+            var e = _windows[i];
             if (!e.HasContent || e.SceneIndex >= sceneRects.Length) continue;
             var r = sceneRects[e.SceneIndex];
             props.opacity = (byte)Math.Round(255 * Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1));
@@ -127,6 +137,7 @@ internal sealed unsafe class ThumbnailLayer
                 Right = (int)Math.Round(r.Right - _origin.Left), Bottom = (int)Math.Round(r.Bottom - _origin.Top),
             };
             props.rcSource = e.Source;
+            _last[i] = new LastFrame { Destination = props.rcDestination, Opacity = props.opacity, Visible = true };
             int hr = Dwmapi.DwmUpdateThumbnailProperties(e.Thumb, &props);
             if (hr != 0 && firstError == 0) firstError = hr;
         }
@@ -134,6 +145,37 @@ internal sealed unsafe class ThumbnailLayer
     }
 
     public bool HasWallpaper => _wallpaper != 0;
+
+    /// <summary>
+    /// UI 线程：把某个窗口的缩略图提到最上层。经典缩略图的层次由注册顺序决定，只能重新注册一个：
+    /// 新缩略图立刻沿用旧的那个上一帧的位置与不透明度（渲染线程记在 <see cref="_last"/> 里），再注销旧的，中间不会空一帧。
+    /// </summary>
+    public IThumbnailLayer BringToTop(nint overlay, int sceneIndex)
+    {
+        int idx = Array.FindIndex(_windows, e => e.SceneIndex == sceneIndex);
+        if (idx < 0 || idx == _windows.Length - 1 || !_windows[idx].HasContent) return this;
+        var old = _windows[idx];
+        nint thumb;
+        if (Dwmapi.DwmRegisterThumbnail(overlay, old.Hwnd, &thumb) != 0) return this;
+        var last = _last[idx];
+        var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES
+        {
+            dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_OPACITY | Dwmapi.DWM_TNP_VISIBLE,
+            rcDestination = last.Destination,
+            rcSource = old.Source,
+            opacity = last.Opacity,
+            fVisible = last.Visible ? 1 : 0,
+        };
+        Dwmapi.DwmUpdateThumbnailProperties(thumb, &props);
+        Dwmapi.DwmUnregisterThumbnail(old.Thumb);
+
+        var entries = _windows.Where((_, i) => i != idx).Append(old with { Thumb = thumb }).ToArray();
+        var layer = new ThumbnailLayer(_wallpaper, _wallpaperSourceHwnd, _wallpaperSource, entries, _origin);
+        for (int i = 0, j = 0; i < _windows.Length; i++)
+            if (i != idx) layer._last[j++] = _last[i];
+        layer._last[^1] = last;
+        return layer;
+    }
 
     /// <summary>UI 线程（重绘时）：该场景窗口是否有缩略图画面；没有时覆盖层画占位卡片。</summary>
     public bool ShowsContent(int sceneIndex)
@@ -147,7 +189,11 @@ internal sealed unsafe class ThumbnailLayer
     {
         var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES { dwFlags = Dwmapi.DWM_TNP_VISIBLE, fVisible = 0 };
         if (_wallpaper != 0) Dwmapi.DwmUpdateThumbnailProperties(_wallpaper, &props);
-        foreach (var e in _windows) Dwmapi.DwmUpdateThumbnailProperties(e.Thumb, &props);
+        for (int i = 0; i < _windows.Length; i++)
+        {
+            _last[i].Visible = false;
+            Dwmapi.DwmUpdateThumbnailProperties(_windows[i].Thumb, &props);
+        }
     }
 
     /// <summary>

@@ -1,0 +1,93 @@
+using System.Numerics;
+using System.Runtime.InteropServices;
+
+namespace GlideShell.Platform.Native;
+
+// DirectComposition（只用到桌面设备、目标、视觉）与未公开的共享缩略图视觉 dwmapi#147。
+// COM 调用用原始 vtable：槽位取自 win32metadata（S4 spike 里 CsWin32 生成的代码），
+// 注意 C++ 重载方法各占一个槽：SetOffsetX(动画)=3、SetOffsetX(float)=4、SetTransform(变换)=7、SetTransform(矩阵)=8 …
+internal static unsafe partial class Dcomp
+{
+    public static readonly Guid IID_IDCompositionDesktopDevice = new("5F4633FE-1E08-4CB8-8C75-CE24333F5602");
+    public static readonly Guid IID_IDCompositionVisual3 = new("2775F462-B6C1-4015-B0BE-B3E7D6A4976D");
+
+    [LibraryImport("dcomp.dll")]
+    public static partial int DCompositionCreateDevice3(void* renderingDevice, Guid* iid, void** device);
+
+    // ---- IUnknown ----
+    public static int QueryInterface(void* p, Guid* iid, void** result) => ((delegate* unmanaged[Stdcall]<void*, Guid*, void**, int>)Vtbl(p)[0])(p, iid, result);
+    public static uint Release(void* p) => ((delegate* unmanaged[Stdcall]<void*, uint>)Vtbl(p)[2])(p);
+
+    // ---- IDCompositionDesktopDevice（继承 IDCompositionDevice2）----
+    public static int Commit(void* device) => ((delegate* unmanaged[Stdcall]<void*, int>)Vtbl(device)[3])(device);
+    public static int CreateVisual(void* device, void** visual2) => ((delegate* unmanaged[Stdcall]<void*, void**, int>)Vtbl(device)[6])(device, visual2);
+    public static int CreateTargetForHwnd(void* device, nint hwnd, bool topmost, void** target)
+        => ((delegate* unmanaged[Stdcall]<void*, nint, int, void**, int>)Vtbl(device)[24])(device, hwnd, topmost ? 1 : 0, target);
+
+    // ---- IDCompositionTarget ----
+    public static int SetRoot(void* target, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(target)[3])(target, visual);
+
+    // ---- IDCompositionVisual / Visual2 / VisualDebug / Visual3 ----
+    public const int BITMAP_INTERPOLATION_MODE_LINEAR = 1;
+
+    public static int SetTransform(void* visual, Matrix3x2* matrix) // D2D_MATRIX_3X2_F 与 Matrix3x2 布局相同
+        => ((delegate* unmanaged[Stdcall]<void*, Matrix3x2*, int>)Vtbl(visual)[8])(visual, matrix);
+    public static int SetBitmapInterpolationMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[11])(visual, mode);
+    /// <summary>insertAbove=false 且 reference=null：加到兄弟的最上层。</summary>
+    public static int AddVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, 0, null);
+    public static int RemoveVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(parent)[17])(parent, visual);
+    public static int SetOpacity(void* visual3, float opacity) => ((delegate* unmanaged[Stdcall]<void*, float, int>)Vtbl(visual3)[30])(visual3, opacity);
+
+    /// <summary>任意视觉 QI 成 IDCompositionVisual3（成功时释放原指针）。</summary>
+    public static int ToVisual3(void* visual, void** visual3)
+    {
+        Guid iid = IID_IDCompositionVisual3;
+        int hr = QueryInterface(visual, &iid, visual3);
+        Release(visual);
+        return hr;
+    }
+
+    private static void** Vtbl(void* p) => *(void***)p;
+}
+
+/// <summary>
+/// 未公开的 dwmapi 序号 147「DwmpCreateSharedThumbnailVisual」：把 DWM 缩略图做成调用方 DComp 设备里的视觉，
+/// 位置 / 缩放 / 不透明度走 DComp 属性、随 Commit 原子生效，没有逐帧同步的 DwmUpdateThumbnailProperties。
+/// 签名取自社区逆向资料（Win10 1809+ / Win11），S4 在本机 26300 上验证可用。
+/// </summary>
+internal static unsafe partial class SharedThumbnailApi
+{
+    private static delegate* unmanaged[Stdcall]<nint, nint, uint, Dwmapi.DWM_THUMBNAIL_PROPERTIES*, void*, void**, nint*, int> s_create;
+
+    public static bool Available => s_create != null;
+
+    /// <summary>找到导出；返回诊断说明。</summary>
+    public static string Load()
+    {
+        if (s_create != null) return "已加载";
+        nint dwm = LoadLibraryW("dwmapi.dll");
+        if (dwm == 0) return "dwmapi.dll 加载失败";
+        void* fn = GetProcAddress(dwm, 147);
+        if (fn == null) return "dwmapi 没有序号 147 的导出";
+        s_create = (delegate* unmanaged[Stdcall]<nint, nint, uint, Dwmapi.DWM_THUMBNAIL_PROPERTIES*, void*, void**, nint*, int>)fn;
+        return "dwmapi#147 可用";
+    }
+
+    /// <summary>创建共享缩略图视觉（返回 IDCompositionVisual3，调用方 Release；缩略图句柄用 DwmUnregisterThumbnail 注销）。</summary>
+    public static int Create(nint destination, nint source, Dwmapi.DWM_THUMBNAIL_PROPERTIES* props, void* device, void** visual3, nint* thumbnail)
+    {
+        *visual3 = null;
+        *thumbnail = 0;
+        if (s_create == null) return unchecked((int)0x80004001); // E_NOTIMPL
+        void* visual = null;
+        int hr = s_create(destination, source, 2, props, device, &visual, thumbnail);
+        if (hr < 0 || visual == null) return hr < 0 ? hr : unchecked((int)0x80004005);
+        return Dcomp.ToVisual3(visual, visual3);
+    }
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial nint LoadLibraryW(string name);
+
+    [LibraryImport("kernel32.dll")]
+    private static partial void* GetProcAddress(nint module, nint ordinal);
+}

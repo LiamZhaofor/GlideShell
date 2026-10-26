@@ -86,6 +86,7 @@
 | `travelMm` | 30 | 5–100 | 滑动多少毫米完全展开 |
 | `backdropDim` | 0.6 | 0–1 | 展开后背景（壁纸）变暗的程度，0 = 不变暗 |
 | `primaryMonitorOnly` | `false` | — | 多显示器时只在主显示器上展开总览 |
+| `sharedThumbnails` | `true` | — | 实验：用共享缩略图视觉（未公开的 dwmapi#147 + DirectComposition）代替经典 DWM 缩略图，高刷新率屏幕上明显更流畅；系统不支持或出错时自动退回经典缩略图（日志里有记录）。设置窗口「外观」里也能开关 |
 | `spring` | 0.35 / 0.86 | — | 松手后的弹簧，见下文 |
 
 ## 切换窗口 `switcher`

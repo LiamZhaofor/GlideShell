@@ -219,6 +219,19 @@ public class OverviewControllerTests
         OverviewController.WindowRects(scene, new OverviewFrame(0, 0, 0, TransitionPhase.Animating, true, 2), rects, opacity);
         Assert.Equal(1, opacity[1]);
         Assert.Equal(windows[1].Source.CenterX, rects[1].CenterX, 6);
-        Assert.True(rects[1].Width > windows[1].Source.Width); // 收起时的强调放大
+        Assert.Equal(windows[1].Source.Width, rects[1].Width, 6); // 落定时正好是真实大小，撤层不会跳
+
+        // 飞回半程略微放大（强调它会成为前台）
+        OverviewController.WindowRects(scene, new OverviewFrame(0.5, 0, 0, TransitionPhase.Animating, true, 2), rects, opacity);
+        Assert.True(rects[1].Width > OverviewVisuals.WindowRect(windows[1].Source, tile, 0.5).Width);
+    }
+
+    [Fact]
+    public void Dismiss_emphasis_vanishes_at_both_ends()
+    {
+        var rect = new RectD(100, 100, 800, 600);
+        Assert.Equal(rect.Width, OverviewVisuals.EmphasizeForDismiss(rect, 0).Width, 6);
+        Assert.Equal(rect.Width, OverviewVisuals.EmphasizeForDismiss(rect, 1).Width, 6);
+        Assert.Equal(rect.Width * 1.06, OverviewVisuals.EmphasizeForDismiss(rect, 0.5).Width, 6);
     }
 }

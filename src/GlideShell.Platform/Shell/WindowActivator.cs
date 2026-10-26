@@ -9,10 +9,24 @@ namespace GlideShell.Platform.Shell;
 /// </summary>
 public static unsafe partial class WindowActivator
 {
-    public static bool Activate(nint hwnd)
+    /// <param name="instant">
+    /// 最小化窗口无动画还原（临时关掉它的 DWM 过渡动画）：总览在覆盖层下面还原它，撤层前就要已经在原位，
+    /// 不能让系统的「从任务栏升起」动画在撤层后才播。别的进程的窗口不一定允许设置，失败就照常还原。
+    /// </param>
+    public static bool Activate(nint hwnd, bool instant = false)
     {
         if (hwnd == 0 || !User32.IsWindow(hwnd)) return false;
-        if (User32.IsIconic(hwnd)) User32.ShowWindow(hwnd, User32.SW_RESTORE);
+        if (User32.IsIconic(hwnd))
+        {
+            int disable = 1;
+            bool noTransition = instant && Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disable, sizeof(int)) == 0;
+            User32.ShowWindow(hwnd, User32.SW_RESTORE);
+            if (noTransition)
+            {
+                int enable = 0;
+                Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &enable, sizeof(int));
+            }
+        }
 
         nint foreground = User32.GetForegroundWindow();
         uint fgThread = foreground != 0 ? User32.GetWindowThreadProcessId(foreground, null) : 0;
@@ -28,6 +42,8 @@ public static unsafe partial class WindowActivator
             if (attached) AttachThreadInput(me, fgThread, 0);
         }
     }
+
+    private const uint DWMWA_TRANSITIONS_FORCEDISABLED = 3;
 
     [System.Runtime.InteropServices.LibraryImport("kernel32.dll")]
     private static partial uint GetCurrentThreadId();

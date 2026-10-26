@@ -1,5 +1,6 @@
 using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
+using GlideShell.Core.Motion;
 using GlideShell.Core.Overview;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Native;
@@ -13,7 +14,7 @@ namespace GlideShell.Platform.Overview;
 /// 背景是桌面壁纸缩略图（不透明度随进度降低 = 变暗）。
 /// 线程：控制器从输入 / 渲染线程回调本类，本类把窗口操作都投递到 UI 线程；渲染线程只更新缩略图属性。
 /// </summary>
-public sealed class OverviewPresenter : IOverviewHost, IDisposable
+public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, IDisposable
 {
     private readonly UiThread _ui;
     private readonly Func<OverviewConfig> _config;
@@ -30,6 +31,8 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
     private long? _hoveredId;
     private long _sessionStartUs;
     private volatile bool _applyErrorLogged;
+    private SharedThumbnailBackend? _shared;
+    private bool _sharedUnavailable; // 探测或注册失败过：本次运行不再尝试
 
     public OverviewPresenter(UiThread ui, Func<OverviewConfig> config)
     {
@@ -58,6 +61,8 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
     public void Show() => _ui.Post(() =>
     {
         if (!_prepared) PrepareScene();
+        // 先在 UI 线程把第一帧摆好再显示覆盖层：否则显示出来的第一帧是还没定位缩略图的黑底，看起来像闪屏
+        ApplyFrame(Controller.ProgressAt(HostClock.NowUs()));
         foreach (var o in _overlays)
             if (o.Layer is not null) o.ShowOverlay();
         _shown = true;
@@ -76,11 +81,31 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
     public void Hide(long? focusWindowId) => _ui.Post(() =>
     {
         _keys.Uninstall();
+        // 先在覆盖层还盖着的时候把选中的窗口切到前台（最小化的无动画还原），等 DWM 呈现两帧再撤层：
+        // 撤层那一刻屏幕上已经是它在最上面的样子，不会「撤层后窗口才跳到前面 / 播还原动画」
+        if (focusWindowId is { } id)
+        {
+            if (!WindowActivator.Activate((nint)id, instant: true)) Log.Warn($"无法把窗口 0x{id:X} 置为前台");
+            Dwmapi.DwmFlush();
+            Dwmapi.DwmFlush();
+        }
         foreach (var o in _overlays) o.HideOverlay();
         _shown = false;
         ReleaseScene();
-        if (focusWindowId is { } id && !WindowActivator.Activate((nint)id))
-            Log.Warn($"无法把窗口 0x{id:X} 置为前台");
+    });
+
+    /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
+    public void MoveSelection(int steps) => _ui.Post(() =>
+    {
+        if (!_shown || steps == 0) return;
+        // 还没有选中项时第一格先选中原来的前台窗口
+        if (_hoveredId is null)
+        {
+            MoveSelection(Selected);
+            steps -= Math.Sign(steps);
+        }
+        for (int i = 0; i < Math.Abs(steps); i++)
+            MoveSelection(scene => scene.Cycle(Selected(scene), backwards: steps < 0));
     });
 
     /// <summary>
@@ -104,6 +129,7 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
             o.Dispose();
         }
         _overlays.Clear();
+        _shared?.Dispose();
     }
 
     // ---------- UI 线程 ----------
@@ -126,18 +152,49 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
             _opacity = new double[scene.Count];
         }
 
+        var shared = SharedBackend(cfg);
         foreach (var o in _overlays)
         {
             var members = Enumerable.Range(0, scene.Count)
                 .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index)
                 .ToList();
-            o.Prepare(scene, members);
+            int failure = o.Prepare(scene, members, shared);
+            if (failure != 0 && !_sharedUnavailable)
+            {
+                _sharedUnavailable = true;
+                Log.Warn($"共享缩略图视觉失败 0x{failure:X8}，本次运行改用经典缩略图");
+            }
         }
         Controller.SetScene(scene);
         _prepared = true;
         long t3 = HostClock.NowUs();
         Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t3 - t0) / 1000.0:F1}ms" +
                  $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}）");
+    }
+
+    /// <summary>配置开启且探测通过时返回共享缩略图后端；第一次用到时才探测（dwmapi#147 + DComp 设备）。</summary>
+    private SharedThumbnailBackend? SharedBackend(OverviewConfig cfg)
+    {
+        if (!cfg.SharedThumbnails || _sharedUnavailable) return null;
+        if (_shared is null)
+        {
+            _shared = SharedThumbnailBackend.TryCreate(out string status);
+            Log.Info($"缩略图后端：{status}");
+            if (_shared is null) _sharedUnavailable = true;
+        }
+        return _shared;
+    }
+
+    /// <summary>UI 线程：按某个进度把全部缩略图摆好（显示覆盖层之前用；用局部数组，不碰渲染线程的缓冲）。</summary>
+    private void ApplyFrame(double progress)
+    {
+        var scene = Controller.Scene;
+        var rects = new RectD[scene.Count];
+        var opacity = new double[scene.Count];
+        var frame = new OverviewFrame(progress, 0, 0, TransitionPhase.Tracking, true, null);
+        OverviewController.WindowRects(scene, frame, rects, opacity);
+        double wallpaper = 1 - _config().BackdropDim * Math.Clamp(progress, 0, 1);
+        foreach (var o in _overlays) o.Layer.Apply(rects, opacity, wallpaper);
     }
 
     private void ReleaseScene()
@@ -171,9 +228,7 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
         int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
         if (id == _hoveredId) return;
-        _hoveredId = id;
-        Controller.SetHovered(id);
-        UpdateDecorations();
+        Select(index);
     }
 
     private void OnClick(OverlayWindow overlay, double x, double y)
@@ -230,8 +285,20 @@ public sealed class OverviewPresenter : IOverviewHost, IDisposable
         if (scene.Count == 0) return;
         int index = next(scene);
         if (index < 0 || index >= scene.Count) return;
-        _hoveredId = scene.Windows[index].Id;
+        Select(index);
+    }
+
+    /// <summary>
+    /// 选中（悬停 / 键盘 / 三指横滑）某个窗口，-1 = 不选。选中的窗口同时提到最上层：
+    /// 平铺时窗口互不重叠、看不出区别，收起飞回原位时它才不会被别的窗口挡住、到最后才「凭空出现」。
+    /// </summary>
+    private void Select(int index)
+    {
+        var scene = Controller.Scene;
+        _hoveredId = index >= 0 ? scene.Windows[index].Id : null;
         Controller.SetHovered(_hoveredId);
+        if (index >= 0)
+            foreach (var o in _overlays) o.RaiseWindow(index);
         UpdateDecorations();
     }
 

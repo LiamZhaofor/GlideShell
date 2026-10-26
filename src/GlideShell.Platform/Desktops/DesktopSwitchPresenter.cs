@@ -58,6 +58,9 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     public void Show() => _ui.Post(() =>
     {
         if (!_prepared) Prepare();
+        // 先把第一帧摆好再显示：否则显示出来的第一帧是还没定位缩略图的黑底，看起来就是一次闪屏
+        double position = Controller.PositionAt(HostClock.NowUs());
+        foreach (var o in _overlays) o.Layer.Apply(position);
         foreach (var o in _overlays) o.ShowOverlay();
         _shown = true;
         _render.Wake();

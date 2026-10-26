@@ -17,6 +17,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   windows     列出显示器与总览会收录的窗口（及被排除的原因）
 //   native      只读对照系统手势设置的注册表值与 Explorer 生效值，以及是否有未还原的接管记录
 //   desktops    只读：虚拟桌面接口自检结果、桌面列表与当前桌面
+//   thumbnails  缩略图后端自检：屏幕左下角显示约 1 秒的测试小窗，确认共享缩略图视觉（--classic 为经典缩略图）真的画得出来
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 Console.OutputEncoding = Encoding.UTF8;
@@ -33,6 +34,7 @@ return command switch
     "windows" => Windows(),
     "native" => Native(),
     "desktops" => Desktops(),
+    "thumbnails" => Thumbnails(!args.Contains("--classic")),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -55,6 +57,7 @@ static int Usage()
           PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
+          PtpProbe thumbnails [--classic]  缩略图后端自检（左下角显示约 1 秒测试小窗）
           PtpProbe scenarios               列出录制场景
           PtpProbe selftest                自检原始输入管道
         """);
@@ -288,6 +291,13 @@ static int Desktops()
     for (int i = 0; i < state.Count; i++)
         Console.WriteLine($"  {(i == state.CurrentIndex ? "▶" : " ")} 桌面 {i + 1}  {state.Desktops[i]}");
     return service.Available ? 0 : 1;
+}
+
+static int Thumbnails(bool shared)
+{
+    bool ok = GlideShell.Platform.Overview.ThumbnailSelfTest.Run(shared, m => Console.WriteLine($"   {m}"));
+    Console.WriteLine($"{(shared ? "共享缩略图视觉" : "经典缩略图")}：{(ok ? "通过" : "未通过")}");
+    return ok ? 0 : 1;
 }
 
 static int SelfTest()

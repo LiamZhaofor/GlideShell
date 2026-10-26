@@ -52,6 +52,7 @@ internal sealed class AppHost
     private DesktopSwitchPresenter _desktopPresenter = null!;
     private DesktopSwitchController _desktopSwitch = null!;
     private DragController _drag = null!;
+    private OverviewBrowse _overviewBrowse = null!;
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
     private int _takeoverGeneration; // UI 线程
@@ -72,6 +73,7 @@ internal sealed class AppHost
         _presenter = new OverviewPresenter(_ui, () => _config.Overview);
         _overview = new OverviewController(_presenter, () => _config.Overview);
         _presenter.Attach(_overview);
+        _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
         _switcherPresenter = new SwitcherPresenter(_ui);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
@@ -124,7 +126,8 @@ internal sealed class AppHost
     private IGestureTarget? Target(GestureAction action) => action switch
     {
         GestureAction.Overview => _overview,
-        GestureAction.SwitchWindows => _switcher,
+        // 总览已展开时，切换窗口的手势改为在总览里移动选中项（之后三指下滑 / Enter 切过去）
+        GestureAction.SwitchWindows => _overview.IsVisible ? _overviewBrowse : _switcher,
         // 虚拟桌面接口自检不通过、或用户关掉了它：四指横滑交还系统（原生切桌面本身已跟手）
         GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled => _desktopSwitch,
         GestureAction.Drag => _drag,
