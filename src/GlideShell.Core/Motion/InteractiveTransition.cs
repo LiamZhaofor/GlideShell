@@ -38,8 +38,34 @@ public sealed class InteractiveTransition
         _value = initial;
     }
 
-    public double Min { get; }
-    public double Max { get; }
+    public double Min { get; private set; }
+    public double Max { get; private set; }
+
+    /// <summary>
+    /// 改变取值范围（例如窗口切换的窗口数在手势开始后才确定）。当前值超出新范围时夹回，正在进行的动画目标同样夹回。
+    /// </summary>
+    public void SetRange(double min, double max, long hostUs)
+    {
+        lock (_gate)
+        {
+            Min = min;
+            Max = Math.Max(min, max);
+            if (_phase == TransitionPhase.Animating && (_animation.Target < Min || _animation.Target > Max))
+            {
+                var s = _animation.Sample(hostUs);
+                _value = s.Value;
+                StartAnimation(Math.Clamp(_animation.Target, Min, Max), s.Velocity, hostUs);
+            }
+            else if (_phase == TransitionPhase.Resting)
+            {
+                _value = Math.Clamp(_value, Min, Max);
+            }
+            else if (_phase == TransitionPhase.Tracking)
+            {
+                _value = RubberBand.Clamp(_rawValue, Min, Max, OverscrollBelow, OverscrollAbove);
+            }
+        }
+    }
 
     /// <summary>越过下界 / 上界时橡皮筋的最大位移（与值同单位）。0 = 硬边界。</summary>
     public double OverscrollBelow { get; init; } = 0.08;

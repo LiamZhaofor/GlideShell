@@ -16,7 +16,8 @@ internal static class Program
         using var instance = new Mutex(initiallyOwned: true, @"Local\GlideShell.Instance", out bool first);
         if (!first) return 1; // 已在运行
 
-        return new AppHost().Run();
+        int sim = Array.IndexOf(args, "--simulate");
+        return new AppHost(sim >= 0 && sim + 1 < args.Length ? args[sim + 1] : null).Run();
     }
 
     /// <summary>

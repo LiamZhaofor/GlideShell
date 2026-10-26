@@ -1,13 +1,16 @@
 using System.Diagnostics;
 using GlideShell.Core.Configuration;
 using GlideShell.Core.Gestures;
+using GlideShell.Core.Input;
 using GlideShell.Core.Overview;
+using GlideShell.Core.Switcher;
 using GlideShell.Platform;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Input;
 using GlideShell.Platform.NativeGestures;
 using GlideShell.Platform.Overview;
 using GlideShell.Platform.Shell;
+using GlideShell.Platform.Switcher;
 using GlideShell.Platform.Ui;
 
 namespace GlideShell;
@@ -15,8 +18,8 @@ namespace GlideShell;
 /// <summary>
 /// 常驻宿主：把各部分接起来并管理生命周期。
 /// <code>
-/// 输入线程   PtpInputThread → GestureRecognizer → GestureRouter → OverviewController（只改进度状态）
-/// 渲染线程   RenderLoop（合成器时钟）→ OverviewController.Sample → DWM 缩略图
+/// 输入线程   PtpInputThread → GestureRecognizer → GestureRouter → Overview / Switcher 控制器（只改进度状态）
+/// 渲染线程   每个呈现层一个 RenderLoop（合成器时钟）→ 控制器.Sample → DWM 缩略图
 /// UI 线程    托盘、热键、前台监视、覆盖层窗口、窗口枚举（主线程的消息循环）
 /// 看门狗进程 GlideShell.exe --watchdog：主进程异常退出后还原系统手势
 /// </code>
@@ -39,8 +42,14 @@ internal sealed class AppHost
     private GestureRouter _router = null!;
     private OverviewPresenter _presenter = null!;
     private OverviewController _overview = null!;
+    private SwitcherPresenter _switcherPresenter = null!;
+    private SwitcherController _switcher = null!;
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
+    private readonly string? _simulate;
+
+    /// <param name="simulate">开发用：不启动真实输入，按名称回放一段合成手势（见 <see cref="SyntheticTouch.Scripts"/>）。</param>
+    public AppHost(string? simulate = null) => _simulate = simulate;
 
     public int Run()
     {
@@ -53,13 +62,20 @@ internal sealed class AppHost
         _presenter = new OverviewPresenter(_ui, () => _config.Overview);
         _overview = new OverviewController(_presenter, () => _config.Overview);
         _presenter.Attach(_overview);
+        _switcherPresenter = new SwitcherPresenter(_ui);
+        _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
+        _switcherPresenter.Attach(_switcher);
         _activeMap = ActiveMap(_config);
         _router = new GestureRouter(() => _activeMap, Target, Suppressed);
         _recognizer = new GestureRecognizer(_config.Recognition, _router.OnGesture);
 
-        string? inputProblem = StartInput();
-        TakeOverNativeGestures();
-        StartWatchdog();
+        string? inputProblem = _simulate is null ? StartInput() : null;
+        if (_simulate is null)
+        {
+            // 模拟模式只用于自动化验证，不碰用户的系统手势设置
+            TakeOverNativeGestures();
+            StartWatchdog();
+        }
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
         _hotkeys = new HotKeys(_ui);
@@ -67,6 +83,7 @@ internal sealed class AppHost
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         WatchConfig();
         _presenter.WarmUp();
+        if (_simulate is not null) StartSimulation(_simulate);
         if (inputProblem is not null) _tray.ShowBalloon("GlideShell 收不到触摸板输入", inputProblem, warning: true);
 
         _ui.Run();
@@ -79,7 +96,8 @@ internal sealed class AppHost
     private IGestureTarget? Target(GestureAction action) => action switch
     {
         GestureAction.Overview => _overview,
-        _ => null, // 切换窗口（P4）、切换桌面（P5）尚未实现：留给系统
+        GestureAction.SwitchWindows => _switcher,
+        _ => null, // 切换桌面（P5）尚未实现：留给系统
     };
 
     /// <summary>
@@ -92,7 +110,7 @@ internal sealed class AppHost
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>
     private bool Suppressed()
     {
-        if (_overview.IsVisible) return false;
+        if (_overview.IsVisible || _switcher.IsVisible) return false;
         if (_paused) return true;
         var cfg = _config;
         var fg = _foreground?.Current;
@@ -120,6 +138,35 @@ internal sealed class AppHost
             Log.Error("输入线程启动失败", ex);
             return ex.Message;
         }
+    }
+
+    /// <summary>
+    /// 在后台线程按真实时间回放合成手势（此模式不启动真实输入线程，识别器只有这一个调用方）。
+    /// 回放结束 1.5 秒后退出，供自动化截屏验证。
+    /// </summary>
+    private void StartSimulation(string name)
+    {
+        if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
+        {
+            Log.Warn($"未知的模拟脚本 {name}，可用：{string.Join("、", SyntheticTouch.Scripts.Keys)}");
+            return;
+        }
+        var thread = new Thread(() =>
+        {
+            Thread.Sleep(1500); // 等启动预热完成
+            long start = HostClock.NowUs();
+            foreach (var (atMs, contacts) in SyntheticTouch.Frames(script.Fingers, script.Steps))
+            {
+                long due = start + (long)(atMs * 1000);
+                while (HostClock.NowUs() < due) Thread.Sleep(1);
+                long now = HostClock.NowUs();
+                _recognizer?.Process(ContactFrame.Create(now, now, contacts));
+            }
+            Log.Info($"模拟手势 {name} 回放完毕");
+            Thread.Sleep(1500);
+            _ui.Quit();
+        }) { IsBackground = true, Name = "GlideShell.Simulate" };
+        thread.Start();
     }
 
     // ---------- 系统手势 ----------
@@ -252,6 +299,7 @@ internal sealed class AppHost
         _configWatcher?.Dispose();
         _input?.Dispose();
         _presenter.Dispose();
+        _switcherPresenter.Dispose();
         RestoreNativeGestures();
         _hotkeys?.Dispose();
         _tray?.Dispose();

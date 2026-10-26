@@ -136,7 +136,7 @@ internal sealed unsafe class ThumbnailLayer
     }
 
     // 缩略图源坐标相对窗口左上角；只取可见边框内的部分（去掉 Win10/11 的隐形缩放边框），与 Source 矩形对齐
-    private static User32.RECT VisibleSource(nint hwnd)
+    internal static User32.RECT VisibleSource(nint hwnd)
     {
         User32.RECT wr, fr;
         User32.GetWindowRect(hwnd, &wr);

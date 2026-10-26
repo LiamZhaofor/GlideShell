@@ -42,6 +42,24 @@ internal static unsafe partial class Dwmapi
 
     [LibraryImport("dwmapi.dll")]
     public static partial int DwmFlush();
+
+    public const uint DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const uint DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const uint DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    public const int DWMWCP_ROUND = 2;
+    public const int DWMSBT_TRANSIENTWINDOW = 3; // 亚克力
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MARGINS
+    {
+        public int Left, Right, Top, Bottom;
+    }
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmSetWindowAttribute(nint hwnd, uint attribute, void* value, uint size);
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmExtendFrameIntoClientArea(nint hwnd, MARGINS* margins);
 }
 
 internal static unsafe partial class Dcomp
