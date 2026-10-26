@@ -68,6 +68,9 @@ public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
                 problems.Add($"已开启三指拖移，三指{AxisName(b.Axis)}不能再绑定 {b.Action}");
         foreach (var b in Bindings.Where(b => b.Action == GestureAction.Drag && b.Fingers != 3))
             problems.Add($"拖移只支持三指（现在绑在了 {b.Fingers} 指上）");
+        // 切换窗口 / 桌面是横向排列的，只跟随左右位移
+        foreach (var b in Bindings.Where(b => b.Action is GestureAction.SwitchWindows or GestureAction.SwitchDesktops && b.Axis == GestureAxis.Vertical))
+            problems.Add($"{b.Action} 只支持左右滑动（现在绑在了 {b.Fingers} 指上下）");
         return problems;
     }
 

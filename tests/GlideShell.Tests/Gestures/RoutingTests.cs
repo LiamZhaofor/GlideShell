@@ -36,7 +36,15 @@ public class GestureMapTests
             new(3, GestureAxis.Vertical, GestureAction.SwitchDesktops),
             new(2, GestureAxis.Horizontal, GestureAction.SwitchWindows),
         ]);
-        Assert.Equal(2, map.Validate().Count);
+        // 重复绑定、2 指、切桌面绑在上下各一条
+        Assert.Equal(3, map.Validate().Count);
+    }
+
+    [Fact]
+    public void Switching_actions_only_accept_the_horizontal_axis()
+    {
+        Assert.Single(new GestureMap([new(4, GestureAxis.Vertical, GestureAction.SwitchWindows)]).Validate());
+        Assert.Empty(new GestureMap([new(4, GestureAxis.Horizontal, GestureAction.SwitchWindows), new(3, GestureAxis.Horizontal, GestureAction.Overview)]).Validate());
     }
 }
 

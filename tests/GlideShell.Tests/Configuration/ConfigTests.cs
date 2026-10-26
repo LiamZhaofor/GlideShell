@@ -37,6 +37,33 @@ public class ConfigTests
     }
 
     [Fact]
+    public void Hand_written_example_from_the_docs_parses()
+    {
+        // docs/CONFIG.md 里的例子：注释、末尾逗号、未知字段（旧版本写进去的 effectiveMap）都不应出错
+        const string json = """
+            {
+              // 三指留给系统、全部功能改用四指
+              "bindings": [
+                { "fingers": 4, "axis": "Vertical",   "action": "Overview" },
+                { "fingers": 4, "axis": "Horizontal", "action": "SwitchWindows" },
+              ],
+              "excludedProcesses": ["mstsc", "vmware.exe"],
+              "desktops": { "enabled": false },
+              "effectiveMap": { "bindings": [] },
+            }
+            """;
+
+        var (config, problems) = ConfigStore.Parse(json);
+
+        Assert.Empty(problems);
+        Assert.Equal(GestureAction.Overview, config.EffectiveMap.Resolve(4, GestureAxis.Vertical));
+        Assert.Equal(GestureAction.None, config.EffectiveMap.Resolve(3, GestureAxis.Vertical));
+        Assert.True(config.IsExcluded("VMware"));
+        Assert.False(config.Desktops.Enabled);
+        Assert.Equal(55, config.Desktops.TravelMm); // 同一节里缺失的字段仍取默认值
+    }
+
+    [Fact]
     public void Out_of_range_values_are_clamped_and_reported()
     {
         var (config, problems) = ConfigStore.Parse("""{ "recognition": { "slopMm": 0.01, "tapMaxMoveMm": 50 }, "overview": { "travelMm": 1000 } }""");
