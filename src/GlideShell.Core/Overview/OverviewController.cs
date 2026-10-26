@@ -31,16 +31,28 @@ public interface IOverviewHost
 
     /// <summary>收起落定：隐藏覆盖层。<paramref name="focusWindowId"/> 非空时把它置前（最小化的先还原），否则还原原来的前台窗口。</summary>
     void Hide(long? focusWindowId);
+
+    /// <summary>
+    /// 点了桌面条上的另一个桌面：立刻在覆盖层下面切换真实桌面。覆盖层随后播放「放大进入那个桌面」，
+    /// 落定时照常调用 <see cref="Hide"/>（focusWindowId 为 null），宿主负责把焦点交给新桌面最上层的窗口。
+    /// </summary>
+    void SwitchDesktop(int desktopIndex);
 }
 
 /// <summary>渲染线程每帧取到的总览状态。</summary>
+/// <param name="BarExpansion">桌面条展开程度（0 收起 ~ 1 展开）。</param>
+/// <param name="ZoomDesktop">点击后正在放大进入的桌面（-1 = 没有）。</param>
+/// <param name="Zoom">放大进入的进度（0 ~ 1）：目标桌面缩略图从桌面条放大到全屏，其余内容随之淡出。</param>
 public readonly record struct OverviewFrame(
     double Progress,
     double BackdropOpacity,
     double LabelOpacity,
     TransitionPhase Phase,
     bool Visible,
-    long? EmphasizedWindow);
+    long? EmphasizedWindow,
+    double BarExpansion = 0,
+    int ZoomDesktop = -1,
+    double Zoom = 0);
 
 /// <summary>
 /// 窗口总览：手势 → 连续进度（0 = 收起，1 = 展开）→ 画面。
@@ -48,6 +60,7 @@ public readonly record struct OverviewFrame(
 /// <item>朝展开方向（上 / 右）开始的手势才从收起态接管；展开态下反向滑动跟手收起，同向滑动是橡皮筋越界。</item>
 /// <item>手指在板上只跟随；松手才按投影落点决定展开或收起，并以松手速度驱动弹簧。动画中可随时被新手势接管。</item>
 /// <item>收起时指针下的窗口逐渐放大，松手后它成为前台（macOS 行为）。</item>
+/// <item>桌面条：指针移到顶部展开；点另一个桌面时真实桌面立刻切换，覆盖层把那个桌面的缩略图放大到全屏后撤掉（macOS 调度中心）。</item>
 /// </list>
 /// 线程：IGestureTarget 方法在输入线程；<see cref="Sample"/> / <see cref="WindowRects"/> 在渲染线程；
 /// <see cref="SetScene"/>、<see cref="SetHovered"/>、<see cref="Toggle"/> 等在 UI 线程。宿主回调都在锁外发出。
@@ -60,7 +73,11 @@ public sealed class OverviewController : IGestureTarget
     private readonly Func<OverviewConfig> _config;
     private readonly object _gate = new();
     private readonly InteractiveTransition _transition;
+    private readonly InteractiveTransition _bar = new(0, 1, 0) { Spring = new(0.28, 1.0) };
+    private readonly InteractiveTransition _zoom = new(0, 1, 0) { Spring = new(0.32, 1.0) };
     private volatile OverviewScene _scene = OverviewScene.Empty;
+    private volatile DesktopBarState _desktops = DesktopBarState.Empty;
+    private int _zoomDesktop = -1;
 
     private bool _visible;
     private bool _prewarming;
@@ -90,8 +107,49 @@ public sealed class OverviewController : IGestureTarget
     /// <summary>某时刻的进度（只读，不推进动画状态；UI 线程做命中测试用）。</summary>
     public double ProgressAt(long hostUs) => _transition.Peek(hostUs);
 
+    public DesktopBarState Desktops => _desktops;
+
     /// <summary>宿主预热完成后提供场景（整体替换）。</summary>
     public void SetScene(OverviewScene scene) => _scene = scene;
+
+    /// <summary>宿主预热时提供桌面条内容（没有虚拟桌面服务时为 <see cref="DesktopBarState.Empty"/>）。</summary>
+    public void SetDesktops(DesktopBarState desktops) => _desktops = desktops;
+
+    /// <summary>某时刻桌面条的展开程度（只读，UI 线程命中测试用）。</summary>
+    public double BarExpansionAt(long hostUs) => _bar.Peek(hostUs);
+
+    /// <summary>指针进入 / 离开桌面条（UI 线程）。只在完全展开、没有在收起或放大进入桌面时展开；离开时总是收回。</summary>
+    public void SetBarHovered(bool hovered, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (hovered && (!_visible || _tracking || _zoomDesktop >= 0 || _transition.Target < 1 - SettleEpsilon || _desktops.Count == 0)) return;
+            if (_bar.Target == (hovered ? 1 : 0)) return;
+            _bar.AnimateTo(hovered ? 1 : 0, hostUs);
+        }
+    }
+
+    /// <summary>
+    /// 点了桌面条上的第 <paramref name="index"/> 个桌面（UI 线程）。当前桌面：照常收起；
+    /// 别的桌面：宿主立刻切换真实桌面，覆盖层播放放大进入，落定后撤层。
+    /// </summary>
+    public void GoToDesktop(int index, long hostUs)
+    {
+        bool current;
+        lock (_gate)
+        {
+            if (!_visible || _zoomDesktop >= 0 || index < 0 || index >= _desktops.Count) return;
+            current = index == _desktops.Current;
+            if (!current)
+            {
+                _zoomDesktop = index;
+                _focusTarget = null;
+                _zoom.AnimateTo(1, hostUs);
+            }
+        }
+        if (current) Close(null, hostUs);
+        else _host.SwitchDesktop(index);
+    }
 
     /// <summary>指针下的窗口（UI 线程根据鼠标位置更新）。</summary>
     public void SetHovered(long? windowId)
@@ -128,6 +186,11 @@ public sealed class OverviewController : IGestureTarget
         bool show = false, cancelPrewarm = false;
         lock (_gate)
         {
+            if (_zoomDesktop >= 0)
+            {
+                _ignoring = true; // 正在放大进入别的桌面（真实桌面已经切过去了），等它落定
+                return;
+            }
             if (!_visible && !IsOpeningDirection(e))
             {
                 // 收起态下朝「收起」方向滑：不是总览手势（留作将来的应用窗口视图），放弃预热
@@ -151,6 +214,7 @@ public sealed class OverviewController : IGestureTarget
                 _valueAtBegin = _transition.Peek(e.HostTimeUs);
                 _closingGesture = _valueAtBegin > 0.5;
                 _focusTarget = null;
+                if (_bar.Target != 0) _bar.AnimateTo(0, e.HostTimeUs); // 手势接管：桌面条先收回
             }
         }
         if (cancelPrewarm) _host.CancelPrewarm();
@@ -206,7 +270,11 @@ public sealed class OverviewController : IGestureTarget
     public void Toggle(long hostUs)
     {
         bool open;
-        lock (_gate) open = !_visible || _transition.Target <= SettleEpsilon;
+        lock (_gate)
+        {
+            if (_zoomDesktop >= 0) return;
+            open = !_visible || _transition.Target <= SettleEpsilon;
+        }
         if (open) Open(hostUs);
         else Close(null, hostUs);
     }
@@ -252,9 +320,10 @@ public sealed class OverviewController : IGestureTarget
     {
         lock (_gate)
         {
-            if (!_visible) return;
+            if (!_visible || _zoomDesktop >= 0) return;
             _focusTarget = focusWindowId;
             _transition.AnimateTo(0, hostUs);
+            if (_bar.Target != 0) _bar.AnimateTo(0, hostUs);
         }
         _host.Closing(focusWindowId);
     }
@@ -264,13 +333,30 @@ public sealed class OverviewController : IGestureTarget
     public OverviewFrame Sample(long hostUs)
     {
         var s = _transition.Sample(hostUs);
+        var bar = _bar.Sample(hostUs);
+        var zoom = _zoom.Sample(hostUs);
         bool hide = false, activate = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
         long? focus = null;
         bool visible;
         long? emphasized;
+        int zoomDesktop;
         lock (_gate)
         {
-            if (s.JustSettled && _visible && !_tracking)
+            zoomDesktop = _zoomDesktop;
+            if (_zoomDesktop >= 0)
+            {
+                // 放大进入别的桌面：落定时撤层（真实桌面早已切过去），各状态复位，下次从收起态开始
+                if (zoom.JustSettled && zoom.Value >= 1 - SettleEpsilon && _visible)
+                {
+                    _visible = false;
+                    hide = true;
+                    _zoomDesktop = -1;
+                    _transition.SnapTo(0);
+                    _bar.SnapTo(0);
+                    _zoom.SnapTo(0);
+                }
+            }
+            else if (s.JustSettled && _visible && !_tracking)
             {
                 if (s.Value <= SettleEpsilon)
                 {
@@ -278,6 +364,7 @@ public sealed class OverviewController : IGestureTarget
                     focus = _focusTarget;
                     _focusTarget = null;
                     hide = true;
+                    _bar.SnapTo(0);
                 }
                 else if (s.Value >= 1 - SettleEpsilon)
                 {
@@ -290,10 +377,9 @@ public sealed class OverviewController : IGestureTarget
         if (hide) _host.Hide(focus);
         else if (activate) _host.Activate();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
-            s.Phase, visible, emphasized);
+            s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0);
     }
 
-    /// <summary>按帧计算每个窗口的当前矩形，写进 <paramref name="dest"/>（长度 ≥ 场景窗口数，零分配）。</summary>
     /// <summary>
     /// 按帧计算每个窗口用「活动阴影」的权重（零分配）：原前台窗口是活动的；收起时被强调（要成为前台）的窗口随进度逐渐接过来。
     /// </summary>
@@ -307,12 +393,18 @@ public sealed class OverviewController : IGestureTarget
         }
     }
 
+    /// <summary>
+    /// 按帧计算每个窗口的当前矩形与不透明度，写进 <paramref name="dest"/>（长度 ≥ 场景窗口数，零分配）。
+    /// 桌面条展开时平铺区域往下缩；放大进入别的桌面时整体淡出。
+    /// </summary>
     public static void WindowRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest, Span<double> opacity)
     {
+        double fade = 1 - Math.Clamp(frame.Zoom, 0, 1);
         for (int i = 0; i < scene.Count; i++)
         {
             var w = scene.Windows[i];
-            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Slots[i].Tile, frame.Progress, frame.EmphasizedWindow == w.Id);
+            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion), frame.Progress, frame.EmphasizedWindow == w.Id);
+            opacity[i] *= fade;
         }
     }
 

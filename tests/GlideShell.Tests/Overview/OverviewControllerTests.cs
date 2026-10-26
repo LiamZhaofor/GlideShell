@@ -17,6 +17,7 @@ public class OverviewControllerTests
         public void Activate() => Calls.Add("Activate");
         public void Closing(long? focusWindowId) => Calls.Add($"Closing:{focusWindowId?.ToString() ?? "-"}");
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
+        public void SwitchDesktop(int desktopIndex) => Calls.Add($"SwitchDesktop:{desktopIndex}");
     }
 
     private const double Travel = 30;

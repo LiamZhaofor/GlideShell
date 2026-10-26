@@ -126,6 +126,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         ReleaseScene();
     });
 
+    public void SwitchDesktop(int desktopIndex)
+    {
+        // 第三步接入：切换真实桌面
+    }
+
     /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
     public void MoveSelection(int steps) => _ui.Post(() =>
     {
