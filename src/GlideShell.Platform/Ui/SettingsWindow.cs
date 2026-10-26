@@ -350,7 +350,12 @@ public sealed unsafe class SettingsWindow : NativeWindow
                 User32.DestroyWindow(Handle);
                 break;
             case IdOk:
-                Save();
+                // 在「添加」框里输入程序名后按 Enter 是添加，不是保存并关闭
+                nint focus = User32.GetFocus();
+                if (focus != 0 && (focus == _addCombo || User32.GetParent(focus) == _addCombo) && WindowText(_addCombo).Trim().Length > 0)
+                    AddExcluded();
+                else
+                    Save();
                 break;
         }
     }

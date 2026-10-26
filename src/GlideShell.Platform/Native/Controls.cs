@@ -95,6 +95,12 @@ internal static unsafe partial class User32
     [LibraryImport("user32.dll")]
     public static partial nint SetFocus(nint hwnd);
 
+    [LibraryImport("user32.dll")]
+    public static partial nint GetFocus();
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetParent(nint hwnd);
+
     public const int VK_SHIFT = 0x10;
 
     [LibraryImport("user32.dll")]
