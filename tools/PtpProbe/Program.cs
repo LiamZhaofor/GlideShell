@@ -295,7 +295,7 @@ static int Desktops()
     Console.WriteLine($"自检：{(service.Available ? "通过" : "未通过")}（{service.Status}，{sw.Elapsed.TotalMilliseconds:F0}ms）");
     var state = service.State;
     for (int i = 0; i < state.Count; i++)
-        Console.WriteLine($"  {(i == state.CurrentIndex ? "▶" : " ")} 桌面 {i + 1}  {state.Desktops[i]}");
+        Console.WriteLine($"  {(i == state.CurrentIndex ? "▶" : " ")} 桌面 {i + 1}「{state.Names[i]}」  {state.Desktops[i]}");
     return service.Available ? 0 : 1;
 }
 

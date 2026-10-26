@@ -5,9 +5,10 @@ using GlideShell.Platform.Native;
 namespace GlideShell.Platform.VirtualDesktops;
 
 /// <summary>虚拟桌面状态快照：桌面按 explorer 的顺序排列（就是任务视图里从左到右的顺序）。</summary>
-public sealed record DesktopState(IReadOnlyList<Guid> Desktops, int CurrentIndex)
+/// <param name="Names">与 <paramref name="Desktops"/> 一一对应的显示名；用户没改过名的是「桌面 N」（与任务视图一致）。</param>
+public sealed record DesktopState(IReadOnlyList<Guid> Desktops, int CurrentIndex, IReadOnlyList<string> Names)
 {
-    public static DesktopState Empty { get; } = new([], -1);
+    public static DesktopState Empty { get; } = new([], -1, []);
 
     public int Count => Desktops.Count;
 
@@ -210,6 +211,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         nint array;
         if (((delegate* unmanaged<nint, nint*, int>)Slot(_manager, layout.GetDesktops))(_manager, &array) < 0) return false;
         var ids = new List<Guid>();
+        var names = new List<string>();
         var fresh = new Dictionary<Guid, nint>();
         try
         {
@@ -222,6 +224,8 @@ public sealed unsafe class VirtualDesktopService : IDisposable
                 if (((delegate* unmanaged<nint, uint, Guid*, nint*, int>)Slot(array, 4))(array, i, &iid, &d) < 0) continue;
                 Guid id = GetId(d);
                 ids.Add(id);
+                string name = GetName(d);
+                names.Add(name.Length > 0 ? name : $"桌面 {i + 1}");
                 fresh[id] = d;
             }
         }
@@ -242,7 +246,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         _desktops.Clear();
         foreach (var (id, d) in fresh) _desktops[id] = d;
         int index = ids.IndexOf(currentId);
-        _state = new DesktopState(ids, index);
+        _state = new DesktopState(ids, index, names);
         return count == ids.Count && index >= 0;
     }
 
@@ -251,6 +255,22 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         Guid g = Guid.Empty;
         ((delegate* unmanaged<nint, Guid*, int>)Slot(desktop, _layout!.DesktopGetId))(desktop, &g);
         return g;
+    }
+
+    private string GetName(nint desktop)
+    {
+        nint h = 0;
+        if (((delegate* unmanaged<nint, nint*, int>)Slot(desktop, _layout!.DesktopGetName))(desktop, &h) < 0 || h == 0) return "";
+        try
+        {
+            uint length;
+            char* text = Combase.WindowsGetStringRawBuffer(h, &length);
+            return text == null ? "" : new string(text, 0, (int)length);
+        }
+        finally
+        {
+            Combase.WindowsDeleteString(h);
+        }
     }
 
     // ---------- 通知（RPC 线程） ----------
@@ -431,9 +451,18 @@ internal sealed unsafe class NotificationSink : IDisposable
     [UnmanagedCallersOnly] private static int DestroyFailed(nint self, nint d, nint f) => 0;
     [UnmanagedCallersOnly] private static int Destroyed(nint self, nint d, nint f) => DesktopsChanged(self);
     [UnmanagedCallersOnly] private static int Moved(nint self, nint d, int from, int to) => DesktopsChanged(self);
-    [UnmanagedCallersOnly] private static int NameChanged(nint self, nint d, nint name) => 0;
+    [UnmanagedCallersOnly] private static int NameChanged(nint self, nint d, nint name) => DesktopsChanged(self);
     [UnmanagedCallersOnly] private static int ViewChanged(nint self, nint view) => 0;
     [UnmanagedCallersOnly] private static int WallpaperChanged(nint self, nint d, nint path) => 0;
     [UnmanagedCallersOnly] private static int Switched(nint self, nint d, int kind) => 0;
     [UnmanagedCallersOnly] private static int RemoteConnected(nint self, nint d) => 0;
+}
+
+internal static unsafe partial class Combase
+{
+    [LibraryImport("combase.dll")]
+    public static partial char* WindowsGetStringRawBuffer(nint hstring, uint* length);
+
+    [LibraryImport("combase.dll")]
+    public static partial int WindowsDeleteString(nint hstring);
 }

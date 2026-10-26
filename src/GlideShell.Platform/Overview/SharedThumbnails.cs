@@ -112,11 +112,78 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         return new SharedThumbnailBackend(device, d3d, context);
     }
 
-    /// <summary>锁内调用：把阴影图上传成 DComp 表面，返回挂着它的视觉（IDCompositionVisual3，初始不透明度 0）。</summary>
-    public int CreateShadowVisual(ShadowImage image, out nint visual, out nint surface)
+    /// <summary>一张已上传的阴影表面：同样大小、同样 DPI 的窗口共用（总览、桌面条、切桌面里同一个窗口各有一个视觉，只画一次图）。</summary>
+    private sealed class CachedShadow(nint surface, int downscale, double marginPx, (ShadowStyle, int, int, int) key)
+    {
+        public nint Surface { get; } = surface;
+        public int Downscale { get; } = downscale;
+        public double MarginPx { get; } = marginPx;
+        public (ShadowStyle, int, int, int) Key { get; } = key;
+        public int Users { get; set; }
+    }
+
+    private readonly Dictionary<(ShadowStyle, int, int, int), CachedShadow> _shadows = [];
+    private readonly Dictionary<nint, CachedShadow> _shadowsBySurface = [];
+
+    /// <summary>
+    /// 锁内调用：取某个大小窗口的阴影（没有就画好图、上传成 DComp 表面并缓存），挂到一个新视觉上返回
+    /// （IDCompositionVisual3，初始不透明度 0）。不用了调用 <see cref="ReleaseShadow"/>。
+    /// </summary>
+    public int CreateShadowVisual(ShadowStyle style, double widthPx, double heightPx, double dpiScale,
+        out nint visual, out nint surface, out int downscale, out double marginPx)
     {
         visual = surface = 0;
+        downscale = 1;
+        marginPx = 0;
         if (_context == null) return unchecked((int)0x80004001);
+        var key = (style, (int)Math.Round(widthPx), (int)Math.Round(heightPx), (int)Math.Round(dpiScale * 96));
+        if (!_shadows.TryGetValue(key, out var cached))
+        {
+            var image = WindowShadow.Render(style, widthPx, heightPx, dpiScale);
+            int uploaded = Upload(image, out nint s);
+            image.Return();
+            if (uploaded < 0) return uploaded;
+            cached = new CachedShadow(s, image.Downscale, image.MarginPx, key);
+            _shadows[key] = cached;
+            _shadowsBySurface[s] = cached;
+        }
+
+        void* v2, v3;
+        int hr = Dcomp.CreateVisual(_device, &v2);
+        if (hr >= 0) hr = Dcomp.SetContent(v2, (void*)cached.Surface);
+        if (hr >= 0)
+        {
+            Dcomp.SetBitmapInterpolationMode(v2, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
+            hr = Dcomp.ToVisual3(v2, &v3);
+        }
+        else
+        {
+            if (v2 != null) Dcomp.Release(v2);
+            v3 = null;
+        }
+        if (hr < 0) return hr;
+        Dcomp.SetOpacity(v3, 0);
+        cached.Users++;
+        visual = (nint)v3;
+        surface = cached.Surface;
+        downscale = cached.Downscale;
+        marginPx = cached.MarginPx;
+        return 0;
+    }
+
+    /// <summary>锁内调用：一个视觉不再用这张阴影表面；没人用了就释放。</summary>
+    public void ReleaseShadow(nint surface)
+    {
+        if (!_shadowsBySurface.TryGetValue(surface, out var cached) || --cached.Users > 0) return;
+        _shadowsBySurface.Remove(surface);
+        _shadows.Remove(cached.Key);
+        Dcomp.Release((void*)surface);
+    }
+
+    /// <summary>把阴影图上传成 DComp 表面（预乘 BGRA）。</summary>
+    private int Upload(ShadowImage image, out nint surface)
+    {
+        surface = 0;
         void* s;
         int hr = Dcomp.CreateSurface(_device, (uint)image.Width, (uint)image.Height, 87 /* B8G8R8A8_UNORM */, 1 /* 预乘 */, &s);
         if (hr < 0) return hr;
@@ -138,25 +205,11 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         fixed (byte* pixels = image.Bgra) Dcomp.UpdateSubresource(_context, texture, 0, &box, pixels, (uint)image.Width * 4, 0);
         Dcomp.Release(texture);
         hr = Dcomp.EndDraw(s);
-        void* v2, v3;
-        if (hr >= 0) hr = Dcomp.CreateVisual(_device, &v2);
-        else v2 = null;
-        if (hr >= 0) hr = Dcomp.SetContent(v2, s);
-        if (hr >= 0)
-        {
-            Dcomp.SetBitmapInterpolationMode(v2, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
-            hr = Dcomp.ToVisual3(v2, &v3);
-            v2 = null;
-        }
-        else v3 = null;
         if (hr < 0)
         {
-            if (v2 != null) Dcomp.Release(v2);
             Dcomp.Release(s);
             return hr;
         }
-        Dcomp.SetOpacity(v3, 0);
-        visual = (nint)v3;
         surface = (nint)s;
         return 0;
     }
@@ -171,6 +224,9 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
     {
         lock (Gate)
         {
+            foreach (var c in _shadows.Values) Dcomp.Release((void*)c.Surface);
+            _shadows.Clear();
+            _shadowsBySurface.Clear();
             if (_device != null) Dcomp.Release(_device);
             if (_context != null) Dcomp.Release(_context);
             if (_d3d != null) Dcomp.Release(_d3d);
@@ -358,8 +414,8 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             // 成功：撤掉上一层里不再复用的部分，复用的部分转交给新层
             if (previous is not null)
             {
-                if (!wallpaperKept) Remove(root, previous._wallpaper);
-                for (int i = keep; i < old.Length; i++) Remove(root, old[i]);
+                if (!wallpaperKept) Remove(backend, root, previous._wallpaper);
+                for (int i = keep; i < old.Length; i++) Remove(backend, root, old[i]);
                 previous._released = true;
             }
             hr = Dcomp.Commit(backend.Device);
@@ -367,11 +423,11 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 
             SharedThumbnailLayer? Fail()
             {
-                foreach (var e in created) Remove(root, e);
+                foreach (var e in created) Remove(backend, root, e);
                 if (previous is not null && !previous._released)
                 {
-                    Remove(root, previous._wallpaper);
-                    foreach (var e in old) Remove(root, e);
+                    Remove(backend, root, previous._wallpaper);
+                    foreach (var e in old) Remove(backend, root, e);
                     previous._released = true;
                 }
                 Dcomp.Commit(backend.Device);
@@ -501,8 +557,8 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             _released = true;
             if (_backend.Device == null) return;
             void* root = _composition.Root;
-            Remove(root, _wallpaper);
-            foreach (var e in _windows) Remove(root, e);
+            Remove(_backend, root, _wallpaper);
+            foreach (var e in _windows) Remove(_backend, root, e);
             Dcomp.Commit(_backend.Device);
         }
     }
@@ -551,19 +607,17 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         entry = new Entry(group, visual, thumb, hwnd, -1, source, true, inactive, active);
         if (hr < 0)
         {
-            Remove(null, entry);
+            Remove(backend, null, entry);
             entry = default;
         }
         return hr;
 
         Shadow MakeShadow(ShadowStyle style)
         {
-            var image = WindowShadow.Render(style, source.Width, source.Height, dpiScale);
-            int created = backend.CreateShadowVisual(image, out nint v, out nint s);
-            image.Return();
-            if (created < 0) return default;
+            if (backend.CreateShadowVisual(style, source.Width, source.Height, dpiScale, out nint v, out nint s, out int downscale, out double margin) < 0)
+                return default;
             Dcomp.AddVisual((void*)group, (void*)v); // 先加的在下面：阴影垫在缩略图下
-            return new Shadow(v, s, image.Downscale, image.MarginPx);
+            return new Shadow(v, s, downscale, margin);
         }
     }
 
@@ -585,14 +639,14 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     }
 
     /// <summary>从父视觉上摘下并释放（root 为 null 时只释放：还没挂上去）。</summary>
-    private static void Remove(void* root, in Entry e)
+    private static void Remove(SharedThumbnailBackend backend, void* root, in Entry e)
     {
         if (e.Group == 0 && e.Visual == 0) return;
         if (root != null && e.Group != 0) Dcomp.RemoveVisual(root, (void*)e.Group);
         foreach (var s in new[] { e.Inactive, e.Active })
         {
             if (s.Visual != 0) Dcomp.Release((void*)s.Visual);
-            if (s.Surface != 0) Dcomp.Release((void*)s.Surface);
+            if (s.Surface != 0) backend.ReleaseShadow(s.Surface);
         }
         if (e.Visual != 0) Dcomp.Release((void*)e.Visual);
         if (e.Group != 0 && e.Group != e.Visual) Dcomp.Release((void*)e.Group);

@@ -4,7 +4,7 @@ namespace GlideShell.Platform.VirtualDesktops;
 /// 未公开虚拟桌面接口的「IID + vtable 槽位」表，按构建号选择（S3 用系统代理 DLL 的 MIDL 格式串逐槽核对过 26300）。
 /// 同一个 IID 不代表同一布局：22631.3085+ 与 26100+ 的 IVirtualDesktopManagerInternal IID 相同，
 /// 但 26100 在 SwitchDesktop 之后插入了一个方法，后面的槽位整体后移。所以启动时还要核对方法数（<see cref="ProxyCheck"/>）。
-/// GlideShell 只用槽 3/6/7/8/9（两种布局里位置相同），其余槽位不调用。
+/// GlideShell 只用 IVirtualDesktopManagerInternal 的槽 3/6/7/8/9 与 IVirtualDesktop 的 4/5（两种布局里位置相同），其余槽位不调用。
 /// </summary>
 internal sealed record VirtualDesktopLayout
 {
@@ -28,6 +28,7 @@ internal sealed record VirtualDesktopLayout
 
     // IVirtualDesktop
     public int DesktopGetId { get; init; } = 4;
+    public int DesktopGetName { get; init; } = 5; // HSTRING；用户没改过名时为空
 
     public static readonly Guid ClsidImmersiveShell = new("C2F03A33-21F5-47FA-B4BB-156362A2F239");
     public static readonly Guid SidManagerInternal = new("C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B");
