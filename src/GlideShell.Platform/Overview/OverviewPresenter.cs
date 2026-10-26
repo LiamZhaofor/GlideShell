@@ -35,13 +35,13 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long? _raisedId; // UI 线程：本次会话已提到最上层的窗口
     private long? _activatedId; // UI 线程：本次会话收起时已经切到前台的窗口
     private long? _renderEmphasized; // 渲染线程：上一帧强调的窗口
-    private SharedThumbnailBackend? _shared;
-    private bool _sharedUnavailable; // 探测或注册失败过：本次运行不再尝试
+    private readonly SharedThumbnailSource _shared;
 
-    public OverviewPresenter(UiThread ui, Func<OverviewConfig> config)
+    public OverviewPresenter(UiThread ui, Func<OverviewConfig> config, SharedThumbnailSource shared)
     {
         _ui = ui;
         _config = config;
+        _shared = shared;
         _keys = new KeyboardHook(OnKey);
         _render = new RenderLoop(RenderFrame, stats => Log.Info($"总览渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
@@ -161,7 +161,6 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             o.Dispose();
         }
         _overlays.Clear();
-        _shared?.Dispose();
     }
 
     // ---------- UI 线程 ----------
@@ -185,37 +184,23 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             _active = new double[scene.Count];
         }
 
-        var shared = SharedBackend(cfg);
+        var shared = _shared.Get();
         foreach (var o in _overlays)
         {
+            // 平铺在本屏的窗口，加上此刻有一部分在本屏上的窗口：后者跨屏或要飞到别的屏上去，
+            // 只画在一块屏上的话，展开 / 收起的那一刻它在本屏上的那部分会凭空消失 / 出现
             var members = Enumerable.Range(0, scene.Count)
-                .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index)
+                .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index ||
+                            scene.Windows[i].Overlaps(o.Monitor.WorkArea))
                 .ToList();
             int failure = o.Prepare(scene, members, shared);
-            if (failure != 0 && !_sharedUnavailable)
-            {
-                _sharedUnavailable = true;
-                Log.Warn($"共享缩略图视觉失败 0x{failure:X8}，本次运行改用经典缩略图");
-            }
+            if (failure != 0) _shared.Disable(failure, "总览");
         }
         Controller.SetScene(scene);
         _prepared = true;
         long t3 = HostClock.NowUs();
         Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t3 - t0) / 1000.0:F1}ms" +
                  $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}）");
-    }
-
-    /// <summary>配置开启且探测通过时返回共享缩略图后端；第一次用到时才探测（dwmapi#147 + DComp 设备）。</summary>
-    private SharedThumbnailBackend? SharedBackend(OverviewConfig cfg)
-    {
-        if (!cfg.SharedThumbnails || _sharedUnavailable) return null;
-        if (_shared is null)
-        {
-            _shared = SharedThumbnailBackend.TryCreate(out string status);
-            Log.Info($"缩略图后端：{status}");
-            if (_shared is null) _sharedUnavailable = true;
-        }
-        return _shared;
     }
 
     /// <summary>UI 线程：按某个进度把全部缩略图摆好（显示覆盖层之前用；用局部数组，不碰渲染线程的缓冲）。</summary>

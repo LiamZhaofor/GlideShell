@@ -50,6 +50,7 @@ internal sealed class AppHost
     private SwitcherController _switcher = null!;
     private VirtualDesktopService _virtualDesktops = null!;
     private DesktopSwitchPresenter _desktopPresenter = null!;
+    private SharedThumbnailSource _sharedThumbnails = null!;
     private DesktopSwitchController _desktopSwitch = null!;
     private DragController _drag = null!;
     private OverviewBrowse _overviewBrowse = null!;
@@ -70,7 +71,8 @@ internal sealed class AppHost
 
         _ui = new UiThread();
         _foreground = new ForegroundMonitor();
-        _presenter = new OverviewPresenter(_ui, () => _config.Overview);
+        _sharedThumbnails = new SharedThumbnailSource(() => _config.Overview.SharedThumbnails);
+        _presenter = new OverviewPresenter(_ui, () => _config.Overview, _sharedThumbnails);
         _overview = new OverviewController(_presenter, () => _config.Overview);
         _presenter.Attach(_overview);
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
@@ -78,7 +80,7 @@ internal sealed class AppHost
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
         _virtualDesktops = VirtualDesktopService.Start(Log.Info);
-        _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops);
+        _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops, _sharedThumbnails);
         _desktopSwitch = new DesktopSwitchController(_desktopPresenter, () => _config.Desktops);
         _desktopPresenter.Attach(_desktopSwitch);
         _drag = new DragController(new MouseInjector(), () => _config.Drag);
@@ -494,6 +496,7 @@ internal sealed class AppHost
         _presenter.Dispose();
         _switcherPresenter.Dispose();
         _desktopPresenter.Dispose();
+        _sharedThumbnails.Dispose(); // 两个呈现器的缩略图都释放之后
         _virtualDesktops.Dispose();
         RestoreNativeGestures();
         _hotkeys?.Dispose();

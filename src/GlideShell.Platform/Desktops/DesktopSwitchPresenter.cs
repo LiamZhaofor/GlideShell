@@ -13,7 +13,8 @@ namespace GlideShell.Platform.Desktops;
 /// <summary>
 /// 四指切桌面的 Windows 实现（<see cref="IDesktopSwitchHost"/>，S3 推荐路线）：
 /// 每块屏一个置顶工具窗口覆盖层（工具窗口不属于任何虚拟桌面，切换全程可见），
-/// 把左 / 中 / 右三个桌面各自的壁纸与窗口（DWM 缩略图，其他桌面上的窗口同样是实时的）拼成一条，随位置平移；
+/// 把左 / 中 / 右三个桌面各自的壁纸与窗口（DWM 缩略图，其他桌面上的窗口同样是实时的）拼成一条，随位置平移。
+/// 默认用共享缩略图视觉并画窗口阴影（与总览共用后端），撤层前后画面一致；不可用时退回经典缩略图（没有阴影）。
 /// 松手决定切换后立刻在覆盖层下面无动画切换真实桌面；动画落定、收到切换通知、再多等 3 帧后撤层
 /// （盖住 explorer 逐个解除 cloak 的中间帧），最后把焦点交给新桌面最上层的窗口。
 /// </summary>
@@ -23,6 +24,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
 
     private readonly UiThread _ui;
     private readonly VirtualDesktopService _desktops;
+    private readonly SharedThumbnailSource _shared;
     private readonly RenderLoop _render;
     private readonly List<DesktopOverlay> _overlays = [];
     private volatile DesktopOverlay[] _renderOverlays = [];
@@ -33,10 +35,11 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     private volatile bool _shown;
     private Guid? _committedTarget;
 
-    public DesktopSwitchPresenter(UiThread ui, VirtualDesktopService desktops)
+    public DesktopSwitchPresenter(UiThread ui, VirtualDesktopService desktops, SharedThumbnailSource shared)
     {
         _ui = ui;
         _desktops = desktops;
+        _shared = shared;
         _render = new RenderLoop(RenderFrame, stats => Log.Info($"切桌面渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
 
@@ -89,11 +92,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     public void Dispose()
     {
         _render.Dispose();
-        foreach (var o in _overlays)
-        {
-            o.ReleaseLayer();
-            o.Dispose();
-        }
+        foreach (var o in _overlays) o.Dispose();
         _overlays.Clear();
     }
 
@@ -110,10 +109,14 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
             .Where(w => !w.IsMinimized) // 最小化窗口不在桌面画面里
             .ToList();
         Guid? left = state.Neighbor(-1), right = state.Neighbor(1);
+        nint foreground = User32.GetForegroundWindow();
+        var shared = _shared.Get();
         foreach (var o in _overlays)
         {
-            var mine = windows.Where(w => w.MonitorIndex == o.Monitor.Index).ToList();
-            o.Prepare(mine, current, left, right);
+            // 本屏的窗口，加上有一部分在本屏上的跨屏窗口（只画在一块屏上的话，显示 / 撤层的那一刻会缺一块）
+            var mine = windows.Where(w => w.MonitorIndex == o.Monitor.Index || w.Overlaps(o.Monitor.WorkArea)).ToList();
+            int failure = o.Prepare(mine, current, left, right, foreground, shared);
+            if (failure != 0) _shared.Disable(failure, "切桌面");
         }
         _windows = windows;
         _sessionState = state;
@@ -121,7 +124,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         _prepared = true;
         Log.Info($"切桌面预热：桌面 {state.CurrentIndex + 1}/{state.Count}，" +
                  $"本桌面 {windows.Count(w => w.DesktopId == current)} 个窗口，相邻桌面 {windows.Count(w => w.DesktopId == left || w.DesktopId == right)} 个，" +
-                 $"耗时 {(HostClock.NowUs() - t0) / 1000.0:F1}ms");
+                 $"耗时 {(HostClock.NowUs() - t0) / 1000.0:F1}ms{(shared is null ? "（经典缩略图）" : "")}");
     }
 
     private void Release()
@@ -129,6 +132,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         foreach (var o in _overlays) o.ReleaseLayer();
         _prepared = false;
     }
+
 
     /// <summary>
     /// 撤层前要等真实桌面完全切好：先等切换通知，再等 explorer 把窗口的外壳 cloak 换过来——
@@ -187,11 +191,7 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
         bool same = _overlays.Count == monitors.Count &&
                     _overlays.Zip(monitors).All(p => p.First.Monitor.WorkArea == p.Second.WorkArea && p.First.Monitor.DpiScale == p.Second.DpiScale);
         if (same) return;
-        foreach (var o in _overlays)
-        {
-            o.ReleaseLayer();
-            o.Dispose();
-        }
+        foreach (var o in _overlays) o.Dispose();
         _overlays.Clear();
         foreach (var m in monitors) _overlays.Add(new DesktopOverlay(m));
         _renderOverlays = _overlays.ToArray();
@@ -211,163 +211,3 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     }
 }
 
-/// <summary>一块屏的切桌面覆盖层：置顶工具窗口（不属于任何虚拟桌面），黑底，不激活、鼠标穿透。</summary>
-internal sealed unsafe class DesktopOverlay : NativeWindow
-{
-    private volatile DesktopLayer _layer;
-
-    public DesktopOverlay(MonitorInfo monitor)
-    {
-        Monitor = monitor;
-        _layer = DesktopLayer.Empty;
-        var wa = monitor.WorkArea;
-        Create("GlideShell.Desktops", User32.WS_POPUP,
-            User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U | 0x20 /* WS_EX_TRANSPARENT */,
-            (int)wa.Left, (int)wa.Top, (int)wa.Width, (int)wa.Height);
-    }
-
-    public MonitorInfo Monitor { get; }
-
-    public DesktopLayer Layer => _layer;
-
-    public void Prepare(IReadOnlyList<OverviewWindow> windows, Guid current, Guid? left, Guid? right)
-    {
-        var old = _layer;
-        _layer = DesktopLayer.Register(Handle, Monitor, windows, current, left, right);
-        old.Unregister();
-    }
-
-    public void ReleaseLayer()
-    {
-        var old = _layer;
-        _layer = DesktopLayer.Empty;
-        old.Unregister();
-    }
-
-    public void ShowOverlay()
-    {
-        var wa = Monitor.WorkArea;
-        User32.SetWindowPos(Handle, User32.HWND_TOPMOST, (int)wa.Left, (int)wa.Top, (int)wa.Width, (int)wa.Height,
-            User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
-    }
-
-    public void HideOverlay()
-    {
-        // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
-        User32.ShowWindow(Handle, User32.SW_HIDE);
-        _layer.HideAll();
-    }
-
-    protected override nint? WndProc(uint msg, nint wParam, nint lParam)
-    {
-        switch (msg)
-        {
-            case User32.WM_MOUSEACTIVATE:
-                return User32.MA_NOACTIVATE;
-            case User32.WM_ERASEBKGND:
-                return 1;
-            case User32.WM_PAINT:
-                User32.PAINTSTRUCT ps;
-                nint hdc = User32.BeginPaint(Handle, &ps);
-                nint black = Gdi32.CreateSolidBrush(0);
-                User32.FillRect(hdc, &ps.rcPaint, black); // 桌面之间的缝隙是黑色
-                Gdi32.DeleteObject(black);
-                User32.EndPaint(Handle, &ps);
-                return 0;
-        }
-        return null;
-    }
-}
-
-/// <summary>
-/// 一块屏上三个桌面的缩略图（不可变，UI 线程整体替换，渲染线程按位置逐帧平移）。
-/// 每个桌面一份壁纸（Progman 缩略图，所有桌面共用全局壁纸）+ 该桌面在本屏的窗口（按 Z 序从下往上注册）。
-/// </summary>
-internal sealed unsafe class DesktopLayer
-{
-    private readonly record struct Entry(nint Thumb, int Slot, RectD Dest, User32.RECT Source);
-
-    public static DesktopLayer Empty { get; } = new([], default, 1);
-
-    private readonly Entry[] _entries;
-    private readonly RectD _area;
-    private readonly double _dpi;
-
-    private DesktopLayer(Entry[] entries, RectD area, double dpi)
-    {
-        _entries = entries;
-        _area = area;
-        _dpi = dpi;
-    }
-
-    public static DesktopLayer Register(nint overlay, MonitorInfo monitor, IReadOnlyList<OverviewWindow> windows, Guid current, Guid? left, Guid? right)
-    {
-        var area = monitor.WorkArea;
-        var entries = new List<Entry>();
-        var slots = new List<(int Slot, Guid Id)> { (0, current) };
-        if (left is { } l) slots.Add((-1, l));
-        if (right is { } r) slots.Add((1, r));
-
-        nint progman = User32.FindWindowW("Progman", null);
-        User32.RECT pr = default;
-        if (progman != 0) User32.GetWindowRect(progman, &pr);
-        foreach (var (slot, _) in slots)
-        {
-            nint thumb;
-            if (progman == 0 || Dwmapi.DwmRegisterThumbnail(overlay, progman, &thumb) != 0) continue;
-            var source = new User32.RECT
-            {
-                Left = (int)area.Left - pr.Left, Top = (int)area.Top - pr.Top,
-                Right = (int)area.Right - pr.Left, Bottom = (int)area.Bottom - pr.Top,
-            };
-            entries.Add(new Entry(thumb, slot, area, source));
-        }
-
-        // 窗口按 Z 序（列表最上层在前）从下往上注册，后注册的画在上面
-        for (int i = windows.Count - 1; i >= 0; i--)
-        {
-            var w = windows[i];
-            int slot = w.DesktopId == current ? 0 : w.DesktopId == left ? -1 : w.DesktopId == right ? 1 : int.MinValue;
-            if (slot == int.MinValue) continue;
-            nint thumb;
-            if (Dwmapi.DwmRegisterThumbnail(overlay, (nint)w.Id, &thumb) != 0) continue;
-            entries.Add(new Entry(thumb, slot, w.Source, ThumbnailLayer.ThumbnailSource((nint)w.Id, thumb).Source));
-        }
-        var layer = new DesktopLayer(entries.ToArray(), area, monitor.DpiScale);
-        layer.HideAll();
-        return layer;
-    }
-
-    public void Apply(double position)
-    {
-        double gap = 48 * _dpi;
-        var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES
-        {
-            dwFlags = Dwmapi.DWM_TNP_RECTDESTINATION | Dwmapi.DWM_TNP_RECTSOURCE | Dwmapi.DWM_TNP_VISIBLE,
-            fVisible = 1,
-        };
-        foreach (var e in _entries)
-        {
-            double dx = DesktopSwitchController.SlideOffset(e.Slot, position, _area.Width, gap);
-            var r = e.Dest;
-            props.rcDestination = new User32.RECT
-            {
-                Left = (int)Math.Round(r.Left + dx - _area.Left), Top = (int)Math.Round(r.Top - _area.Top),
-                Right = (int)Math.Round(r.Right + dx - _area.Left), Bottom = (int)Math.Round(r.Bottom - _area.Top),
-            };
-            props.rcSource = e.Source;
-            Dwmapi.DwmUpdateThumbnailProperties(e.Thumb, &props);
-        }
-    }
-
-    public void HideAll()
-    {
-        var props = new Dwmapi.DWM_THUMBNAIL_PROPERTIES { dwFlags = Dwmapi.DWM_TNP_VISIBLE, fVisible = 0 };
-        foreach (var e in _entries) Dwmapi.DwmUpdateThumbnailProperties(e.Thumb, &props);
-    }
-
-    public void Unregister()
-    {
-        foreach (var e in _entries) Dwmapi.DwmUnregisterThumbnail(e.Thumb);
-    }
-}

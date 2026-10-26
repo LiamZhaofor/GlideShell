@@ -83,6 +83,19 @@ public static unsafe partial class ThumbnailSelfTest
                 log(shadow ? "窗口阴影：已画出" : "窗口阴影：没有画出来");
                 ok &= shadow;
             }
+            {
+                // 别的虚拟桌面上的窗口是被外壳 cloak 的：切桌面要画它们，缩略图得照样有画面。
+                // 自己的窗口只能做应用 cloak（DWMWA_CLOAK），与外壳 cloak 同属 DWM 的隐藏，作为近似验证
+                int on = 1, off = 0;
+                Dwmapi.DwmSetWindowAttribute(source.Handle, 13 /* DWMWA_CLOAK */, &on, sizeof(int));
+                for (int i = 0; i < 4; i++) Dwmapi.DwmFlush();
+                Pump(100);
+                uint cl = ScreenPixel(x + 110, y + 100), cr = ScreenPixel(x + 210, y + 100);
+                bool live = (cl & 0xFF) > 180 && ((cl >> 16) & 0xFF) < 80 && ((cr >> 16) & 0xFF) > 180 && (cr & 0xFF) < 80;
+                log($"源窗口被 cloak 后：左半 {Rgb(cl)} · 右半 {Rgb(cr)} → {(live ? "缩略图仍有画面" : "缩略图没有画面")}");
+                Dwmapi.DwmSetWindowAttribute(source.Handle, 13, &off, sizeof(int));
+                ok &= live;
+            }
             if (fadeProbe)
             {
                 // 实验：把目标窗口改成分层窗口并整体调透明度，看缩略图 / 共享视觉是否跟着淡出（撤层交叉淡出方案的前提）

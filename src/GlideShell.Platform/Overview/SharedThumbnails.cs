@@ -161,6 +161,12 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         return 0;
     }
 
+    /// <summary>渲染线程：把本帧几处不提交的修改一次生效。</summary>
+    public int Commit()
+    {
+        lock (Gate) return _device == null ? 0 : Dcomp.Commit(_device);
+    }
+
     public void Dispose()
     {
         lock (Gate)
@@ -173,17 +179,22 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
     }
 }
 
-/// <summary>一个覆盖层窗口的 DComp 目标（topmost：画在窗口自己的 GDI 内容之上，与经典缩略图的层次一致）与根视觉。</summary>
+/// <summary>
+/// 一个覆盖层窗口的 DComp 目标（topmost：画在窗口自己的 GDI 内容之上，与经典缩略图的层次一致）与根视觉；
+/// 或者挂在某个根视觉下的分支（<see cref="CreateBranch"/>：一组视觉整体平移，例如切桌面时的一整个桌面）。
+/// </summary>
 internal sealed unsafe class OverlayComposition : IDisposable
 {
     private readonly SharedThumbnailBackend _backend;
-    private void* _target;
+    private void* _target; // 顶层才有
+    private void* _parent; // 分支才有
     private void* _root;
 
-    private OverlayComposition(SharedThumbnailBackend backend, void* target, void* root)
+    private OverlayComposition(SharedThumbnailBackend backend, void* target, void* parent, void* root)
     {
         _backend = backend;
         _target = target;
+        _parent = parent;
         _root = root;
     }
 
@@ -198,10 +209,35 @@ internal sealed unsafe class OverlayComposition : IDisposable
             if (hr >= 0) hr = Dcomp.CreateVisual(backend.Device, &root);
             if (hr >= 0) hr = Dcomp.SetRoot(target, root);
             if (hr >= 0) hr = Dcomp.Commit(backend.Device);
-            if (hr >= 0) return new OverlayComposition(backend, target, root);
+            if (hr >= 0) return new OverlayComposition(backend, target, null, root);
             if (root != null) Dcomp.Release(root);
             if (target != null) Dcomp.Release(target);
             return null;
+        }
+    }
+
+    /// <summary>在本根视觉下建一个分支（加在最上层）。分支要在本对象之前释放。</summary>
+    public OverlayComposition? CreateBranch(out int hr)
+    {
+        lock (_backend.Gate)
+        {
+            void* visual = null;
+            hr = _root == null ? unchecked((int)0x80004005) : Dcomp.CreateVisual(_backend.Device, &visual);
+            if (hr >= 0) hr = Dcomp.AddVisual(_root, visual);
+            if (hr >= 0) return new OverlayComposition(_backend, null, _root, visual);
+            if (visual != null) Dcomp.Release(visual);
+            return null;
+        }
+    }
+
+    /// <summary>渲染线程：整体平移（不提交，随后由层的 Apply 或 <see cref="SharedThumbnailBackend.Commit"/> 一起生效）。</summary>
+    public void SetOffset(double x, double y)
+    {
+        lock (_backend.Gate)
+        {
+            if (_root == null || _backend.Device == null) return;
+            var m = Matrix3x2.CreateTranslation((float)x, (float)y);
+            Dcomp.SetTransform(_root, &m);
         }
     }
 
@@ -209,12 +245,13 @@ internal sealed unsafe class OverlayComposition : IDisposable
     {
         lock (_backend.Gate)
         {
-            if (_target == null) return;
-            Dcomp.SetRoot(_target, null);
+            if (_root == null) return;
+            if (_target != null) Dcomp.SetRoot(_target, null);
+            if (_parent != null) Dcomp.RemoveVisual(_parent, _root);
             if (_backend.Device != null) Dcomp.Commit(_backend.Device);
             Dcomp.Release(_root);
-            Dcomp.Release(_target);
-            _root = _target = null;
+            if (_target != null) Dcomp.Release(_target);
+            _root = _target = _parent = null;
         }
     }
 }
@@ -353,6 +390,10 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     }
 
     public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity)
+        => Apply(sceneRects, sceneOpacity, sceneActive, wallpaperOpacity, commit: true);
+
+    /// <param name="commit">false：不提交，由调用方把几层的修改一起 Commit（切桌面的三个桌面要同一帧生效）。</param>
+    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity, bool commit)
     {
         lock (_backend.Gate)
         {
@@ -397,7 +438,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
                     Check(Dcomp.SetOpacity((void*)s.Visual, (float)alpha));
                 }
             }
-            Check(Dcomp.Commit(_backend.Device));
+            if (commit) Check(Dcomp.Commit(_backend.Device));
             return firstError;
         }
     }

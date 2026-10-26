@@ -16,6 +16,9 @@ public readonly record struct RectD(double X, double Y, double Width, double Hei
 
     public bool Contains(double x, double y) => x >= X && x < Right && y >= Y && y < Bottom;
 
+    /// <summary>两个矩形有没有面积大于 0 的交集（只碰到边不算）。</summary>
+    public bool Intersects(RectD other) => X < other.Right && other.X < Right && Y < other.Bottom && other.Y < Bottom && !IsEmpty && !other.IsEmpty;
+
     public RectD Offset(double dx, double dy) => this with { X = X + dx, Y = Y + dy };
 
     /// <summary>以中心为基准缩放。</summary>

@@ -14,4 +14,11 @@ public sealed record OverviewWindow(
     bool IsForeground,
     int MonitorIndex,
     string ProcessName,
-    Guid? DesktopId = null);
+    Guid? DesktopId = null)
+{
+    /// <summary>
+    /// 此刻有没有一部分画在 <paramref name="area"/>（某块屏的覆盖层范围）里。最小化窗口不在屏幕上，不算。
+    /// 每块屏的覆盖层除了画「归它管」的窗口，也要画这些窗口在本屏上的那一部分，否则跨屏的窗口在覆盖层出现 / 撤掉的那一刻会缺一块。
+    /// </summary>
+    public bool Overlaps(RectD area) => !IsMinimized && Source.Intersects(area);
+}
