@@ -145,7 +145,10 @@ public sealed unsafe class TrayIcon : IDisposable
     }
 }
 
-/// <summary>应用图标：优先用 exe 内嵌的图标（资源 ID 32512），没有时用系统默认图标。</summary>
+/// <summary>
+/// 应用图标：优先用 exe 内嵌的图标（ApplicationIcon，资源 ID 32512），按系统小图标尺寸取最合适的那一帧
+/// （LoadIcon 只给 32 像素，托盘里缩小会发虚）；没有时用系统默认图标。
+/// </summary>
 internal static unsafe class AppIcon
 {
     private static nint s_handle;
@@ -155,7 +158,9 @@ internal static unsafe class AppIcon
         get
         {
             if (s_handle != 0) return s_handle;
-            s_handle = User32.LoadIconW(Kernel32.GetModuleHandleW(null), User32.IDI_APPLICATION);
+            uint dpi = User32.GetDpiForSystem();
+            int cx = User32.GetSystemMetricsForDpi(User32.SM_CXSMICON, dpi), cy = User32.GetSystemMetricsForDpi(User32.SM_CYSMICON, dpi);
+            s_handle = User32.LoadImageW(Kernel32.GetModuleHandleW(null), (char*)User32.IDI_APPLICATION, User32.IMAGE_ICON, cx, cy, 0);
             if (s_handle == 0) s_handle = User32.LoadIconW(0, User32.IDI_APPLICATION);
             return s_handle;
         }

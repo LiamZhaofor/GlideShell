@@ -92,6 +92,15 @@ internal static unsafe partial class User32
 
     [LibraryImport("user32.dll")]
     public static partial nint LoadImageW(nint instance, char* name, uint type, int cx, int cy, uint load);
+
+    public const uint IMAGE_ICON = 1;
+    public const int SM_CXSMICON = 49, SM_CYSMICON = 50;
+
+    [LibraryImport("user32.dll")]
+    public static partial int GetSystemMetricsForDpi(int index, uint dpi);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetDpiForSystem();
 }
 
 internal static unsafe partial class Shell32

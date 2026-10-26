@@ -9,6 +9,8 @@
     <IsAotCompatible>true</IsAotCompatible>
     <AssemblyName>GlideShell</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 嵌入为资源 ID 32512，托盘按系统小图标尺寸加载（build/make-icon.py 生成） -->
+    <ApplicationIcon>Assets\GlideShell.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
