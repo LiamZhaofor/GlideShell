@@ -8,7 +8,8 @@ namespace GlideShell.Core.Gestures;
 /// <list type="bullet">
 /// <item>位移 = 相邻两帧中「都在按」的触点的平均位移累加，所以落指、抬指、加指都不会让位移跳变。</item>
 /// <item>抬指只认 TipSwitch=0（或触点从报文中消失）；没有报文 = 状态不变（手指静止时设备可能停发）。</item>
-/// <item>Confidence=0 的触点（手掌）整个生命周期都不参与识别。</item>
+/// <item>Confidence=0 的触点暂不参与识别：落指时不确定、随后转为有效的手指（S1 实测本机快甩时约 80ms）在转为有效后加入；
+/// 有效过之后又被判为 Confidence=0 的（PTP 规范的手掌判定）此后一直不参与。</item>
 /// <item>速度按设备时间做最小二乘，停住再抬起时速度为 0。</item>
 /// </list>
 /// 只在输入线程上调用；事件通过构造时传入的回调同步发出。
@@ -22,6 +23,7 @@ public sealed class GestureRecognizer
         public int Id;
         public double X, Y;
         public bool Palm;
+        public bool WasConfident; // 有效过：之后再出现 Confidence=0 就按手掌处理到底
         public bool Seen;
     }
 
@@ -231,13 +233,16 @@ public sealed class GestureRecognizer
             {
                 if (_trackedCount >= _tracked.Length) continue;
                 idx = _trackedCount++;
-                _tracked[idx] = new Tracked { Id = c.Id, X = c.XMm, Y = c.YMm, Palm = !c.Confidence, Seen = true };
+                _tracked[idx] = new Tracked { Id = c.Id, X = c.XMm, Y = c.YMm, Palm = !c.Confidence, WasConfident = c.Confidence, Seen = true };
             }
             else
             {
                 ref var t = ref _tracked[idx];
-                t.Palm |= !c.Confidence;
-                if (!t.Palm)
+                bool wasPalm = t.Palm;
+                if (c.Confidence && !(t.Palm && t.WasConfident)) t.Palm = false; // 落指时不确定 → 转为有效
+                else if (!c.Confidence) t.Palm = true;
+                t.WasConfident |= c.Confidence && !t.Palm;
+                if (!t.Palm && !wasPalm)
                 {
                     sx += c.XMm - t.X;
                     sy += c.YMm - t.Y;

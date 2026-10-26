@@ -10,9 +10,9 @@ public sealed record SensitivityPreset(string Label, double SlopMm, double Overv
 {
     public static IReadOnlyList<SensitivityPreset> All { get; } =
     [
-        new("高", 2.5, 24, 18, 45),
-        new("标准", 3.0, 30, 22, 55),
-        new("低", 4.0, 38, 28, 68),
+        new("高", 1.5, 24, 18, 45),
+        new("标准", 2.0, 30, 22, 55),
+        new("低", 3.0, 38, 28, 68),
     ];
 
     public GlideShellConfig ApplyTo(GlideShellConfig c) => c with

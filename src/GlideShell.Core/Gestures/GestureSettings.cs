@@ -2,7 +2,7 @@ namespace GlideShell.Core.Gestures;
 
 /// <summary>
 /// 手势识别参数，全部用物理单位（毫米、毫秒），与触摸板分辨率无关。
-/// 默认值来自 PTP 规范与常见触摸板经验，S1 真机轨迹出来后再校准。
+/// 默认值按 S1 真机轨迹校准（2026-10-26，ASUS PTP，14 个场景全部通过，见 docs/spikes/S1-input-semantics.md）。
 /// </summary>
 public sealed record GestureSettings
 {
@@ -10,16 +10,16 @@ public sealed record GestureSettings
     public int MinFingers { get; set; } = 3;
 
     /// <summary>质心移动超过它才确认是滑动。太小会把轻点的抖动当成滑动，太大会让起步发黏。</summary>
-    public double SlopMm { get; set; } = 3.0;
+    public double SlopMm { get; set; } = 2.0;
 
     /// <summary>指数变化后要稳定这么久才锁定指数（手指很难完全同时落下）。移动很快时不等待。</summary>
-    public double FingerSettleMs { get; set; } = 40;
+    public double FingerSettleMs { get; set; } = 60;
 
     /// <summary>轻点：按下到全部抬起不超过这个时长。</summary>
-    public double TapMaxDurationMs { get; set; } = 250;
+    public double TapMaxDurationMs { get; set; } = 200;
 
     /// <summary>轻点：期间质心移动不超过这个距离（应不大于 <see cref="SlopMm"/>）。</summary>
-    public double TapMaxMoveMm { get; set; } = 2.0;
+    public double TapMaxMoveMm { get; set; } = 1.0;
 
     /// <summary>方向锁定：|dx| ≥ |dy| × 比例 判为横向，否则纵向。1 = 以 45° 为界。</summary>
     public double AxisLockRatio { get; set; } = 1.0;
