@@ -142,3 +142,63 @@ public class OverviewNavigationTests
         Assert.Equal(0, scene.Cycle(-1, backwards: false));
     }
 }
+
+public class MultiMonitorSceneTests
+{
+    // 左：2560×1600 @150%（工作区去掉任务栏）；右：1920×1080 @100%，在左屏右边
+    private static readonly OverviewArea Left = new(new RectD(0, 0, 2560, 1528), 1.5);
+    private static readonly OverviewArea Right = new(new RectD(2560, 0, 1920, 1032), 1.0);
+
+    private static List<OverviewWindow> Windows() =>
+    [
+        new(1, "左 A", new RectD(100, 100, 1200, 800), false, true, 0, "a"),
+        new(2, "左 B", new RectD(1300, 600, 1100, 800), false, false, 0, "b"),
+        new(3, "右 C", new RectD(2700, 100, 900, 700), false, false, 1, "c"),
+        new(4, "右 D", new RectD(3600, 300, 800, 600), true, false, 1, "d"), // 最小化窗口照样按所在屏排
+    ];
+
+    [Fact]
+    public void Each_monitor_lays_out_its_own_windows_inside_its_work_area()
+    {
+        var scene = OverviewScene.Build(Windows(), [Left, Right]);
+
+        for (int i = 0; i < scene.Count; i++)
+        {
+            var area = scene.Windows[i].MonitorIndex == 0 ? Left.WorkArea : Right.WorkArea;
+            var tile = scene.Slots[i].Tile;
+            Assert.True(tile.Left >= area.Left && tile.Right <= area.Right && tile.Top >= area.Top && tile.Bottom <= area.Bottom,
+                $"{scene.Windows[i].Title} 的平铺位 {tile} 超出了所在屏的工作区 {area}");
+        }
+    }
+
+    [Fact]
+    public void Primary_only_puts_every_window_on_the_primary_monitor()
+    {
+        var scene = OverviewScene.Build(Windows(), [Left, Right], primaryOnly: true, primaryIndex: 0);
+
+        Assert.All(scene.Slots, s => Assert.True(s.Tile.Right <= Left.WorkArea.Right && s.Tile.Left >= Left.WorkArea.Left));
+    }
+
+    [Fact]
+    public void Monitor_index_out_of_range_falls_back_to_an_existing_monitor()
+    {
+        var windows = Windows();
+        windows[2] = windows[2] with { MonitorIndex = 5 }; // 显示器拔掉后残留的编号
+        var scene = OverviewScene.Build(windows, [Left, Right]);
+
+        Assert.Equal(4, scene.Count);
+        Assert.All(scene.Slots, s => Assert.True(s.Tile.Width > 0 && s.Tile.Height > 0));
+    }
+
+    [Fact]
+    public void Arrow_keys_cross_to_the_next_monitor()
+    {
+        var scene = OverviewScene.Build(Windows(), [Left, Right]);
+        int rightmostOnLeft = Enumerable.Range(0, scene.Count).Where(i => scene.Windows[i].MonitorIndex == 0)
+            .MaxBy(i => scene.Slots[i].Tile.CenterX);
+
+        int next = scene.Navigate(rightmostOnLeft, NavigationDirection.Right);
+
+        Assert.Equal(1, scene.Windows[next].MonitorIndex);
+    }
+}
