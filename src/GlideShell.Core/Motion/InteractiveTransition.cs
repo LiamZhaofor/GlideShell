@@ -55,6 +55,18 @@ public sealed class InteractiveTransition
         get { lock (_gate) return _phase; }
     }
 
+    /// <summary>当前目标（只读、不推进状态）：动画中为动画目标，否则为当前值。</summary>
+    public double Target
+    {
+        get { lock (_gate) return _phase == TransitionPhase.Animating ? _animation.Target : _value; }
+    }
+
+    /// <summary>某时刻的值（只读、不推进状态）。落定事件只由 <see cref="Sample"/> 发出，其他线程查询用这个。</summary>
+    public double Peek(long hostUs)
+    {
+        lock (_gate) return _phase == TransitionPhase.Animating ? _animation.Sample(hostUs).Value : _value;
+    }
+
     /// <summary>手指按下：从当前画面位置开始跟随（动画中则就地接管，速度归零）。</summary>
     public void BeginTracking(long hostUs)
     {
