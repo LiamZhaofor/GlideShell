@@ -18,6 +18,9 @@ public static class SyntheticTouch
         ["switch"] = (3, [new(600, -46, 0), new(400), new(0, Lift: true)]),
         ["switch-back"] = (3, [new(400, -46, 0), new(400, 40, 0), new(300), new(0, Lift: true)]),
         ["switch-one"] = (3, [new(300, -24, 0), new(200), new(0, Lift: true)]),
+        ["desktop-right"] = (4, [new(350, -36, 0), new(150), new(0, Lift: true)]),
+        ["desktop-left"] = (4, [new(350, 36, 0), new(150), new(0, Lift: true)]),
+        ["desktop-peek"] = (4, [new(300, -20, 0), new(300, 18, 0), new(0, Lift: true)]),
     };
 
     /// <summary>

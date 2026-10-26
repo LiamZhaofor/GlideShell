@@ -30,6 +30,17 @@ public sealed unsafe class UiThread : NativeWindow
         User32.PostMessageW(Handle, WM_DISPATCH, 0, 0);
     }
 
+    /// <summary>任意线程调用：<paramref name="delayMs"/> 毫秒后在 UI 线程上执行。</summary>
+    public void PostDelayed(int delayMs, Action action)
+    {
+        Timer? timer = null;
+        timer = new Timer(_ =>
+        {
+            timer?.Dispose();
+            Post(action);
+        }, null, delayMs, Timeout.Infinite);
+    }
+
     /// <summary>为某个消息挂处理器（托盘回调、热键等）；处理器返回 null 表示继续默认处理。</summary>
     public void OnMessage(uint message, Func<nint, nint, nint?> handler) => _handlers[message] = handler;
 

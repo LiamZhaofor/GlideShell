@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using GlideShell.Core.Configuration;
+using GlideShell.Core.Desktops;
 using GlideShell.Core.Gestures;
 using GlideShell.Core.Input;
 using GlideShell.Core.Overview;
 using GlideShell.Core.Switcher;
 using GlideShell.Platform;
+using GlideShell.Platform.Desktops;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Input;
 using GlideShell.Platform.NativeGestures;
@@ -12,6 +14,7 @@ using GlideShell.Platform.Overview;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Switcher;
 using GlideShell.Platform.Ui;
+using GlideShell.Platform.VirtualDesktops;
 
 namespace GlideShell;
 
@@ -44,6 +47,9 @@ internal sealed class AppHost
     private OverviewController _overview = null!;
     private SwitcherPresenter _switcherPresenter = null!;
     private SwitcherController _switcher = null!;
+    private VirtualDesktopService _virtualDesktops = null!;
+    private DesktopSwitchPresenter _desktopPresenter = null!;
+    private DesktopSwitchController _desktopSwitch = null!;
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
     private readonly string? _simulate;
@@ -65,6 +71,10 @@ internal sealed class AppHost
         _switcherPresenter = new SwitcherPresenter(_ui);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
+        _virtualDesktops = VirtualDesktopService.Start(Log.Info);
+        _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops);
+        _desktopSwitch = new DesktopSwitchController(_desktopPresenter, () => _config.Desktops);
+        _desktopPresenter.Attach(_desktopSwitch);
         _activeMap = ActiveMap(_config);
         _router = new GestureRouter(() => _activeMap, Target, Suppressed);
         _recognizer = new GestureRecognizer(_config.Recognition, _router.OnGesture);
@@ -97,7 +107,9 @@ internal sealed class AppHost
     {
         GestureAction.Overview => _overview,
         GestureAction.SwitchWindows => _switcher,
-        _ => null, // 切换桌面（P5）尚未实现：留给系统
+        // 虚拟桌面接口自检不通过、或用户关掉了它：四指横滑交还系统（原生切桌面本身已跟手）
+        GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled => _desktopSwitch,
+        _ => null,
     };
 
     /// <summary>
@@ -110,7 +122,7 @@ internal sealed class AppHost
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>
     private bool Suppressed()
     {
-        if (_overview.IsVisible || _switcher.IsVisible) return false;
+        if (_overview.IsVisible || _switcher.IsVisible || _desktopSwitch.IsVisible) return false;
         if (_paused) return true;
         var cfg = _config;
         var fg = _foreground?.Current;
@@ -300,6 +312,8 @@ internal sealed class AppHost
         _input?.Dispose();
         _presenter.Dispose();
         _switcherPresenter.Dispose();
+        _desktopPresenter.Dispose();
+        _virtualDesktops.Dispose();
         RestoreNativeGestures();
         _hotkeys?.Dispose();
         _tray?.Dispose();

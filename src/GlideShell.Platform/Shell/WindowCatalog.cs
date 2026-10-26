@@ -19,8 +19,12 @@ public static unsafe class WindowCatalog
 
     /// <param name="ownWindows">GlideShell 自己的窗口（覆盖层等），一律排除。</param>
     /// <param name="rejections">传入列表时记录每个被排除窗口的原因（诊断用）。</param>
+    /// <param name="allDesktops">
+    /// 跨桌面枚举（切换桌面用）：也收录其他虚拟桌面上的窗口，并填写 <see cref="OverviewWindow.DesktopId"/>；
+    /// 不属于任何桌面的窗口（工具窗等）和被隐藏的当前桌面窗口仍然排除。
+    /// </param>
     public static List<OverviewWindow> Snapshot(IReadOnlyList<MonitorInfo> monitors, ICollection<nint>? ownWindows = null,
-        List<(string Window, string Reason)>? rejections = null)
+        List<(string Window, string Reason)>? rejections = null, bool allDesktops = false)
     {
         t_handles = [];
         User32.EnumWindows(&Collect, 0);
@@ -60,23 +64,35 @@ public static unsafe class WindowCatalog
                 IsOwnWindow: ownWindows?.Contains(hwnd) == true);
 
             // 第二轮：只对候选窗口做跨进程的虚拟桌面查询（每次约几十微秒，逐个查 400 多个窗口要二十多毫秒）
-            if (WindowFilter.Reject(probe) is null && VirtualDesktops is { } vdm)
+            Guid? desktopId = null;
+            if (WindowFilter.Reject(probe, allDesktops) is null && VirtualDesktops is { } vdm)
             {
                 int hr = vdm.IsWindowOnCurrentVirtualDesktop(hwnd, out int on);
                 if (hr == 0) probe = probe with { OnCurrentDesktop = on != 0 };
                 else if (hr is RpcDisconnected or RpcServerUnavailable) s_vdmTried = false; // Explorer 重启过：下次重新连接
+                if (allDesktops && vdm.GetWindowDesktopId(hwnd, out Guid id) == 0 && id != Guid.Empty) desktopId = id;
             }
 
-            if (WindowFilter.Reject(probe) is { } reason)
+            if (WindowFilter.Reject(probe, allDesktops) is { } reason)
             {
                 rejections?.Add(($"{Title(hwnd)} [{cls}]", reason));
                 continue;
+            }
+            if (allDesktops)
+            {
+                // 不属于任何桌面（GetWindowDesktopId 失败）的窗口不参与滑动；
+                // 在当前桌面上却被外壳隐藏的窗口（例如挂起的应用框架）也不画
+                if (desktopId is null || (probe.OnCurrentDesktop == true && (cloaked & 2) != 0))
+                {
+                    rejections?.Add(($"{Title(hwnd)} [{cls}]", "不属于任何虚拟桌面或已隐藏"));
+                    continue;
+                }
             }
 
             uint pid = 0;
             User32.GetWindowThreadProcessId(hwnd, &pid);
             if (!processNames.TryGetValue(pid, out string? process)) processNames[pid] = process = ProcessName(pid);
-            result.Add(new OverviewWindow(hwnd, Title(hwnd), bounds, minimized, hwnd == foreground, monitor?.Index ?? 0, process));
+            result.Add(new OverviewWindow(hwnd, Title(hwnd), bounds, minimized, hwnd == foreground, monitor?.Index ?? 0, process, desktopId));
         }
         return result;
     }

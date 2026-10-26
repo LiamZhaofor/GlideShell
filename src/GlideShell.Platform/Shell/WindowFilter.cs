@@ -36,19 +36,20 @@ public static class WindowFilter
     };
 
     /// <summary>返回 null 表示收录；否则返回排除原因（--dump 诊断用）。</summary>
-    public static string? Reject(in WindowProbe w)
+    /// <param name="allowOtherDesktops">跨桌面枚举（切换桌面用）：不因「在其他虚拟桌面」而排除，由调用方按桌面归属再分组。</param>
+    public static string? Reject(in WindowProbe w, bool allowOtherDesktops = false)
     {
         if (w.IsOwnWindow) return "GlideShell 自己的窗口";
         if (!w.Visible) return "不可见";
         if (w.ToolWindow && !w.AppWindow) return "工具窗口";
         if (w.NoActivate && !w.AppWindow) return "不可激活";
         if (w.HasOwner && !w.AppWindow) return "有 owner 的附属窗口";
-        if ((w.Cloaked & CloakedShell) != 0) return "其他虚拟桌面";
+        if ((w.Cloaked & CloakedShell) != 0 && !allowOtherDesktops) return "其他虚拟桌面";
         if ((w.Cloaked & CloakedInherited) != 0) return "继承隐藏";
         if (ShellClasses.Contains(w.ClassName)) return "系统外壳";
         if (w.TitleLength == 0) return "无标题";
         if (w.Width < MinWidth || w.Height < MinHeight) return $"尺寸过小 {w.Width}×{w.Height}";
-        if (w.OnCurrentDesktop == false) return "其他虚拟桌面（VDM）";
+        if (w.OnCurrentDesktop == false && !allowOtherDesktops) return "其他虚拟桌面（VDM）";
         return null;
     }
 }

@@ -37,6 +37,12 @@ public sealed record SwitcherConfig
 
 public sealed record DesktopConfig
 {
+    /// <summary>
+    /// 是否由 GlideShell 接管四指横滑切桌面。Win11 原生四指切桌面本身已经跟手（S3），
+    /// 关掉后四指横滑交还系统。虚拟桌面接口自检不通过时自动视为关闭。
+    /// </summary>
+    public bool Enabled { get; init; } = true;
+
     /// <summary>横滑多少毫米 = 整整切过一个桌面。</summary>
     public double TravelMm { get; init; } = 55;
 
