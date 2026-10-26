@@ -5,6 +5,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>GlideShell.Core</RootNamespace>
+    <!-- NativeAOT / 裁剪分析：警告即错误，保证随时能切到 NativeAOT 发布（需要 MSVC 链接器） -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

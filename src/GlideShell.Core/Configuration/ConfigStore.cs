@@ -1,25 +1,12 @@
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using GlideShell.Core.Serialization;
 
 namespace GlideShell.Core.Configuration;
 
-/// <summary>配置文件读写。读取永不抛出：文件缺失或损坏时用默认值，并把原因放进问题列表。</summary>
+/// <summary>配置文件读写（源生成序列化）。读取永不抛出：文件缺失或损坏时用默认值，并把原因放进问题列表。</summary>
 public static class ConfigStore
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Converters = { new JsonStringEnumConverter() },
-    };
-
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GlideShell", "config.json");
 
@@ -27,7 +14,7 @@ public static class ConfigStore
     {
         try
         {
-            var config = JsonSerializer.Deserialize<GlideShellConfig>(json, Options) ?? new GlideShellConfig();
+            var config = JsonSerializer.Deserialize(json, CoreJson.Config) ?? new GlideShellConfig();
             var (sanitized, problems) = config.Sanitize();
             if (config.Version > GlideShellConfig.CurrentVersion)
                 problems = [.. problems, $"配置版本 {config.Version} 比本程序支持的 {GlideShellConfig.CurrentVersion} 新，未知字段已忽略"];
@@ -56,7 +43,7 @@ public static class ConfigStore
         }
     }
 
-    public static string Serialize(GlideShellConfig config) => JsonSerializer.Serialize(config, Options);
+    public static string Serialize(GlideShellConfig config) => JsonSerializer.Serialize(config, CoreJson.Config);
 
     /// <summary>原子写入：先写临时文件再替换，写到一半崩溃也不会留下半个配置。</summary>
     public static void Save(GlideShellConfig config, string path)

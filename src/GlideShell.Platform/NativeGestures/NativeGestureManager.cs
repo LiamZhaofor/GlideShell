@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using GlideShell.Core.Gestures;
 using GlideShell.Core.NativeGestures;
 using Microsoft.Win32;
@@ -19,7 +20,6 @@ public sealed record NativeGestureResult(bool Applied, bool Verified, IReadOnlyL
 /// </summary>
 public sealed class NativeGestureManager(string? recordPath = null)
 {
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     public string RecordPath { get; } = recordPath ?? DefaultRecordPath;
 
@@ -113,7 +113,7 @@ public sealed class NativeGestureManager(string? recordPath = null)
     {
         try
         {
-            return File.Exists(RecordPath) ? JsonSerializer.Deserialize<TakeoverRecord>(File.ReadAllText(RecordPath), Json) : null;
+            return File.Exists(RecordPath) ? JsonSerializer.Deserialize(File.ReadAllText(RecordPath), NativeGesturesJson.Default.TakeoverRecord) : null;
         }
         catch (JsonException)
         {
@@ -125,7 +125,7 @@ public sealed class NativeGestureManager(string? recordPath = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(RecordPath)!);
         string temp = RecordPath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(record, Json));
+        File.WriteAllText(temp, JsonSerializer.Serialize(record, NativeGesturesJson.Default.TakeoverRecord));
         File.Move(temp, RecordPath, overwrite: true);
     }
 
@@ -165,3 +165,7 @@ public sealed class NativeGestureManager(string? recordPath = null)
     private static bool VerifyAll(IEnumerable<TouchpadSettings.Setting> settings, List<string> messages)
         => RefreshAndVerify(settings.Select(s => (s.Id, s.Name, ReadDword(s.Name))), messages);
 }
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(TakeoverRecord))]
+internal sealed partial class NativeGesturesJson : JsonSerializerContext;

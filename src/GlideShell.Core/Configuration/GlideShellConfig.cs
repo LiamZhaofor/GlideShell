@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using GlideShell.Core.Gestures;
 using GlideShell.Core.Motion;
 
@@ -6,10 +7,10 @@ namespace GlideShell.Core.Configuration;
 public sealed record SpringConfig
 {
     /// <summary>弹簧周期（秒），越小越快。</summary>
-    public double Response { get; init; } = 0.35;
+    public double Response { get; set; } = 0.35;
 
     /// <summary>阻尼比：1 = 不回弹，小于 1 有回弹。</summary>
-    public double DampingRatio { get; init; } = 0.86;
+    public double DampingRatio { get; set; } = 0.86;
 
     public SpringParameters ToParameters() => new(Response, DampingRatio);
 }
@@ -17,22 +18,22 @@ public sealed record SpringConfig
 public sealed record OverviewConfig
 {
     /// <summary>沿锁定轴滑动多少毫米 = 完全展开。</summary>
-    public double TravelMm { get; init; } = 30;
+    public double TravelMm { get; set; } = 30;
 
-    public SpringConfig Spring { get; init; } = new();
+    public SpringConfig Spring { get; set; } = new();
 
-    public bool PrimaryMonitorOnly { get; init; }
+    public bool PrimaryMonitorOnly { get; set; }
 
     /// <summary>展开后背景（桌面）变暗的程度：0 = 不变暗，1 = 全黑。</summary>
-    public double BackdropDim { get; init; } = 0.6;
+    public double BackdropDim { get; set; } = 0.6;
 }
 
 public sealed record SwitcherConfig
 {
     /// <summary>横滑多少毫米切换一个窗口。</summary>
-    public double MmPerWindow { get; init; } = 22;
+    public double MmPerWindow { get; set; } = 22;
 
-    public SpringConfig Spring { get; init; } = new() { Response = 0.3, DampingRatio = 0.9 };
+    public SpringConfig Spring { get; set; } = new() { Response = 0.3, DampingRatio = 0.9 };
 }
 
 public sealed record DesktopConfig
@@ -41,22 +42,25 @@ public sealed record DesktopConfig
     /// 是否由 GlideShell 接管四指横滑切桌面。Win11 原生四指切桌面本身已经跟手（S3），
     /// 关掉后四指横滑交还系统。虚拟桌面接口自检不通过时自动视为关闭。
     /// </summary>
-    public bool Enabled { get; init; } = true;
+    public bool Enabled { get; set; } = true;
 
     /// <summary>横滑多少毫米 = 整整切过一个桌面。</summary>
-    public double TravelMm { get; init; } = 55;
+    public double TravelMm { get; set; } = 55;
 
-    public SpringConfig Spring { get; init; } = new() { Response = 0.32, DampingRatio = 0.92 };
+    public SpringConfig Spring { get; set; } = new() { Response = 0.32, DampingRatio = 0.92 };
 }
 
 public sealed record DragConfig
 {
     /// <summary>慢速时每毫米手指位移移动多少物理像素。</summary>
-    public double PixelsPerMm { get; init; } = 14;
+    public double PixelsPerMm { get; set; } = 14;
 
     /// <summary>速度加速系数：100mm/s 时增益乘以 (1 + 加速)，最多按 400mm/s 计。</summary>
-    public double Acceleration { get; init; } = 0.6;
+    public double Acceleration { get; set; } = 0.6;
 }
+
+// 配置记录的属性用 set 而不是 init：System.Text.Json 源生成对 init 属性用对象初始化器一次性赋值，
+// JSON 里缺失的字段会被设成 null / 0，覆盖掉默认值；set 属性则是构造后逐个赋值，缺失字段保留默认值。
 
 /// <summary>
 /// 用户配置（%APPDATA%\GlideShell\config.json）。缺失的字段取默认值；越界的数值会被夹回合法范围并报告。
@@ -65,31 +69,32 @@ public sealed record GlideShellConfig
 {
     public const int CurrentVersion = 1;
 
-    public int Version { get; init; } = CurrentVersion;
+    public int Version { get; set; } = CurrentVersion;
 
     /// <summary>识别参数（灵敏度）。</summary>
-    public GestureSettings Recognition { get; init; } = new();
+    public GestureSettings Recognition { get; set; } = new();
 
     /// <summary>自定义映射；不填时按 <see cref="ThreeFingerDrag"/> 取默认映射表。</summary>
-    public List<GestureBinding>? Bindings { get; init; }
+    public List<GestureBinding>? Bindings { get; set; }
 
     /// <summary>三指拖移（P6）。开启后三指整组让给拖移，总览等改为四指。</summary>
-    public bool ThreeFingerDrag { get; init; }
+    public bool ThreeFingerDrag { get; set; }
 
-    public OverviewConfig Overview { get; init; } = new();
+    public OverviewConfig Overview { get; set; } = new();
 
-    public SwitcherConfig Switcher { get; init; } = new();
+    public SwitcherConfig Switcher { get; set; } = new();
 
-    public DesktopConfig Desktops { get; init; } = new();
+    public DesktopConfig Desktops { get; set; } = new();
 
-    public DragConfig Drag { get; init; } = new();
+    public DragConfig Drag { get; set; } = new();
 
     /// <summary>前台是这些进程时不接管手势（进程名，不含 .exe，不区分大小写）。</summary>
-    public List<string> ExcludedProcesses { get; init; } = [];
+    public List<string> ExcludedProcesses { get; set; } = [];
 
     /// <summary>前台是全屏应用（游戏、演示）时不接管手势。</summary>
-    public bool PauseInFullscreen { get; init; } = true;
+    public bool PauseInFullscreen { get; set; } = true;
 
+    [JsonIgnore] // 计算值，不写进配置文件
     public GestureMap EffectiveMap => Bindings is { Count: > 0 } b
         ? new GestureMap(b)
         : ThreeFingerDrag ? GestureMap.WithThreeFingerDrag : GestureMap.Default;

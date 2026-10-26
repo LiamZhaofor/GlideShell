@@ -1,7 +1,7 @@
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using GlideShell.Core.Input;
+using GlideShell.Core.Serialization;
 
 namespace GlideShell.Core.Tracing;
 
@@ -29,6 +29,11 @@ public sealed record TraceHeader(
     string Format, int Version, DateTimeOffset RecordedAt,
     string Scenario, string Title, string Instructions, TraceDevice Device);
 
+/// <summary>轨迹文件的首行与末行。</summary>
+public sealed record TraceHeaderLine(string Type, TraceHeader Header);
+
+public sealed record TraceEndLine(string Type, int Reports);
+
 public sealed record PtpTrace(TraceHeader Header, IReadOnlyList<RawReport> Reports)
 {
     public const string FormatName = "glideshell-ptp-trace";
@@ -52,7 +57,7 @@ public sealed record PtpTrace(TraceHeader Header, IReadOnlyList<RawReport> Repor
             if (root.TryGetProperty("type", out var type))
             {
                 if (type.GetString() == "header")
-                    header = root.GetProperty("header").Deserialize<TraceHeader>(TraceJson.Options);
+                    header = root.GetProperty("header").Deserialize(CoreJson.TraceHeader);
                 continue;
             }
 
@@ -93,7 +98,7 @@ public sealed class PtpTraceWriter : IDisposable
     public PtpTraceWriter(TextWriter writer, TraceHeader header)
     {
         _writer = writer;
-        _writer.Write(JsonSerializer.Serialize(new { type = "header", header }, TraceJson.Options));
+        _writer.Write(JsonSerializer.Serialize(new TraceHeaderLine("header", header), CoreJson.TraceHeaderLine));
         _writer.Write('\n');
     }
 
@@ -119,7 +124,7 @@ public sealed class PtpTraceWriter : IDisposable
 
     public void Dispose()
     {
-        _writer.Write(JsonSerializer.Serialize(new { type = "end", reports = Count }, TraceJson.Options));
+        _writer.Write(JsonSerializer.Serialize(new TraceEndLine("end", Count), CoreJson.TraceEndLine));
         _writer.Write('\n');
         _writer.Dispose();
     }
@@ -129,13 +134,4 @@ public sealed class PtpTraceWriter : IDisposable
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path))!);
         return new StreamWriter(path, append: false, new UTF8Encoding(false));
     }
-}
-
-internal static class TraceJson
-{
-    public static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // 中文说明保持可读
-    };
 }
