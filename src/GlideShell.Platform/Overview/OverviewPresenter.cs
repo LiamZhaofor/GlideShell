@@ -166,6 +166,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 WindowActivator.EnableTransitions(h);
                 ThumbnailLayer.IconicInsets.TryRemove(h, out _);
             }
+            // 异步还原各自完成，谁在上面不确定：按推开前的层次重排，原来最上层的那个切回前台（随后缩略图按真实层次重排、撤层）
+            WindowActivator.Stack(restoring);
+            if (restoring.Length > 0) WindowActivator.Activate(restoring[0]);
+            Dwmapi.DwmFlush();
         }
         // 前台窗口被拖到了别的桌面：焦点交给本桌面剩下最上层的窗口（否则还留在那个看不见的窗口里）
         if (focusWindowId is null && _pageTarget is null && _switchTarget is null && _moved.Contains(User32.GetForegroundWindow()) &&
