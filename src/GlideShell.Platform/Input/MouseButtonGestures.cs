@@ -7,19 +7,25 @@ using GlideShell.Platform.Native;
 namespace GlideShell.Platform.Input;
 
 /// <summary>
-/// 鼠标按键手势的 Windows 实现：低级鼠标钩子（专门的线程，不受 UI 线程忙碌影响——钩子慢了整个系统的指针都会卡）。
-/// 按下配置的键时吞掉它并记下位置；按住期间指针原地不动（吞掉移动），每次移动的位移交给 <see cref="MouseDragRecognizer"/>；
-/// 松开时如果没拖开，就补发一次原来的按下 + 松开（带标记，钩子放行），后退 / 前进 / 中键照常工作。
-/// 暂停、排除的程序在前台、全屏时（<c>suppressed</c>）按下不拦截。
+/// 鼠标按键手势的 Windows 实现，都在一个专门的线程上（钩子慢了整个系统的指针都会卡，不能放在会忙的 UI 线程上）：
+/// <list type="bullet">
+/// <item>低级鼠标钩子：按下配置的键时吞掉它（松开也吞）；没拖开就松开时补发一次原来的按下 + 松开（带标记，钩子放行），
+/// 后退 / 前进 / 中键照常工作。指针照常移动。</item>
+/// <item>原始输入（RIDEV_INPUTSINK）：按住期间的位移取鼠标的原始位移（不带指针加速、指针到了屏幕边上也照样有），
+/// 与 Mac Mouse Fix 一样；收不到原始输入（远程桌面、绘图板等绝对坐标设备）时退回钩子里的指针坐标差。</item>
+/// </list>
+/// 位移按按下时所在屏的尺寸换算（<see cref="MouseDragRecognizer.Scale"/>）。暂停、排除的程序在前台、全屏时（<c>suppressed</c>）按下不拦截。
 /// </summary>
 public sealed unsafe partial class MouseButtonGestures : IDisposable
 {
     private const int WhMouseLl = 14;
     private const uint WmMouseMove = 0x0200, WmMButtonDown = 0x0207, WmMButtonUp = 0x0208, WmXButtonDown = 0x020B, WmXButtonUp = 0x020C;
-    private const uint WmQuit = 0x0012, WmApp = 0x8000;
+    private const uint WmQuit = 0x0012, WmInput = 0x00FF, WmApp = 0x8000;
     private const uint LlmhfInjected = 0x1;
     private const nint Marker = 0x47534D42; // 补发的点击带这个 dwExtraInfo，钩子认出来放行
     private const uint MouseeventfMiddleDown = 0x0020, MouseeventfMiddleUp = 0x0040, MouseeventfXDown = 0x0080, MouseeventfXUp = 0x0100;
+    private const uint RidInput = 0x10000003, RidevInputSink = 0x00000100, RimTypeMouse = 0;
+    private const ushort MouseMoveAbsolute = 0x01;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MsLlHookStruct
@@ -39,24 +45,50 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         public nint ExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RawInputDevice
+    {
+        public ushort UsagePage, Usage;
+        public uint Flags;
+        public nint Target;
+    }
+
+    /// <summary>RAWINPUTHEADER（24 字节）+ RAWMOUSE。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RawMouseInput
+    {
+        public uint Type, Size;
+        public nint Device, WParam;
+        public ushort Flags;
+        private ushort _pad;
+        public uint Buttons, RawButtons;
+        public int LastX, LastY;
+        public uint ExtraInformation;
+    }
+
     private static MouseButtonGestures? s_instance; // 钩子回调是静态的
 
     private readonly Func<MouseGesturesConfig> _config;
+    private readonly Func<(double DesktopTravelMm, double OverviewTravelMm)> _travel;
     private readonly Func<bool> _suppressed;
     private readonly MouseDragRecognizer _recognizer;
     private readonly Thread _thread;
     private uint _threadId;
     private nint _hook;
-    private MouseDragButton _held = MouseDragButton.None; // 钩子线程：正按着、被拦截的键
-    private int _anchorX, _anchorY;
-    private double _dpi = 1;
+    private nint _sink; // 收原始输入的仅消息窗口
+    private MouseDragButton _held = MouseDragButton.None; // 正按着、被拦截的键
+    private bool _rawSeen; // 这次按住期间收到过相对位移的原始输入
+    private int _lastX, _lastY;
 
-    /// <param name="onGesture">在钩子线程上调用（必须很快返回，同触摸板手势的输入线程约定）。</param>
-    public MouseButtonGestures(Func<MouseGesturesConfig> config, Func<bool> suppressed, Action<GestureEvent> onGesture)
+    /// <param name="travel">切一个桌面、完全展开总览各要多少毫米（与触摸板同一套配置）。</param>
+    /// <param name="onGesture">在本线程上调用（必须很快返回，同触摸板手势的输入线程约定）。</param>
+    public MouseButtonGestures(Func<MouseGesturesConfig> config, Func<(double DesktopTravelMm, double OverviewTravelMm)> travel, Func<bool> suppressed,
+        Action<GestureEvent> onGesture)
     {
         _config = config;
+        _travel = travel;
         _suppressed = suppressed;
-        _recognizer = new MouseDragRecognizer(config, onGesture);
+        _recognizer = new MouseDragRecognizer(onGesture);
         s_instance = this;
         _thread = new Thread(Run) { IsBackground = true, Name = "GlideShell.MouseHook", Priority = ThreadPriority.Highest };
         _thread.Start();
@@ -71,13 +103,38 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
             Log.Warn($"鼠标按键手势：安装鼠标钩子失败（{Marshal.GetLastPInvokeError()}）");
             return;
         }
+        StartRawInput();
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
             if (msg.message == WmApp) Replay((MouseDragButton)(int)msg.wParam);
+            else if (msg.message == WmInput) OnRawInput(msg.lParam);
+            else User32.DispatchMessageW(&msg);
         }
         User32.UnhookWindowsHookEx(_hook);
         _hook = 0;
+        if (_sink != 0) User32.DestroyWindow(_sink);
+    }
+
+    /// <summary>一个仅消息窗口收鼠标的原始输入（后台也收）；失败时只用钩子里的指针坐标。</summary>
+    private void StartRawInput()
+    {
+        fixed (char* cls = "STATIC")
+            _sink = User32.CreateWindowExW(0, cls, null, 0, 0, 0, 0, 0, -3 /* HWND_MESSAGE */, 0, Kernel32.GetModuleHandleW(null), 0);
+        var device = new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevInputSink, Target = _sink };
+        if (_sink == 0 || !RegisterRawInputDevices(&device, 1, (uint)sizeof(RawInputDevice)))
+            Log.Warn($"鼠标按键手势：注册原始输入失败（{Marshal.GetLastPInvokeError()}），改用指针坐标");
+    }
+
+    private void OnRawInput(nint handle)
+    {
+        RawMouseInput raw;
+        uint size = (uint)sizeof(RawMouseInput);
+        if (GetRawInputData(handle, RidInput, &raw, &size, 24) == unchecked((uint)-1) || raw.Type != RimTypeMouse) return;
+        if (_held == MouseDragButton.None || (raw.Flags & MouseMoveAbsolute) != 0) return;
+        if (raw.LastX == 0 && raw.LastY == 0) return;
+        _rawSeen = true;
+        _recognizer.Move(raw.LastX, raw.LastY, HostClock.NowUs());
     }
 
     [UnmanagedCallersOnly]
@@ -97,7 +154,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         return User32.CallNextHookEx(0, code, wParam, lParam);
     }
 
-    /// <summary>钩子线程：返回 true 吞掉这次事件。</summary>
+    /// <summary>钩子回调：返回 true 吞掉这次事件。</summary>
     private bool OnMouse(uint message, MsLlHookStruct* m)
     {
         if ((m->Flags & LlmhfInjected) != 0 && m->ExtraInfo == Marker) return false; // 自己补发的点击
@@ -106,10 +163,11 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         {
             if (message == WmMouseMove)
             {
-                // 指针原地不动：位移交给手势（被吞掉的移动不改变指针位置，下一次的坐标仍相对按下的位置）
-                int dx = m->X - _anchorX, dy = m->Y - _anchorY;
-                if (dx != 0 || dy != 0) _recognizer.Move(dx / _dpi, dy / _dpi, now);
-                return true;
+                // 收不到原始输入时退回指针坐标差（到屏幕边上就没有位移了）；指针照常移动
+                if (!_rawSeen) _recognizer.Move(m->X - _lastX, m->Y - _lastY, now);
+                _lastX = m->X;
+                _lastY = m->Y;
+                return false;
             }
             if (ButtonOf(message, m->MouseData, out bool down) == _held && !down)
             {
@@ -122,16 +180,34 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
             return false;
         }
 
-        var configured = _config().Button;
-        if (configured == MouseDragButton.None) return false;
-        if (ButtonOf(message, m->MouseData, out bool pressed) != configured || !pressed) return false;
+        var cfg = _config();
+        if (cfg.Button == MouseDragButton.None) return false;
+        if (ButtonOf(message, m->MouseData, out bool pressed) != cfg.Button || !pressed) return false;
         if (_suppressed()) return false;
-        _held = configured;
-        _anchorX = m->X;
-        _anchorY = m->Y;
-        _dpi = DpiAt(m->X, m->Y);
-        _recognizer.Press(now);
+        _held = cfg.Button;
+        _rawSeen = false;
+        _lastX = m->X;
+        _lastY = m->Y;
+        var (kx, ky) = ScaleAt(m->X, m->Y, cfg.Sensitivity);
+        _recognizer.Press(now, kx, ky);
         return true;
+    }
+
+    /// <summary>按下处所在屏的工作区尺寸 → 每像素多少毫米。</summary>
+    private (double, double) ScaleAt(int x, int y, double sensitivity)
+    {
+        nint monitor = MonitorFromPoint(new User32.POINT { X = x, Y = y }, 2 /* MONITOR_DEFAULTTONEAREST */);
+        var info = new User32.MONITORINFO { cbSize = (uint)sizeof(User32.MONITORINFO) };
+        double w = 1920, h = 1080, dpi = 1;
+        if (User32.GetMonitorInfo(monitor, &info))
+        {
+            w = info.rcWork.Right - info.rcWork.Left;
+            h = info.rcWork.Bottom - info.rcWork.Top;
+        }
+        uint dx, dy;
+        if (Shcore.GetDpiForMonitor(monitor, Shcore.MDT_EFFECTIVE_DPI, &dx, &dy) == 0 && dx > 0) dpi = dx / 96.0;
+        var (desktopMm, overviewMm) = _travel();
+        return MouseDragRecognizer.Scale(w, h, Desktops.DesktopStrip.Gap(dpi), desktopMm, overviewMm, sensitivity);
     }
 
     private static MouseDragButton ButtonOf(uint message, uint mouseData, out bool down)
@@ -143,13 +219,6 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
             WmXButtonDown or WmXButtonUp => (mouseData >> 16) == 1 ? MouseDragButton.Back : MouseDragButton.Forward,
             _ => MouseDragButton.None,
         };
-    }
-
-    private static double DpiAt(int x, int y)
-    {
-        nint monitor = MonitorFromPoint(new User32.POINT { X = x, Y = y }, 2 /* MONITOR_DEFAULTTONEAREST */);
-        uint dx, dy;
-        return Shcore.GetDpiForMonitor(monitor, Shcore.MDT_EFFECTIVE_DPI, &dx, &dy) == 0 && dx > 0 ? dx / 96.0 : 1;
     }
 
     /// <summary>补发一次点击（按下 + 松开），带标记让钩子放行。</summary>
@@ -186,4 +255,11 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
 
     [LibraryImport("user32.dll")]
     private static partial nint MonitorFromPoint(User32.POINT point, uint flags);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool RegisterRawInputDevices(RawInputDevice* devices, uint count, uint size);
+
+    [LibraryImport("user32.dll")]
+    private static partial uint GetRawInputData(nint rawInput, uint command, void* data, uint* size, uint headerSize);
 }

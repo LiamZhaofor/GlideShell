@@ -122,7 +122,8 @@ internal sealed class AppHost
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
-        if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, Suppressed, _mouseRouter.OnGesture);
+        if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, () => (_config.Desktops.TravelMm, _config.Overview.TravelMm), Suppressed,
+            _mouseRouter.OnGesture);
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
         WatchConfig();
         _presenter.WarmUp();

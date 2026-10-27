@@ -195,8 +195,8 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         Group("鼠标按键手势（按住拖动）", 16, 650, 360, 132);
         Label("按住的键", 32, 680, 100, 20);
         _mouseButton = Child("COMBOBOX", null, User32.CBS_DROPDOWNLIST | User32.WS_VSCROLL | User32.WS_TABSTOP, IdMouseButton, 134, 676, 226, 200);
-        AddSlider(new Slider("灵敏度", 0.05, 0.6, 0.05, v => $"{v / 0.2:0.00}×", m => m.MouseMmPerDip, (m, v) => m with { MouseMmPerDip = v }), 710, 32);
-        Note("按住拖动：左右切换桌面，上拉总览，下拉应用窗口。只点一下仍是这个键原来的功能。", 32, 742, 330, 36);
+        AddSlider(new Slider("灵敏度", 0.5, 2, 0.1, v => $"{v:0.0}×", m => m.MouseSensitivity, (m, v) => m with { MouseSensitivity = v }), 710, 32);
+        Note("按住拖动：左右切换桌面（1× 时桌面跟着指针走），上拉总览，下拉应用窗口。只点一下仍是这个键原来的功能。", 32, 742, 330, 36);
 
         // 右栏：总览与切桌面
         Group("总览与切桌面", 392, 528, 352, 146);

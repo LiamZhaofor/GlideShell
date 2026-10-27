@@ -108,6 +108,9 @@ internal sealed unsafe class DesktopOverlay : NativeWindow
         {
             case User32.WM_MOUSEACTIVATE:
                 return User32.MA_NOACTIVATE;
+            case User32.WM_SETCURSOR:
+                User32.SetCursor(User32.LoadCursorW(0, User32.IDC_ARROW));
+                return 1;
             case User32.WM_ERASEBKGND:
                 return 1;
             case User32.WM_PAINT:

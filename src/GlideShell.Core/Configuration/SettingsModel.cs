@@ -64,7 +64,7 @@ public sealed record SettingsModel
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
     public double CornerRadius { get; init; }
     public MouseDragButton MouseButton { get; init; }
-    public double MouseMmPerDip { get; init; }
+    public double MouseSensitivity { get; init; }
 
     public static IReadOnlyList<MouseDragButton> MouseButtonChoices { get; } =
         [MouseDragButton.None, MouseDragButton.Back, MouseDragButton.Forward, MouseDragButton.Middle];
@@ -145,7 +145,7 @@ public sealed record SettingsModel
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
             CornerRadius = c.Overview.CornerRadius,
             MouseButton = c.Mouse.Button,
-            MouseMmPerDip = c.Mouse.MmPerDip,
+            MouseSensitivity = c.Mouse.Sensitivity,
         };
     }
 
@@ -221,7 +221,7 @@ public sealed record SettingsModel
                 TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails, GroupByApp = GroupByApp, AppWindows = AppWindows,
                 CornerRadius = CornerRadius,
             },
-            Mouse = c.Mouse with { Button = MouseButton, MmPerDip = MouseMmPerDip },
+            Mouse = c.Mouse with { Button = MouseButton, Sensitivity = MouseSensitivity },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow },
             // 界面用「系统默认」表达不接管切桌面，旧的 Enabled 开关统一置为 true，免得两处说法不一致
             Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true, TakeOverHotkeys = TakeOverDesktopHotkeys },

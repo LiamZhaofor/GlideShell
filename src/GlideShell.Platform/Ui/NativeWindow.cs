@@ -30,6 +30,7 @@ public abstract unsafe class NativeWindow : IDisposable
                         cbSize = (uint)sizeof(User32.WNDCLASSEXW),
                         lpfnWndProc = &StaticWndProc,
                         hInstance = instance,
+                        hCursor = User32.LoadCursorW(0, User32.IDC_ARROW), // 不设的话指针停在窗口上时保持进入前的样子（可能是转圈）
                         lpszClassName = cls,
                     };
                     if (User32.RegisterClassExW(&wc) == 0 && Marshal.GetLastPInvokeError() != 1410)

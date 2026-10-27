@@ -125,8 +125,10 @@ public sealed record MouseGesturesConfig
 {
     public MouseDragButton Button { get; set; } = MouseDragButton.Back;
 
-    /// <summary>指针每移动 1 DIP 算触摸板上多少毫米（越大越灵敏；0.2 时拖 150 DIP 完全展开总览）。</summary>
-    public double MmPerDip { get; set; } = 0.2;
+    /// <summary>
+    /// 灵敏度倍数。1 = Mac Mouse Fix 的手感：横向拖过一个屏宽切过一个桌面（桌面跟着指针走），竖向拖过半个屏高完全展开总览。
+    /// </summary>
+    public double Sensitivity { get; set; } = 1;
 }
 
 // 配置记录的属性用 set 而不是 init：System.Text.Json 源生成对 init 属性用对象初始化器一次性赋值，
@@ -240,7 +242,7 @@ public sealed record GlideShellConfig
                 PixelsPerMm = Clamp(Drag.PixelsPerMm, 1, 80, "Drag.PixelsPerMm"),
                 Acceleration = Clamp(Drag.Acceleration, 0, 4, "Drag.Acceleration"),
             },
-            Mouse = Mouse with { MmPerDip = Clamp(Mouse.MmPerDip, 0.05, 1, "Mouse.MmPerDip") },
+            Mouse = Mouse with { Sensitivity = Clamp(Mouse.Sensitivity, 0.25, 4, "Mouse.Sensitivity") },
             Desktops = Desktops with
             {
                 TravelMm = Clamp(Desktops.TravelMm, 10, 150, "Desktops.TravelMm"),

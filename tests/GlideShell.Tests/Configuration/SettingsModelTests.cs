@@ -15,18 +15,18 @@ public class SettingsModelTests
         Assert.Equal(12, model.CornerRadius);
         Assert.Equal(MouseDragButton.Back, model.MouseButton);
 
-        var (saved, problems) = (model with { CornerRadius = 6, MouseButton = MouseDragButton.Middle, MouseMmPerDip = 0.3 }).ApplyTo(config);
+        var (saved, problems) = (model with { CornerRadius = 6, MouseButton = MouseDragButton.Middle, MouseSensitivity = 1.5 }).ApplyTo(config);
         Assert.Empty(problems);
         Assert.Equal(6, saved.Overview.CornerRadius);
         Assert.Equal(MouseDragButton.Middle, saved.Mouse.Button);
-        Assert.Equal(0.3, saved.Mouse.MmPerDip);
+        Assert.Equal(1.5, saved.Mouse.Sensitivity);
 
         var json = ConfigStore.Serialize(saved);
         Assert.Contains("\"Middle\"", json); // 枚举按名字存，配置文件里看得懂
 
-        var (clamped, clampProblems) = (config with { Overview = config.Overview with { CornerRadius = 99 }, Mouse = new MouseGesturesConfig { MmPerDip = 5 } }).Sanitize();
+        var (clamped, clampProblems) = (config with { Overview = config.Overview with { CornerRadius = 99 }, Mouse = new MouseGesturesConfig { Sensitivity = 9 } }).Sanitize();
         Assert.Equal(24, clamped.Overview.CornerRadius);
-        Assert.Equal(1, clamped.Mouse.MmPerDip);
+        Assert.Equal(4, clamped.Mouse.Sensitivity);
         Assert.Equal(2, clampProblems.Count);
     }
 
