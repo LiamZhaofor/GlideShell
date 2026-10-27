@@ -508,39 +508,42 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     /// </summary>
     private void CommitDesktop()
     {
-        if (!_shown) return;
-        if (_desktopPullBack && _desktopRestoring.Length > 0)
+        // 落定到这里之间又开始了新手势（例如四指下滑后马上上滑）：先不动窗口，等那个手势落定再说
+        if (!_shown || !Controller.IsSettledOpen) return;
+        nint[] hide;
+        if (_desktopPullBack)
         {
             // 拉了一半又松回去（桌面继续显示）：一开始就还原了的窗口重新最小化
-            var again = _desktopRestoring;
-            _desktopRestoring = [];
-            foreach (var h in again) WindowActivator.MinimizeQuietly(h);
-            long deadline = Environment.TickCount64 + 600;
-            while (Environment.TickCount64 < deadline && again.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
-            foreach (var h in again) WindowActivator.EnableTransitions(h);
-            nint desktop = User32.FindWindowW("Progman", null);
-            if (desktop != 0) WindowActivator.Activate(desktop);
-            _desktopHidden = again;
+            hide = _desktopRestoring;
         }
-        if (!_desktopPullBack)
+        else
         {
             var scene = Controller.Scene;
-            var hide = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).Select(i => (nint)scene.Windows[i].Id).ToArray();
+            hide = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).Select(i => (nint)scene.Windows[i].Id).ToArray();
             _desktopHiddenRects = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).ToDictionary(i => (nint)scene.Windows[i].Id, i => scene.Windows[i].Source);
             foreach (var h in hide) ThumbnailLayer.RememberInset(h); // 最小化后缩略图带着透明边框：拉回时按它裁掉
-            foreach (var h in hide) WindowActivator.MinimizeQuietly(h);
-            long until = Environment.TickCount64 + 600;
-            while (Environment.TickCount64 < until && hide.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
-            foreach (var h in hide) WindowActivator.EnableTransitions(h);
-            nint progman = User32.FindWindowW("Progman", null);
-            if (progman != 0) WindowActivator.Activate(progman);
-            _desktopHidden = hide;
         }
+        _desktopRestoring = [];
+        foreach (var h in hide) WindowActivator.MinimizeQuietly(h);
+        long until = Environment.TickCount64 + 600;
+        while (Environment.TickCount64 < until && hide.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
+        foreach (var h in hide) WindowActivator.EnableTransitions(h);
+        _desktopHidden = hide;
+        if (!Controller.IsSettledOpen)
+        {
+            // 最小化途中用户已经开始往回拉：转成拉回会话（在覆盖层下面还原），覆盖层留着继续跟手
+            _desktopPullBack = true;
+            RestoreDesktopWindows();
+            Log.Info("显示桌面：最小化途中开始拉回");
+            return;
+        }
+        nint progman = User32.FindWindowW("Progman", null);
+        if (progman != 0) WindowActivator.Activate(progman);
         foreach (var o in _overlays) o.HideOverlay();
         _shown = false;
         ReleaseScene();
         Controller.EndDesktop();
-        Log.Info(_desktopPullBack ? "显示桌面：没有拉回，桌面仍显示" : $"显示桌面：已最小化 {_desktopHidden.Length} 个窗口");
+        Log.Info(_desktopPullBack ? "显示桌面：没有拉回，桌面仍显示" : $"显示桌面：已最小化 {hide.Length} 个窗口");
     }
 
     /// <summary>显示桌面后拉回（会话一开始）：从下往上依次还原，最上层的最后还原、成为前台；收起落定时等它们都还原到位再撤层。</summary>

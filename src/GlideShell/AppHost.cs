@@ -219,8 +219,9 @@ internal sealed class AppHost
         bool holdPage = name == "overview-hold-page";
         // app-hold：收起态三指下滑打开应用窗口视图，停 12 秒
         bool appHold = name == "app-hold";
-        // show-desktop-cycle：四指下滑显示桌面，3 秒后四指上滑拉回
-        bool desktopCycle = name == "show-desktop-cycle";
+        // show-desktop-cycle：四指下滑显示桌面，3 秒后四指上滑拉回；show-desktop-quick：下滑后马上（250ms）上滑
+        bool desktopQuick = name == "show-desktop-quick";
+        bool desktopCycle = name == "show-desktop-cycle" || desktopQuick;
         if (desktopCycle) name = "show-desktop";
         int linger = name is "overview-hold" or "overview-hold-page" or "app-hold" ? 12000 : 1500;
         if (appHold) name = "overview-close";
@@ -257,7 +258,7 @@ internal sealed class AppHost
             }
             if (desktopCycle)
             {
-                Thread.Sleep(3000);
+                Thread.Sleep(desktopQuick ? 250 : 3000);
                 Replay("restore-desktop");
                 Log.Info("模拟：四指上滑拉回回放完毕");
                 Thread.Sleep(1500);

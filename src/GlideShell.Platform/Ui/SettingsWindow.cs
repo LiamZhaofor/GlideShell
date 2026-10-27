@@ -20,7 +20,7 @@ public sealed record SettingsEnvironment(
 /// 只编辑 <see cref="SettingsModel"/>；「保存」时交给宿主写配置。同一时间只开一个，只能在 UI 线程上使用。
 /// 布局以 96 DPI 下的逻辑像素写死（两栏），按窗口所在显示器的 DPI 缩放。
 /// </summary>
-public sealed unsafe class SettingsWindow : NativeWindow
+public sealed unsafe partial class SettingsWindow : NativeWindow
 {
     private const int ClientWidth = 760, ClientHeight = 700;
     private const uint Style = User32.WS_OVERLAPPED | User32.WS_CAPTION | User32.WS_SYSMENU | User32.WS_MINIMIZEBOX;
@@ -71,6 +71,7 @@ public sealed unsafe class SettingsWindow : NativeWindow
         Create("GlideShell.Settings", Style, 0, (int)area.Left + 40, (int)area.Top + 40, 100, 100);
         _hwnd = Handle;
         User32.SetWindowTextW(Handle, "GlideShell 设置");
+        AllowShellMessages(Handle);
         _dpi = Math.Max(96, User32.GetDpiForWindow(Handle));
         _font = CreateFont(_dpi);
         BuildControls();
@@ -80,6 +81,20 @@ public sealed unsafe class SettingsWindow : NativeWindow
         User32.SendMessageW(Handle, WM_SETICON, ICON_SMALL, AppIcon.Load(16 * (int)_dpi / 96));
         User32.SendMessageW(Handle, WM_SETICON, ICON_BIG, AppIcon.Load(32 * (int)_dpi / 96));
     }
+
+    /// <summary>
+    /// UIAccess 版：系统的消息隔离（UIPI）会拦掉普通权限进程发来的大部分消息，任务栏（资源管理器）点按钮时发的
+    /// 还原 / 关闭（WM_SYSCOMMAND）、右键菜单（WM_POPUPSYSTEMMENU）都到不了，点任务栏按钮窗口不会到前台。放行这几条。
+    /// </summary>
+    private static void AllowShellMessages(nint hwnd)
+    {
+        foreach (uint msg in (uint[])[0x0112 /* WM_SYSCOMMAND */, 0x0313 /* WM_POPUPSYSTEMMENU */, 0x0006 /* WM_ACTIVATE */, 0x0086 /* WM_NCACTIVATE */])
+            ChangeWindowMessageFilterEx(hwnd, msg, 1 /* MSGFLT_ALLOW */, 0);
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool ChangeWindowMessageFilterEx(nint hwnd, uint message, uint action, nint changeFilterStruct);
 
     /// <summary>打开设置窗口；已经开着就把它带到前台。</summary>
     public static SettingsWindow ShowOrActivate(UiThread ui, SettingsModel model, SettingsEnvironment env)
