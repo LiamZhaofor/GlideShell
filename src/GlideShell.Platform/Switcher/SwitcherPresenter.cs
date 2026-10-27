@@ -12,11 +12,21 @@ namespace GlideShell.Platform.Switcher;
 /// 窗口切换条的 Windows 实现（<see cref="ISwitcherHost"/>）：前台窗口所在显示器中部的一条横带
 /// （Windows 11 系统亚克力背景、圆角），窗口缩略图在其中随连续位置平移，选中项标题在下方。
 /// 横带之外不遮挡——背后是实时的桌面，和 Alt+Tab 一样。
+/// 共享缩略图可用时与总览同一套画法：缩略图是带窗口阴影的共享缩略图视觉，标题、程序图标与选中框在合成层里逐帧跟手
+/// （<see cref="SwitcherDecor"/>）；否则退回经典 DWM 缩略图 + GDI 标题。
 /// </summary>
 public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 {
     private readonly UiThread _ui;
+    private readonly SharedThumbnailSource? _shared;
     private readonly RenderLoop _render;
+    private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
+    private OverlayComposition? _content, _decorRoot;
+    private volatile SharedThumbnailLayer? _layer;
+    private SwitcherDecor? _decor;
+    private SharedThumbnailBackend? _backend;
+    private RectD[] _rects = [];
+    private double[] _opacity = [], _active = [];
     private SwitcherController? _controller;
     private SwitcherBand? _band;
     private volatile Thumbs _thumbs = Thumbs.Empty;
@@ -24,9 +34,10 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private bool _prepared;
     private volatile int _labelFor = -1;
 
-    public SwitcherPresenter(UiThread ui)
+    public SwitcherPresenter(UiThread ui, SharedThumbnailSource? shared = null)
     {
         _ui = ui;
+        _shared = shared;
         _render = new RenderLoop(RenderFrame, stats => Log.Info($"切换条渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
 
@@ -57,6 +68,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     {
         _shown = false;
         _thumbs.HideAll();
+        _layer?.HideAll();
+        _decor?.HideAll();
         _band?.HideBand();
         Release();
         if (activateWindowId is { } id && !WindowActivator.Activate((nint)id))
@@ -67,7 +80,20 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     {
         _render.Dispose();
         _thumbs.Unregister();
+        DisposeComposition();
         _band?.Dispose();
+    }
+
+    private void DisposeComposition()
+    {
+        _layer?.Unregister();
+        _layer = null;
+        _decor?.Dispose();
+        _decor = null;
+        _content?.Dispose();
+        _decorRoot?.Dispose();
+        _composition?.Dispose();
+        _content = _decorRoot = _composition = null;
     }
 
     // ---------- UI 线程 ----------
@@ -94,18 +120,56 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         var bandRect = layout.BandRect(monitor.DpiScale);
         if (_band is null || _band.Rect != bandRect || _band.Monitor.DpiScale != monitor.DpiScale)
         {
+            DisposeComposition();
             _band?.Dispose();
             _band = new SwitcherBand(monitor, bandRect);
         }
         var scene = new SwitcherScene(windows, layout);
         var old = _thumbs;
-        _thumbs = Thumbs.Register(_band.Handle, bandRect, scene);
+        bool composed = PrepareComposition(scene, monitor, bandRect);
+        _thumbs = composed ? Thumbs.Empty : Thumbs.Register(_band.Handle, bandRect, scene);
         old.Unregister();
-        _band.SetScene(scene);
+        _band.SetScene(scene, drawTitle: !composed);
         _labelFor = -1;
         Controller.SetScene(scene, HostClock.NowUs());
         _prepared = true;
         Log.Info($"切换条预热：{windows.Count} 个窗口，耗时 {(HostClock.NowUs() - t0) / 1000.0:F1}ms");
+    }
+
+    /// <summary>共享缩略图 + 合成层装饰；不可用或失败时返回 false（用经典缩略图）。</summary>
+    private bool PrepareComposition(SwitcherScene scene, MonitorInfo monitor, RectD bandRect)
+    {
+        var backend = _shared?.Get();
+        var res = _shared?.Decor(_ui);
+        if (backend is null || res is null || _band is null)
+        {
+            DisposeComposition();
+            return false;
+        }
+        int hr = 0;
+        if (_backend != backend) DisposeComposition();
+        _backend = backend;
+        _composition ??= OverlayComposition.Create(backend, _band.Handle, out hr);
+        if (_composition is not null) _content ??= _composition.CreateBranch(out hr);
+        if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out hr);
+        var layer = _decorRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, bandRect, monitor.DpiScale,
+            scene.Windows.Select((w, i) => (i, (nint)w.Id)).ToList(), _layer, out hr, withWallpaper: false);
+        _layer = layer;
+        if (layer is null)
+        {
+            _shared!.Disable(hr == 0 ? unchecked((int)0x80004005) : hr, "切换条");
+            DisposeComposition();
+            return false;
+        }
+        _decor ??= new SwitcherDecor(res, _decorRoot!, monitor, bandRect);
+        _decor.Prepare(scene);
+        if (_rects.Length < scene.Count)
+        {
+            _rects = new RectD[scene.Count];
+            _opacity = new double[scene.Count];
+            _active = new double[scene.Count];
+        }
+        return true;
     }
 
     private void Release()
@@ -122,7 +186,23 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     {
         var frame = Controller.Sample(nowUs);
         var scene = Controller.Scene;
-        if (_shown) _thumbs.Apply(scene, frame);
+        if (_shown)
+        {
+            if (_layer is { } layer && _backend is { } backend && _rects.Length >= scene.Count)
+            {
+                int n = scene.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    _rects[i] = scene.Layout.ItemRect(i, frame.Position);
+                    _opacity[i] = frame.Appear;
+                    _active[i] = Math.Clamp(1 - Math.Abs(i - frame.Position), 0, 1); // 居中的那个用活动阴影
+                }
+                layer.Apply(_rects.AsSpan(0, n), _opacity.AsSpan(0, n), _active.AsSpan(0, n), 0, commit: false);
+                _decor?.Apply(frame);
+                backend.Commit();
+            }
+            else _thumbs.Apply(scene, frame);
+        }
         int selected = frame.Selected;
         if (selected != _labelFor)
         {
@@ -216,6 +296,7 @@ internal sealed unsafe class SwitcherBand : NativeWindow
 {
     private SwitcherScene _scene = SwitcherScene.Empty;
     private int _selected = -1;
+    private bool _drawTitle = true;
     private readonly bool _acrylic;
 
     public SwitcherBand(MonitorInfo monitor, RectD rect)
@@ -239,9 +320,11 @@ internal sealed unsafe class SwitcherBand : NativeWindow
 
     public RectD Rect { get; }
 
-    public void SetScene(SwitcherScene scene)
+    /// <param name="drawTitle">GDI 画选中项标题（合成层画标题时为 false）。</param>
+    public void SetScene(SwitcherScene scene, bool drawTitle = true)
     {
         _scene = scene;
+        _drawTitle = drawTitle;
         _selected = -1;
         User32.InvalidateRect(Handle, null, 1);
     }
@@ -282,7 +365,7 @@ internal sealed unsafe class SwitcherBand : NativeWindow
             nint bg = Gdi32.CreateSolidBrush(_acrylic ? 0 : Gdi32.Rgb(32, 32, 36));
             User32.FillRect(hdc, &ps.rcPaint, bg);
             Gdi32.DeleteObject(bg);
-            if (_selected < 0 || _selected >= _scene.Count) return;
+            if (!_drawTitle || _selected < 0 || _selected >= _scene.Count) return;
 
             var label = _scene.Layout.LabelRect(Monitor.DpiScale);
             var r = new User32.RECT

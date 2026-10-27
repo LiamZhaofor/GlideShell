@@ -31,6 +31,7 @@ public sealed class OverviewScene
     private readonly bool[] _removed;
     private readonly RectD?[]? _from; // 重排前的平铺位（收起时的坐标）；新加入的窗口为 null
     private readonly bool[] _excluded; // 应用窗口视图里其他程序的窗口
+    private readonly bool[]? _entering; // 从应用窗口视图回到总览时新出现的窗口（随重排淡入）
 
     /// <param name="MinimizedShelf">最小化的窗口单独排在底部一排（应用窗口视图，macOS App Exposé 的样子）。</param>
     private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options, bool GroupByApp,
@@ -40,8 +41,9 @@ public sealed class OverviewScene
     public const double ShelfFraction = 0.2;
 
     private OverviewScene(IReadOnlyList<OverviewWindow> windows, LayoutSlot[] slots, DesktopBarGeometry?[] bars, Context context, bool[] removed, RectD?[]? from,
-        bool[] excluded)
+        bool[] excluded, bool[]? entering = null)
     {
+        _entering = entering;
         Windows = windows;
         Slots = slots;
         _bars = bars;
@@ -143,6 +145,23 @@ public sealed class OverviewScene
     {
         var tile = RawTile(index, relayout);
         return _bars[index] is { } bar ? bar.MapContent(tile, expansion) : tile;
+    }
+
+    /// <summary>从应用窗口视图回到总览时新出现的窗口（其他程序的窗口）：随重排进度在平铺位淡入。</summary>
+    public bool IsEntering(int index) => _entering?[index] == true;
+
+    /// <summary>
+    /// 从应用窗口视图 <paramref name="app"/>（由本场景 <see cref="Focus"/> 而来）回到本场景：应用窗口视图里的窗口从那里的平铺位重排回来，
+    /// 其他程序的窗口在自己的平铺位淡入（<see cref="IsEntering"/>）。应用窗口视图里关掉的窗口仍标成移走，其余窗口重新排版。
+    /// </summary>
+    public OverviewScene ReturnFrom(OverviewScene app)
+    {
+        if (app.Count != Count) return this;
+        var removed = _removed.Zip(app._removed, (a, b) => a || b).ToArray();
+        var from = Enumerable.Range(0, Count).Select(i => app.IsPresent(i) ? (RectD?)app.Tile(i, 0) : null).ToArray();
+        var entering = Enumerable.Range(0, Count).Select(i => !removed[i] && !_excluded[i] && !app.IsPresent(i)).ToArray();
+        var (slots, bars) = Arrange(Windows, removed.Zip(_excluded, (r, e) => r || e).ToArray(), _context, [.. Slots], [.. _bars]);
+        return new OverviewScene(Windows, slots, bars, _context, removed, from, _excluded, entering);
     }
 
     /// <summary>重排前的平铺位（没有在重排、或是新加入的窗口为 null）。</summary>

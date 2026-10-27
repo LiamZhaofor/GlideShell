@@ -360,6 +360,33 @@ public class WindowDragTests
     }
 
     [Fact]
+    public void Returning_from_app_view_relayouts_back_and_fades_other_apps_in()
+    {
+        var full = ThreeWindows();
+        var mixed = OverviewScene.Build(full.Windows.Select((w, i) => w with { ProcessName = i == 0 ? "a" : "b" }).ToList(), [new OverviewArea(Area, 1.5, Bar)]);
+        var (c, _, t) = Opened(mixed);
+        var app = mixed.Focus(w => w.ProcessName == "b", [new OverviewArea(Area, 1.5)], animate: true);
+        Assert.True(c.FocusApp(app, t));
+        long t2 = t + 3_000_000;
+        c.Sample(t2);
+
+        var back = mixed.ReturnFrom(app);
+        Assert.True(back.IsEntering(0));
+        Assert.False(back.IsEntering(1));
+        Assert.True(c.UnfocusApp(back, t2));
+        Assert.Equal(OverviewMode.All, c.Mode);
+        Assert.False(c.UnfocusApp(back, t2));
+
+        var start = Rect(c, t2, 1, out _);
+        Assert.Equal(app.Slots[1].Tile.Left, start.Left, 6); // 从应用窗口视图里的位置开始
+        Rect(c, t2, 0, out double fading);
+        Assert.Equal(0, fading, 6); // 其他程序的窗口从透明开始淡入
+        Assert.Equal(mixed.Slots[1].Tile, Rect(c, t2 + 3_000_000, 1, out _));
+        Rect(c, t2 + 3_000_000, 0, out double shown);
+        Assert.Equal(1, shown, 6);
+    }
+
+    [Fact]
     public void In_thumb_maps_screen_rects_proportionally()
     {
         var r = Bar.InThumb(0, Area);

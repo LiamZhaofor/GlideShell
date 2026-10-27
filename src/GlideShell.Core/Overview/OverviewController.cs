@@ -362,13 +362,34 @@ public sealed class OverviewController : IGestureTarget
     {
         lock (_gate)
         {
-            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _mode != OverviewMode.All || _drag != DragStage.None) return false;
+            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _transition.Target < 1 - SettleEpsilon || _mode != OverviewMode.All ||
+                _drag != DragStage.None) return false;
             _mode = OverviewMode.App;
             _scene = focused;
             _pages = [];
             _page = -1;
             _desktops = DesktopBarState.Empty;
             _bar.SnapTo(0);
+            _hovered = null;
+            _relayout.SnapTo(0);
+            _relayout.AnimateTo(1, hostUs);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 应用窗口视图停稳时回到窗口总览（UI 线程）：<paramref name="all"/> 是 <see cref="OverviewScene.ReturnFrom"/> 的结果。
+    /// 宿主随后重新提供桌面条与各页（<see cref="SetDesktops"/> / <see cref="SetPages"/>）。返回是否换了。
+    /// </summary>
+    public bool UnfocusApp(OverviewScene all, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (!_visible || _tracking || _transition.Target < 1 - SettleEpsilon || _mode != OverviewMode.App || _drag != DragStage.None) return false;
+            _mode = OverviewMode.All;
+            _scene = all;
+            _pages = [];
+            _page = -1;
             _hovered = null;
             _relayout.SnapTo(0);
             _relayout.AnimateTo(1, hostUs);
@@ -797,6 +818,12 @@ public sealed class OverviewController : IGestureTarget
                 else (dest[i], opacity[i]) = (frame.DragRect, frame.DragOpacity);
             }
             else if (scene.IsRemoved(i)) opacity[i] = 0;
+            else if (frame.Relayout < 1 && scene.IsEntering(i))
+            {
+                // 从应用窗口视图回到总览：其他程序的窗口在平铺位上随重排淡入、略微放大
+                double r = Math.Clamp(frame.Relayout, 0, 1);
+                (dest[i], opacity[i]) = (dest[i].ScaleAroundCenter(0.92 + 0.08 * r), OverviewVisuals.SmoothStep(0.25, 1, r));
+            }
             else if (scene.IsExcluded(i))
             {
                 // 应用窗口视图里其他程序的窗口：留在原位，随进度淡出；从总览直接换过来时在平铺位上随重排淡出、略微缩小

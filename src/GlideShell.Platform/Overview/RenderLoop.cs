@@ -49,10 +49,12 @@ public sealed unsafe class RenderLoop : IDisposable
     private void Run()
     {
         var intervals = new List<double>(1024);
+        var work = new List<double>(1024);
         while (_running)
         {
             _wake.WaitOne();
             intervals.Clear();
+            work.Clear();
             long last = 0;
             while (_running)
             {
@@ -72,9 +74,10 @@ public sealed unsafe class RenderLoop : IDisposable
                     Log.Error("渲染帧异常", ex);
                     keepGoing = false;
                 }
+                work.Add((HostClock.NowUs() - now) / 1000.0);
                 if (!keepGoing) break;
             }
-            LastSession = FrameStats.From(intervals);
+            LastSession = FrameStats.From(intervals, work);
             _onSessionEnd?.Invoke(LastSession);
         }
     }
@@ -99,16 +102,23 @@ public sealed unsafe class RenderLoop : IDisposable
     }
 }
 
-public readonly record struct FrameStats(int Frames, double P50Ms, double P95Ms, double MaxMs)
+/// <param name="MaxAt">最长的那个间隔在第几帧之后（0 起）。</param>
+/// <param name="MaxWorkMs">渲染回调本身最长花了多久（间隔超长而回调不长，说明是合成器那边慢）。</param>
+public readonly record struct FrameStats(int Frames, double P50Ms, double P95Ms, double MaxMs, int MaxAt = -1, double MaxWorkMs = 0, int MaxWorkAt = -1)
 {
     public static FrameStats Empty => new(0, 0, 0, 0);
 
-    public static FrameStats From(List<double> intervals)
+    public static FrameStats From(List<double> intervals, List<double>? work = null)
     {
         if (intervals.Count == 0) return Empty;
         var sorted = intervals.Order().ToList();
-        return new FrameStats(sorted.Count + 1, sorted[sorted.Count / 2], sorted[Math.Min(sorted.Count - 1, (int)(sorted.Count * 0.95))], sorted[^1]);
+        int maxAt = intervals.IndexOf(sorted[^1]);
+        double maxWork = work is { Count: > 0 } ? work.Max() : 0;
+        int maxWorkAt = work is { Count: > 0 } ? work.IndexOf(maxWork) : -1;
+        return new FrameStats(sorted.Count + 1, sorted[sorted.Count / 2], sorted[Math.Min(sorted.Count - 1, (int)(sorted.Count * 0.95))], sorted[^1],
+            maxAt, maxWork, maxWorkAt);
     }
 
-    public override string ToString() => $"{Frames} 帧，间隔 P50 {P50Ms:F1}ms / P95 {P95Ms:F1}ms / max {MaxMs:F1}ms";
+    public override string ToString() =>
+        $"{Frames} 帧，间隔 P50 {P50Ms:F1}ms / P95 {P95Ms:F1}ms / max {MaxMs:F1}ms（第 {MaxAt} 帧后），回调最长 {MaxWorkMs:F1}ms（第 {MaxWorkAt} 帧）";
 }

@@ -70,6 +70,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     public MonitorInfo Monitor { get; }
 
+    /// <summary>指针在某个窗口的标题行上（点它切换总览 / 应用窗口视图）：显示手形指针。</summary>
+    public bool LabelHovered { get; set; }
+
     public IThumbnailLayer Layer => _layer;
 
     public bool IsShown { get; private set; }
@@ -521,7 +524,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             case User32.WM_MOUSEACTIVATE:
                 return User32.MA_NOACTIVATE;
             case User32.WM_SETCURSOR:
-                User32.SetCursor(User32.LoadCursorW(0, _hovered >= 0 ? User32.IDC_HAND : User32.IDC_ARROW));
+                User32.SetCursor(User32.LoadCursorW(0, _hovered >= 0 || LabelHovered ? User32.IDC_HAND : User32.IDC_ARROW));
                 return 1;
             case User32.WM_MOUSEMOVE:
                 Mouse(OverlayMouse.Move, lParam);

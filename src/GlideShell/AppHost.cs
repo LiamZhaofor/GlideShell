@@ -81,7 +81,7 @@ internal sealed class AppHost
         _overview.DesktopShown = _presenter.DesktopShownNow;
         _foreground.RawChanged += _presenter.OnForegroundChanged;
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
-        _switcherPresenter = new SwitcherPresenter(_ui);
+        _switcherPresenter = new SwitcherPresenter(_ui, _sharedThumbnails);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
         _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops, _sharedThumbnails);

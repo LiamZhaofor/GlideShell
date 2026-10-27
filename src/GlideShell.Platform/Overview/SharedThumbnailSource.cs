@@ -12,6 +12,8 @@ public sealed class SharedThumbnailSource : IDisposable
     private readonly Func<bool> _enabled;
     private SharedThumbnailBackend? _backend;
     private bool _unavailable;
+    private DecorResources? _decor;
+    private bool _decorTried;
 
     /// <param name="enabled">配置开关（overview.sharedThumbnails），每次取用时读。</param>
     public SharedThumbnailSource(Func<bool> enabled) => _enabled = enabled;
@@ -29,6 +31,22 @@ public sealed class SharedThumbnailSource : IDisposable
         return _backend;
     }
 
+    /// <summary>
+    /// 合成层里画文字与装饰用的资源（总览与切换条共用）：共享缩略图可用时第一次取用才创建；不可用时为 null（调用方退回 GDI）。
+    /// </summary>
+    internal DecorResources? Decor(Ui.UiThread ui)
+    {
+        var backend = Get();
+        if (backend is null) return null;
+        if (!_decorTried)
+        {
+            _decorTried = true;
+            _decor = DecorResources.TryCreate(backend, ui, out string status);
+            Log.Info($"总览装饰：{status}");
+        }
+        return _decor;
+    }
+
     /// <summary>某处注册失败：本次运行不再使用共享缩略图（已注册的照常释放）。</summary>
     internal void Disable(int hr, string where)
     {
@@ -39,6 +57,8 @@ public sealed class SharedThumbnailSource : IDisposable
 
     public void Dispose()
     {
+        _decor?.Dispose();
+        _decor = null;
         _backend?.Dispose();
         _backend = null;
     }

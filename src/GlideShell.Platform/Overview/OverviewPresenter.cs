@@ -38,8 +38,6 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long? _activatedId; // UI 线程：本次会话收起时已经切到前台的窗口
     private long? _renderEmphasized; // 渲染线程：上一帧强调的窗口
     private readonly SharedThumbnailSource _shared;
-    private DecorResources? _decor; // 合成层里的标题与装饰（第一次用到共享缩略图时创建）
-    private bool _decorTried;
     private readonly VirtualDesktopService? _desktops;
     private DesktopState _barState = DesktopState.Empty; // UI 线程：本次会话桌面条上的桌面
     private List<OverviewWindow> _barWindows = []; // UI 线程：各桌面不是最小化的窗口（Z 序），放大进入后交焦点用
@@ -60,6 +58,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private Guid? _removeOnSwitch; // UI 线程：删的是当前桌面——放大进入相邻桌面时由删除来切换（系统删当前桌面会自己切过去）
     private long _switchStartedMs;
     private DesktopBarHit _barHovered = DesktopBarHit.Nothing; // UI 线程
+    private OverviewScene? _allScene; // UI 线程：应用窗口视图换进来之前的总览场景（点标题行回到总览用）
     private volatile bool _barShown; // 渲染线程决定、UI 线程重绘用
     private volatile bool _barExpanded;
 
@@ -357,8 +356,6 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             o.Dispose();
         }
         _overlays.Clear();
-        _decor?.Dispose();
-        _decor = null;
     }
 
     // ---------- UI 线程 ----------
@@ -387,12 +384,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         }
 
         var shared = _shared.Get();
-        if (shared is not null && !_decorTried)
-        {
-            _decorTried = true;
-            _decor = DecorResources.TryCreate(shared, _ui, out string status);
-            Log.Info($"总览装饰：{status}");
-        }
+        var decor = _shared.Decor(_ui);
         foreach (var o in _overlays)
         {
             // 平铺在本屏的窗口，加上此刻有一部分在本屏上的窗口：后者跨屏或要飞到别的屏上去，
@@ -401,7 +393,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index ||
                             scene.Windows[i].Overlaps(o.Monitor.WorkArea))
                 .ToList();
-            int failure = o.Prepare(scene, members, shared, _decor);
+            int failure = o.Prepare(scene, members, shared, decor);
             if (failure != 0) _shared.Disable(failure, "总览");
         }
         Controller.SetScene(scene);
@@ -442,6 +434,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         string app = front.ProcessName;
         var areas = _overlays.Select(o => new OverviewArea(o.Monitor.WorkArea, o.Monitor.DpiScale)).ToList();
         var focused = scene.Focus(w => app.Length > 0 ? w.ProcessName == app : w.Id == front.Id, areas, minimizedShelf: true);
+        _allScene = _overlays.All(o => o.OnHomePage) ? scene : null;
         Controller.SetScene(focused);
         Controller.SetDesktops(DesktopBarState.Empty);
         _pageBuffers = null;
@@ -468,6 +461,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var areas = _overlays.Select(o => new OverviewArea(o.Monitor.WorkArea, o.Monitor.DpiScale)).ToList();
         var focused = scene.Focus(x => app.Length > 0 ? x.ProcessName == app : x.Id == w.Id, areas, minimizedShelf: true, animate: true);
         if (!Controller.FocusApp(focused, HostClock.NowUs())) return false;
+        _allScene = scene;
         _pageBuffers = null;
         _barState = DesktopState.Empty;
         _barHovered = DesktopBarHit.Nothing;
@@ -481,6 +475,35 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         }
         UpdateDecorations();
         Log.Info($"总览：换成应用窗口视图 {Path.GetFileName(app)}，{focused.PresentCount} 个窗口");
+        return true;
+    }
+
+    /// <summary>
+    /// 应用窗口视图里回到窗口总览：这个程序的窗口重排回总览里的位置，其他程序的窗口在各自的平铺位淡入；
+    /// 桌面条与其余各页重新准备（各桌面的缩略图层有缓存，不用重建）。没有换进来之前的总览场景时返回 false。
+    /// </summary>
+    private bool SwitchToAll(OverviewScene app)
+    {
+        if (_allScene is not { } all || all.Count != app.Count) return false;
+        var scene = all.ReturnFrom(app);
+        if (!Controller.UnfocusApp(scene, HostClock.NowUs())) return false;
+        _allScene = null;
+        _hoveredId = null;
+        foreach (var o in _overlays) o.ReplaceScene(-1, scene);
+        if (RefreshBarThumbnails() && _shared.Get() is not null && _desktops is { } desktops)
+        {
+            var state = desktops.State;
+            var cfg = _config();
+            var monitors = _overlays.Select(o => o.Monitor).ToList();
+            int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
+            var areas = monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, DesktopBarGeometry.Compute(m.WorkArea, state.Count, m.DpiScale))).ToList();
+            _allWindows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true);
+            PreparePages(state, state.CurrentIndex, new Dictionary<int, OverviewScene> { [state.CurrentIndex] = scene }, areas, cfg.PrimaryMonitorOnly, primary);
+            _homeDesktop = state.Current;
+            _barStateHomeIndex = state.CurrentIndex;
+        }
+        UpdateDecorations();
+        Log.Info($"总览：从应用窗口视图回到总览，{scene.PresentCount} 个窗口");
         return true;
     }
 
@@ -911,6 +934,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var scene = Controller.Scene;
         long hitUs = HostClock.NowUs();
         int index = scene.HitTest(x, y, Controller.ProgressAt(hitUs), Controller.BarExpansionAt(hitUs));
+        overlay.LabelHovered = index < 0 && Controller.IsSettledOpen && Controller.Mode is OverviewMode.All or OverviewMode.App && scene.LabelHitTest(x, y) >= 0;
         long? id = index >= 0 ? scene.Windows[index].Id : null;
         if (id == _hoveredId) return;
         Select(index);
@@ -946,8 +970,9 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             return;
         }
         var scene = Controller.Scene;
-        // 点窗口下面的标题行（程序图标 + 标题）：换成只看这个程序窗口的应用窗口视图（不收起）
-        if (Controller.Mode == OverviewMode.All && scene.LabelHitTest(x, y) is >= 0 and var label && SwitchToApp(scene, label)) return;
+        // 点窗口下面的标题行（程序图标 + 标题）：总览里换成只看这个程序窗口的应用窗口视图，应用窗口视图里换回总览（都不收起）
+        if (scene.LabelHitTest(x, y) is >= 0 and var label &&
+            (Controller.Mode == OverviewMode.All ? SwitchToApp(scene, label) : Controller.Mode == OverviewMode.App && SwitchToAll(scene))) return;
         long hitUs = HostClock.NowUs();
         int index = scene.HitTest(x, y, Controller.ProgressAt(hitUs), Controller.BarExpansionAt(hitUs));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
