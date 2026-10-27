@@ -185,7 +185,9 @@ internal sealed class AppHost
     {
         // overview-bar：三指上滑展开总览，再（不动鼠标）展开桌面条、点相邻的桌面——验证桌面条与放大进入
         bool bar = name == "overview-bar";
-        if (bar) name = "overview";
+        // overview-hold：展开后停 6 秒再退出（留时间给外部用真实鼠标操作总览）
+        int linger = name == "overview-hold" ? 6000 : 1500;
+        if (bar || name == "overview-hold") name = "overview";
         if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
         {
             Log.Warn($"未知的模拟脚本 {name}，可用：{string.Join("、", SyntheticTouch.Scripts.Keys)}");
@@ -217,7 +219,7 @@ internal sealed class AppHost
                     _overview.GoToDesktop(target, HostClock.NowUs());
                 });
             }
-            Thread.Sleep(1500);
+            Thread.Sleep(linger);
             _ui.Quit();
         }) { IsBackground = true, Name = "GlideShell.Simulate" };
         thread.Start();

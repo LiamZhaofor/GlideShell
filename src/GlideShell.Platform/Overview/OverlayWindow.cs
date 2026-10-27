@@ -321,7 +321,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                 if (isCurrent || isHovered)
                 {
                     var frame = Local(g.Thumbs[i], origin);
-                    for (int k = 0; k < (isHovered ? 3 : 2); k++)
+                    for (int k = 0; k < (isHovered ? 4 : 2); k++) // 画在半透明壁纸下面会被压暗：悬停框加粗才看得清
                     {
                         frame.Left -= 1; frame.Top -= 1; frame.Right += 1; frame.Bottom += 1;
                         User32.FrameRect(hdc, &frame, isHovered ? hover : current);
