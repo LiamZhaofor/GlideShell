@@ -20,7 +20,7 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 - **入口齐全**：Ctrl+Win+←/→ 也走跟手的切桌面动画；屏幕四个角可以设成触发角（总览、应用窗口、显示桌面）。
 - **可定制**：手势映射、灵敏度、排除程序、三指拖移、总览按程序分组。三指轻点（中键）始终交给系统。
 - **轻量、可退回**：
-  - 不装驱动，约 5MB 的原生程序，常驻私有内存约 22MB。
+  - 不装驱动，约 5.6MB 的原生程序；常驻私有内存刚启动约 16MB，用过总览和设置后约 20–30MB。
   - 退出、暂停或崩溃时，自动把系统手势还原成你原来的设置。
 
 ## 系统要求
@@ -30,7 +30,7 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 
 ## 安装
 
-从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-1.4.0-win-x64.zip`，解压后双击 **安装.cmd**。
+从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-1.5.0-win-x64.zip`，解压后双击 **安装.cmd**。
 
 - 程序装到 `%LOCALAPPDATA%\Programs\GlideShell`，并添加开始菜单与开机启动，不需要管理员权限。
 - 卸载：双击 **卸载.cmd**。它会先退出程序、确认系统手势已还原，再删除程序。配置与日志会保留；要连同它们一起删除，运行 `uninstall.ps1 -Purge`。
@@ -86,14 +86,14 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 - **日志**：`%LOCALAPPDATA%\GlideShell\logs\glideshell.log`。
 - **紧急还原**：万一系统手势没有恢复，运行 `GlideShell.exe --restore-native`。`GlideShell.exe --quit` 可以让运行中的实例正常退出。
 
-## 性能（1.4.0，本机实测）
+## 性能（1.5.0，本机实测）
 
 测试机：Radeon 780M、2560×1600、150% 缩放、165Hz。
 
 | 项目 | 数值 |
 |---|---|
-| 程序大小 | 约 5MB（NativeAOT） |
-| 常驻内存 | 工作集约 65MB、私有约 22MB（Direct2D / DirectWrite 与程序图标缓存） |
+| 程序大小 | 约 5.6MB（NativeAOT） |
+| 常驻内存 | 私有内存刚启动约 16MB，用过总览和设置后约 20–30MB（Direct2D / DirectWrite 与程序图标缓存） |
 | 总览 / 切桌面 / 切换窗口帧间隔 | P50 6.1ms / P95 6.2ms（跟满 165Hz） |
 | 输入到上屏 | 约 1 帧（按合成器时钟晚取样） |
 | 再次打开总览的预热 | 约 3–6ms |
