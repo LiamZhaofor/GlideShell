@@ -16,7 +16,8 @@ public abstract unsafe class NativeWindow : IDisposable
 
     public nint Handle { get; private set; }
 
-    protected void Create(string className, uint style, uint exStyle, int x, int y, int width, int height, nint parent = 0)
+    /// <param name="classStyle">窗口类样式（例如 CS_DROPSHADOW），同一个类名只在第一次注册时生效。</param>
+    protected void Create(string className, uint style, uint exStyle, int x, int y, int width, int height, nint parent = 0, uint classStyle = 0)
     {
         nint instance = Kernel32.GetModuleHandleW(null);
         fixed (char* cls = className)
@@ -28,6 +29,7 @@ public abstract unsafe class NativeWindow : IDisposable
                     var wc = new User32.WNDCLASSEXW
                     {
                         cbSize = (uint)sizeof(User32.WNDCLASSEXW),
+                        style = classStyle,
                         lpfnWndProc = &StaticWndProc,
                         hInstance = instance,
                         hCursor = User32.LoadCursorW(0, User32.IDC_ARROW), // 不设的话指针停在窗口上时保持进入前的样子（可能是转圈）

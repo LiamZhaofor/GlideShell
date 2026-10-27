@@ -259,7 +259,7 @@ public sealed partial class SettingsWindow
         var candidates = running.Where(a => !_model.ExcludedProcesses.Contains(a, StringComparer.OrdinalIgnoreCase)).ToList();
         if (candidates.Count == 0) candidates = ["（没有可添加的程序）"];
         var anchor = Find("addRunningB") is { } btn ? OnScreen(btn) : new RectD(0, 0, 0, 0);
-        int k = ShowMenu(candidates, -1, anchor.Left, anchor.Bottom + 2 * S);
+        int k = ShowMenu(candidates, -1, anchor.Left, anchor.Bottom + 4 * S);
         if (k < 0 || running.Count == 0 || !running.Contains(candidates[k])) return;
         AddExcluded(candidates[k]);
     }

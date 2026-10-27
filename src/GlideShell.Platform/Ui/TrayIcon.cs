@@ -104,45 +104,18 @@ public sealed unsafe class TrayIcon : IDisposable
         return 0;
     }
 
+    /// <summary>右键菜单：Windows 11 风格的弹出菜单（<see cref="Settings.FluentMenu"/>），底边在指针处（托盘在屏幕底部）。</summary>
     private void ShowMenu(int x, int y)
     {
-        var commands = new List<TrayMenuItem>(); // 命令 ID = 下标 + 1
-        nint menu = Build(_menu(), commands);
-        try
-        {
-            // 弹出菜单前必须让本窗口成为前台，否则点菜单外面菜单不会消失（Win32 文档的要求）
-            User32.SetForegroundWindow(_ui.Handle);
-            int cmd = User32.TrackPopupMenuEx(menu, User32.TPM_RIGHTBUTTON | User32.TPM_RETURNCMD | User32.TPM_NONOTIFY, x, y, _ui.Handle, 0);
-            User32.PostMessageW(_ui.Handle, User32.WM_NULL, 0, 0);
-            if (cmd > 0 && cmd <= commands.Count) commands[cmd - 1].OnClick?.Invoke();
-        }
-        finally
-        {
-            User32.DestroyMenu(menu); // 连同挂在上面的子菜单一起销毁
-        }
+        User32.SetForegroundWindow(_ui.Handle); // 本进程拿到前台权，菜单窗口才能激活
+        var chosen = Settings.FluentMenu.Show(Convert(_menu()), x, y, Settings.MenuStyle.Context, preferAbove: true);
+        (chosen?.Tag as TrayMenuItem)?.OnClick?.Invoke();
     }
 
-    private static nint Build(IReadOnlyList<TrayMenuItem> items, List<TrayMenuItem> commands)
-    {
-        nint menu = User32.CreatePopupMenu();
-        foreach (var it in items)
-        {
-            if (it.Text is null)
-            {
-                User32.AppendMenuW(menu, User32.MF_SEPARATOR, 0, null);
-                continue;
-            }
-            uint flags = User32.MF_STRING | (it.Checked ? User32.MF_CHECKED : 0) | (it.Enabled ? 0 : User32.MF_GRAYED);
-            if (it.Children is { Count: > 0 } children)
-            {
-                User32.AppendMenuW(menu, flags | User32.MF_POPUP, (nuint)Build(children, commands), it.Text);
-                continue;
-            }
-            commands.Add(it);
-            User32.AppendMenuW(menu, flags, (nuint)commands.Count, it.Text);
-        }
-        return menu;
-    }
+    private static IReadOnlyList<Settings.MenuEntry> Convert(IReadOnlyList<TrayMenuItem> items)
+        => items.Select(it => it.Text is null
+            ? Settings.MenuEntry.Separator
+            : new Settings.MenuEntry(it.Text, it.Checked, it.Enabled, it.Children is { Count: > 0 } c ? Convert(c) : null, it)).ToList();
 }
 
 /// <summary>

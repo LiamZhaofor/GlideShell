@@ -325,7 +325,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
             case ItemKind.Corner:
             {
                 var r = OnScreen(it);
-                int chosen = ShowMenu(it.Options, it.Index?.Invoke() ?? -1, r.Left, r.Bottom + 2 * S);
+                int chosen = ShowMenu(it.Options, it.Index?.Invoke() ?? -1, r.Left, r.Bottom + 4 * S, r.Width);
                 if (chosen >= 0 && chosen != (it.Index?.Invoke() ?? -1))
                 {
                     it.SetIndex?.Invoke(chosen);
@@ -353,7 +353,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
     private void SetSlider(Item it, double x)
     {
-        var track = ItemPainter.SliderTrack(it, S);
+        var track = ItemPainter.SliderTrack(OnScreen(it), S);
         double f = Math.Clamp((x - track.Left) / Math.Max(1, track.Width), 0, 1);
         SetSliderValue(it, it.Min + f * (it.Max - it.Min));
     }
@@ -434,17 +434,16 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         PlaceEdit();
     }
 
-    /// <summary>弹出菜单选一项（系统菜单，Windows 11 圆角、跟随深浅色），返回选中的下标，取消返回 -1。</summary>
-    private int ShowMenu(IReadOnlyList<string> options, int current, double x, double y)
+    /// <summary>
+    /// 弹出选项列表（Fluent 风格的菜单：圆角、亚克力、选中项左边一条强调色），列表至少和控件一样宽，返回选中的下标，取消返回 -1。
+    /// </summary>
+    private int ShowMenu(IReadOnlyList<string> options, int current, double x, double y, double width = 0)
     {
-        nint menu = CreatePopupMenu();
-        for (int i = 0; i < options.Count; i++)
-            fixed (char* p = options[i]) AppendMenuW(menu, i == current ? 0x8u /* MF_CHECKED */ : 0u, (nuint)(i + 1), p);
+        var entries = options.Select((o, i) => new MenuEntry(o, Checked: i == current, Tag: i)).ToList();
         var pt = new User32.POINT { X = (int)x, Y = (int)y };
         ClientToScreen(Handle, &pt);
-        int cmd = TrackPopupMenuEx(menu, 0x0100 /* TPM_RETURNCMD */ | 0x0080 /* TPM_NONOTIFY */, pt.X, pt.Y, Handle, null);
-        DestroyMenu(menu);
-        return cmd - 1;
+        var chosen = FluentMenu.Show(entries, pt.X, pt.Y, MenuStyle.Dropdown, minWidth: (int)width);
+        return chosen?.Tag is int i ? i : -1;
     }
 
     // ---------- 开关动画 ----------
@@ -685,20 +684,6 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool KillTimer(nint hwnd, nuint id);
-
-    [LibraryImport("user32.dll")]
-    private static partial nint CreatePopupMenu();
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool AppendMenuW(nint menu, uint flags, nuint id, char* text);
-
-    [LibraryImport("user32.dll")]
-    private static partial int TrackPopupMenuEx(nint menu, uint flags, int x, int y, nint hwnd, void* tpm);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool DestroyMenu(nint menu);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

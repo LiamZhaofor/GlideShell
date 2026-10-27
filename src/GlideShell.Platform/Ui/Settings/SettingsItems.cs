@@ -99,12 +99,12 @@ internal sealed class Item(ItemKind kind, string key)
     public bool Interactive => Enabled && Kind is ItemKind.Nav or ItemKind.Toggle or ItemKind.Dropdown or ItemKind.Slider or ItemKind.Segmented
         or ItemKind.Button or ItemKind.AccentButton or ItemKind.Expander or ItemKind.Corner;
 
-    /// <summary>分段控件里第 <paramref name="i"/> 段的矩形。</summary>
-    public RectD Segment(int i)
+    /// <summary>分段控件（屏幕上在 <paramref name="r"/>）里第 <paramref name="i"/> 段的矩形。</summary>
+    public RectD Segment(RectD r, int i)
     {
         int n = Math.Max(1, Options.Count);
-        double w = Rect.Width / n;
-        return new RectD(Rect.Left + w * i, Rect.Top, w, Rect.Height);
+        double w = r.Width / n;
+        return new RectD(r.Left + w * i, r.Top, w, r.Height);
     }
 }
 
@@ -220,7 +220,7 @@ internal static class ItemPainter
                 string value = it.Format?.Invoke(v) ?? v.ToString("0.##");
                 var labelBox = new RectD(r.Right - 64 * s, r.Top, 64 * s, r.Height);
                 c.Text(value, labelBox, body, t.TextSecondary, UiAlign.Right);
-                var track = SliderTrack(it, s);
+                var track = SliderTrack(r, s);
                 double f = it.Max > it.Min ? Math.Clamp((v - it.Min) / (it.Max - it.Min), 0, 1) : 0;
                 c.Fill(new RectD(track.Left, track.CenterY - 2 * s, track.Width, 4 * s), 2 * s, t.Rail);
                 c.Fill(new RectD(track.Left, track.CenterY - 2 * s, track.Width * f, 4 * s), 2 * s, it.Enabled ? t.Accent : t.TextTertiary);
@@ -238,7 +238,7 @@ internal static class ItemPainter
                 int sel = it.Index?.Invoke() ?? -1;
                 for (int i = 0; i < it.Options.Count; i++)
                 {
-                    var seg = it.Segment(i).Inflate(-3 * s, -3 * s);
+                    var seg = it.Segment(r, i).Inflate(-3 * s, -3 * s);
                     if (i == sel) c.Fill(seg, 3 * s, t.Accent);
                     c.Text(it.Options[i], seg, body, i == sel ? t.OnAccent : text, UiAlign.Center);
                 }
@@ -292,7 +292,8 @@ internal static class ItemPainter
     public static RectD ScreenArea(RectD r, double s) => new(r.Left + 8 * s, r.Top + 8 * s, r.Width - 16 * s, r.Height - 44 * s);
 
     /// <summary>滑块的轨道（左边留给轨道，右边 64 DIP 是数值）。</summary>
-    public static RectD SliderTrack(Item it, double s) => new(it.Rect.Left + 10 * s, it.Rect.Top, Math.Max(10 * s, it.Rect.Width - 84 * s), it.Rect.Height);
+    /// <param name="r">滑块在屏幕上的矩形（已减去滚动偏移）。</param>
+    public static RectD SliderTrack(RectD r, double s) => new(r.Left + 10 * s, r.Top, Math.Max(10 * s, r.Width - 84 * s), r.Height);
 
     /// <summary>触摸板示意：圆角矩形里 <see cref="Item.Fingers"/> 个手指圆点，两侧箭头表示滑动方向。</summary>
     private static void PaintGesture(UiCanvas c, FluentTheme t, double s, Item it, RectD r)
