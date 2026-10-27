@@ -27,7 +27,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private DesktopState _desktops = DesktopState.Empty;
     private bool _barVisible;
     private bool _barExpanded;
-    private int _barHovered = -1;
+    private DesktopBarHit _barHovered = DesktopBarHit.Nothing;
     private OverviewScene _scene = OverviewScene.Empty;
     private IReadOnlyList<int> _members = [];
     private bool _labelsVisible;
@@ -104,8 +104,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public int PrepareBar(DesktopBarGeometry? geometry, DesktopState desktops, IReadOnlyList<OverviewWindow> windows, nint foreground)
     {
         _desktops = desktops;
-        _barHovered = -1;
-        _barExpanded = false;
+        _barHovered = DesktopBarHit.Nothing;
+        User32.InvalidateRect(Handle, null, 1); // 桌面增删后名字要重画
         bool shared = _layer is SharedThumbnailLayer && _shared is not null && _barRoot is not null;
         return _bar.Prepare(shared ? _shared : null, shared ? _barRoot : null, Handle, Monitor, geometry, desktops, windows, foreground);
     }
@@ -127,7 +127,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     }
 
     /// <summary>UI 线程：桌面条显隐、展开与悬停的桌面变化时才重绘。</summary>
-    public void SetBarDecorations(bool visible, bool expanded, int hovered)
+    public void SetBarDecorations(bool visible, bool expanded, DesktopBarHit hovered)
     {
         if (visible == _barVisible && expanded == _barExpanded && hovered == _barHovered) return;
         _barVisible = visible;
@@ -303,7 +303,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         const uint Flags = User32.DT_CENTER | User32.DT_VCENTER | User32.DT_SINGLELINE | User32.DT_END_ELLIPSIS | User32.DT_NOPREFIX;
         for (int i = 0; i < g.Count; i++)
         {
-            bool isCurrent = i == _desktops.CurrentIndex, isHovered = i == _barHovered;
+            bool isCurrent = i == _desktops.CurrentIndex;
+            bool isHovered = _barHovered.Index == i && _barHovered.Part is DesktopBarPart.Desktop or DesktopBarPart.Remove;
             if (!_barExpanded)
             {
                 var r = Local(g.Pills[i], origin);
@@ -328,10 +329,41 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                     }
                 }
                 var label = Local(g.Labels[i], origin);
+                // 悬停的非当前桌面：名字右端出现「×」（删除，窗口并入相邻桌面）；名字给它让出位置
+                bool removable = isHovered && !isCurrent && g.Count >= 2;
+                var x = Local(g.RemoveButton(i), origin);
+                if (removable) label.Right = x.Left - 2;
                 Gdi32.SetTextColor(hdc, isCurrent || isHovered ? Gdi32.Rgb(240, 240, 245) : Gdi32.Rgb(185, 185, 195));
                 User32.DrawTextW(hdc, _desktops.Names[i], -1, &label, Flags);
+                if (removable)
+                {
+                    if (_barHovered.Part == DesktopBarPart.Remove)
+                    {
+                        nint old = Gdi32.SelectObject(hdc, pill);
+                        Gdi32.RoundRect(hdc, x.Left, x.Top, x.Right + 1, x.Bottom + 1, x.Right - x.Left, x.Bottom - x.Top);
+                        Gdi32.SelectObject(hdc, old);
+                    }
+                    Gdi32.SetTextColor(hdc, _barHovered.Part == DesktopBarPart.Remove ? Gdi32.Rgb(255, 255, 255) : Gdi32.Rgb(200, 200, 208));
+                    User32.DrawTextW(hdc, "×", -1, &x, Flags);
+                }
             }
         }
+
+        // 末尾的「+」：新建桌面
+        bool addHovered = _barHovered.Part == DesktopBarPart.Add;
+        var add = Local(_barExpanded ? g.AddTile : g.AddPill, origin);
+        if (addHovered || _barExpanded)
+        {
+            nint old = Gdi32.SelectObject(hdc, addHovered ? pill : hoverPill);
+            Gdi32.RoundRect(hdc, add.Left, add.Top, add.Right + 1, add.Bottom + 1, radius, radius);
+            Gdi32.SelectObject(hdc, old);
+        }
+        nint plusFont = Gdi32.CreateFontW(-(int)Math.Round((_barExpanded ? 26 : 16) * dpi), 0, 0, 0, Gdi32.FW_NORMAL, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
+        Gdi32.SelectObject(hdc, plusFont);
+        Gdi32.SetTextColor(hdc, addHovered ? Gdi32.Rgb(255, 255, 255) : Gdi32.Rgb(185, 185, 195));
+        User32.DrawTextW(hdc, "+", -1, &add, Flags);
+        Gdi32.SelectObject(hdc, font);
+        Gdi32.DeleteObject(plusFont);
         Gdi32.SelectObject(hdc, oldPen);
         Gdi32.DeleteObject(pill);
         Gdi32.DeleteObject(hoverPill);

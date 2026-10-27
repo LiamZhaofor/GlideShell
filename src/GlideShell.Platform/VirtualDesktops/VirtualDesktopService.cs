@@ -87,6 +87,56 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         return tcs.Task;
     }
 
+    /// <summary>新建一个桌面（加在最后，不切换过去）。返回新桌面的 id，失败为 null。完成时 <see cref="State"/> 已更新。</summary>
+    public Task<Guid?> CreateDesktopAsync()
+    {
+        var tcs = new TaskCompletionSource<Guid?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Post(() =>
+        {
+            if (!EnsureConnected())
+            {
+                tcs.SetResult(null);
+                return;
+            }
+            nint d;
+            int hr = ((delegate* unmanaged<nint, nint*, int>)Slot(_manager, _layout!.CreateDesktop))(_manager, &d);
+            if (hr < 0)
+            {
+                if (hr is RpcDisconnected or RpcServerUnavailable) Disconnect();
+                _log($"新建桌面失败 0x{hr:X8}");
+                tcs.SetResult(null);
+                return;
+            }
+            Guid id = GetId(d);
+            Release(d);
+            ReadState();
+            tcs.SetResult(id);
+        });
+        return tcs.Task;
+    }
+
+    /// <summary>
+    /// 删除桌面 <paramref name="desktop"/>，它上面的窗口并入 <paramref name="fallback"/>（删的是当前桌面时系统会切到那里）。
+    /// 返回 HRESULT；完成时 <see cref="State"/> 已更新。
+    /// </summary>
+    public Task<int> RemoveDesktopAsync(Guid desktop, Guid fallback)
+    {
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Post(() =>
+        {
+            if (!EnsureConnected() || desktop == fallback || !_desktops.TryGetValue(desktop, out nint d) || !_desktops.TryGetValue(fallback, out nint f))
+            {
+                tcs.SetResult(unchecked((int)0x80004005));
+                return;
+            }
+            int hr = ((delegate* unmanaged<nint, nint, nint, int>)Slot(_manager, _layout!.RemoveDesktop))(_manager, d, f);
+            if (hr is RpcDisconnected or RpcServerUnavailable) Disconnect();
+            else ReadState();
+            tcs.SetResult(hr);
+        });
+        return tcs.Task;
+    }
+
     /// <summary>重新读取桌面列表（桌面增删、顺序变化后）。</summary>
     public void Refresh() => Post(() =>
     {

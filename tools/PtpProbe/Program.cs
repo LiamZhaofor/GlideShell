@@ -33,6 +33,7 @@ return command switch
     "live" => Live(args),
     "windows" => Windows(),
     "native" => Native(),
+    "desktops" when args.Contains("--create-remove") => DesktopsCreateRemove(),
     "desktops" => Desktops(),
     "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump"), Option(args, "--monitor")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
@@ -297,6 +298,24 @@ static int Desktops()
     for (int i = 0; i < state.Count; i++)
         Console.WriteLine($"  {(i == state.CurrentIndex ? "▶" : " ")} 桌面 {i + 1}「{state.Names[i]}」  {state.Desktops[i]}");
     return service.Available ? 0 : 1;
+}
+
+/// 实测新建 / 删除桌面的槽位：在最后新建一个桌面，再把它删掉（窗口并入它左边的桌面），前后核对桌面列表。
+static int DesktopsCreateRemove()
+{
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start(m => Console.WriteLine($"   [日志] {m}"));
+    if (!service.Available) return 1;
+    var before = service.State;
+    Console.WriteLine($"开始：{before.Count} 个桌面，当前第 {before.CurrentIndex + 1} 个");
+    var created = service.CreateDesktopAsync().GetAwaiter().GetResult();
+    var mid = service.State;
+    Console.WriteLine($"新建：{(created is { } c ? c.ToString() : "失败")} → {mid.Count} 个桌面，最后一个「{mid.Names[^1]}」{(mid.Desktops[^1] == created ? "（就是新建的）" : "（不是新建的！）")}");
+    if (created is not { } id || mid.Count != before.Count + 1) return 1;
+    int hr = service.RemoveDesktopAsync(id, mid.Desktops[^2]).GetAwaiter().GetResult();
+    var after = service.State;
+    bool same = after.Desktops.SequenceEqual(before.Desktops) && after.CurrentIndex == before.CurrentIndex;
+    Console.WriteLine($"删除：0x{hr:X8} → {after.Count} 个桌面，当前第 {after.CurrentIndex + 1} 个，{(same ? "与开始时一致" : "与开始时不一致！")}");
+    return hr >= 0 && same ? 0 : 1;
 }
 
 static int Thumbnails(bool shared, bool fade)

@@ -22,7 +22,9 @@ public class DesktopBarTests
             Assert.True(bar.Labels[i].Top >= bar.Thumbs[i].Bottom);
             Assert.True(bar.Labels[i].Bottom <= Area.Top + bar.ExpandedHeight);
         }
-        Assert.Equal(Area.CenterX, (bar.Thumbs[0].Left + bar.Thumbs[2].Right) / 2, 6);
+        Assert.Equal(Area.CenterX, (bar.Thumbs[0].Left + bar.AddTile.Right) / 2, 6); // 连同末尾的「+」整排居中
+        Assert.True(bar.AddTile.Left > bar.Thumbs[2].Right);
+        Assert.Equal(bar.Thumbs[0].Height, bar.AddTile.Height, 6);
         Assert.True(bar.ExpandedHeight > bar.CollapsedHeight);
     }
 
@@ -31,6 +33,25 @@ public class DesktopBarTests
     {
         var bar = DesktopBarGeometry.Compute(Area, 20, 1.5);
         Assert.True(bar.Thumbs[0].Left >= Area.Left && bar.Thumbs[^1].Right <= Area.Right);
+    }
+
+    [Fact]
+    public void Plus_and_remove_buttons_are_hit_only_where_they_are_shown()
+    {
+        var bar = DesktopBarGeometry.Compute(Area, 3, 1.5);
+        Assert.Equal(DesktopBarPart.Add, bar.Hit(bar.AddPill.CenterX, bar.AddPill.CenterY, 0).Part);
+        Assert.Equal(DesktopBarPart.Add, bar.Hit(bar.AddTile.CenterX, bar.AddTile.CenterY, 1).Part);
+
+        var x = bar.RemoveButton(1);
+        Assert.True(x.Right <= bar.Labels[1].Right && x.Left > bar.Labels[1].CenterX); // 名字右端
+        Assert.Equal(new DesktopBarHit(DesktopBarPart.Remove, 1), bar.Hit(x.CenterX, x.CenterY, 1));
+        Assert.Equal(new DesktopBarHit(DesktopBarPart.Desktop, 1), bar.Hit(x.CenterX, x.CenterY, 1, removable: false));
+        Assert.Equal(new DesktopBarHit(DesktopBarPart.Desktop, 1), bar.Hit(bar.Labels[1].Left + 2, bar.Labels[1].CenterY, 1));
+
+        // 只剩一个桌面：不能删
+        var single = DesktopBarGeometry.Compute(Area, 1, 1.5);
+        var only = single.RemoveButton(0);
+        Assert.Equal(DesktopBarPart.Desktop, single.Hit(only.CenterX, only.CenterY, 1).Part);
     }
 
     [Fact]

@@ -4,7 +4,8 @@ namespace GlideShell.Platform.VirtualDesktops;
 /// 未公开虚拟桌面接口的「IID + vtable 槽位」表，按构建号选择（S3 用系统代理 DLL 的 MIDL 格式串逐槽核对过 26300）。
 /// 同一个 IID 不代表同一布局：22631.3085+ 与 26100+ 的 IVirtualDesktopManagerInternal IID 相同，
 /// 但 26100 在 SwitchDesktop 之后插入了一个方法，后面的槽位整体后移。所以启动时还要核对方法数（<see cref="ProxyCheck"/>）。
-/// GlideShell 只用 IVirtualDesktopManagerInternal 的槽 3/6/7/8/9 与 IVirtualDesktop 的 4/5（两种布局里位置相同），其余槽位不调用。
+/// GlideShell 用 IVirtualDesktopManagerInternal 的槽 3/6/7/8/9（两种布局里位置相同）与新建 / 删除桌面（26100 起后移一位），
+/// 以及 IVirtualDesktop 的 4/5，其余槽位不调用。
 /// </summary>
 internal sealed record VirtualDesktopLayout
 {
@@ -25,6 +26,8 @@ internal sealed record VirtualDesktopLayout
     public int GetDesktops { get; init; } = 7;
     public int GetAdjacentDesktop { get; init; } = 8;
     public int SwitchDesktop { get; init; } = 9; // 无动画；动画版（22/21）不用：并发调用可能让 explorer 崩溃
+    public int CreateDesktop { get; init; } = 11; // (out IVirtualDesktop)：加在最后
+    public int RemoveDesktop { get; init; } = 13; // (IVirtualDesktop 删除, IVirtualDesktop 窗口并入)
 
     // IVirtualDesktop
     public int DesktopGetId { get; init; } = 4;
@@ -53,6 +56,8 @@ internal sealed record VirtualDesktopLayout
         Name = "Win11 23H2",
         MinBuild = 22631,
         ManagerInternalMethodCount = 24,
+        CreateDesktop = 10, // 没有 26100 在 SwitchDesktop 之后插入的那个方法
+        RemoveDesktop = 12,
     };
 
     public static VirtualDesktopLayout? ForBuild(int build)

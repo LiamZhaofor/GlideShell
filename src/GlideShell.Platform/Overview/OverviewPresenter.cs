@@ -44,7 +44,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private Guid? _switchTarget; // UI 线程：点了桌面条上的别的桌面，已经在下面切过去
     private Guid? _switchPrevious;
     private long _switchStartedMs;
-    private int _barHovered = -1; // UI 线程
+    private DesktopBarHit _barHovered = DesktopBarHit.Nothing; // UI 线程
     private volatile bool _barShown; // 渲染线程决定、UI 线程重绘用
     private volatile bool _barExpanded;
 
@@ -300,7 +300,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _hoveredId = null;
         _raisedId = null;
         _activatedId = null;
-        _barHovered = -1;
+        _barHovered = DesktopBarHit.Nothing;
         Controller.SetHovered(null);
     }
 
@@ -329,10 +329,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             double e = Controller.BarExpansionAt(now);
             bool inBar = bar.Contains(x, y, e);
             Controller.SetBarHovered(inBar, now);
-            int desktop = inBar ? bar.HitTest(x, y, e) : -1;
-            if (desktop != _barHovered)
+            var hit = inBar ? BarHit(bar, x, y, e) : DesktopBarHit.Nothing;
+            if (hit != _barHovered)
             {
-                _barHovered = desktop;
+                _barHovered = hit;
                 UpdateDecorations();
             }
             if (inBar)
@@ -357,8 +357,19 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             double e = Controller.BarExpansionAt(now);
             if (bar.Contains(x, y, e))
             {
-                int desktop = bar.HitTest(x, y, e);
-                if (desktop >= 0) Controller.GoToDesktop(desktop, now);
+                var hit = BarHit(bar, x, y, e);
+                switch (hit.Part)
+                {
+                    case DesktopBarPart.Desktop:
+                        Controller.GoToDesktop(hit.Index, now);
+                        break;
+                    case DesktopBarPart.Add:
+                        AddDesktop();
+                        break;
+                    case DesktopBarPart.Remove:
+                        RemoveDesktop(hit.Index);
+                        break;
+                }
                 return; // 点在桌面条的空白处：什么也不做
             }
         }
@@ -368,6 +379,59 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         long? id = index >= 0 ? scene.Windows[index].Id : null;
         if (id is { } chosen) RaiseForDismiss(chosen);
         Controller.Close(id, HostClock.NowUs());
+    }
+
+    /// <summary>桌面条命中：当前桌面不能在这里删（删了系统会立刻切走），它名字右端算作桌面本身。</summary>
+    private DesktopBarHit BarHit(DesktopBarGeometry bar, double x, double y, double expansion)
+    {
+        var hit = bar.Hit(x, y, expansion);
+        return hit.Part == DesktopBarPart.Remove && hit.Index == _barState.CurrentIndex ? hit with { Part = DesktopBarPart.Desktop } : hit;
+    }
+
+    /// <summary>桌面条末尾的「+」：新建桌面（加在最后、不切过去），桌面条随之多一个缩略图。</summary>
+    private void AddDesktop()
+    {
+        if (_desktops is null || !_shown) return;
+        _ = _desktops.CreateDesktopAsync().ContinueWith(t =>
+        {
+            Log.Info(t.Result is { } id ? "总览桌面条：新建桌面" : "总览桌面条：新建桌面失败");
+            _ui.Post(RefreshBar);
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>桌面条上的「×」：删除这个桌面，它的窗口并入左边的桌面（第一个桌面并入右边，与任务视图一致）。</summary>
+    private void RemoveDesktop(int index)
+    {
+        if (_desktops is null || !_shown || index < 0 || index >= _barState.Count || _barState.Count < 2 || index == _barState.CurrentIndex) return;
+        Guid target = _barState.Desktops[index], fallback = _barState.Desktops[index > 0 ? index - 1 : index + 1];
+        string name = _barState.Names[index];
+        _ = _desktops.RemoveDesktopAsync(target, fallback).ContinueWith(t =>
+        {
+            if (t.Result < 0) Log.Warn($"总览桌面条：删除「{name}」失败 0x{t.Result:X8}");
+            else Log.Info($"总览桌面条：删除「{name}」");
+            _ui.Post(RefreshBar);
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>桌面增删后：按最新的桌面列表重新准备桌面条（窗口区域不动）。</summary>
+    private void RefreshBar()
+    {
+        if (!_shown || _desktops is null || _switchTarget is not null) return;
+        var state = _desktops.State;
+        if (state.Count < 2 || state.CurrentIndex < 0) return;
+        var monitors = _overlays.Select(o => o.Monitor).ToList();
+        _barState = state;
+        _barWindows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true).Where(w => !w.IsMinimized).ToList();
+        nint foreground = User32.GetForegroundWindow();
+        foreach (var o in _overlays)
+        {
+            var mine = _barWindows.Where(w => w.MonitorIndex == o.Monitor.Index || w.Overlaps(o.Monitor.WorkArea)).ToList();
+            int failure = o.PrepareBar(DesktopBarGeometry.Compute(o.Monitor.WorkArea, state.Count, o.Monitor.DpiScale), state, mine, foreground);
+            if (failure != 0) _shared.Disable(failure, "总览桌面条");
+        }
+        Controller.SetDesktops(new DesktopBarState(state.Names, state.CurrentIndex));
+        _barHovered = DesktopBarHit.Nothing;
+        UpdateDecorations();
     }
 
     private bool OnKey(uint vk)

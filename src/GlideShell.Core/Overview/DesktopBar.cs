@@ -10,6 +10,27 @@ public sealed record DesktopBarState(IReadOnlyList<string> Names, int Current)
     public int Count => Names.Count;
 }
 
+/// <summary>桌面条上指针下的东西。</summary>
+public enum DesktopBarPart
+{
+    None,
+
+    /// <summary>某个桌面（名字或缩略图）：点击切过去。</summary>
+    Desktop,
+
+    /// <summary>某个桌面名字右边的「×」：删除这个桌面。</summary>
+    Remove,
+
+    /// <summary>末尾的「+」：新建桌面。</summary>
+    Add,
+}
+
+/// <param name="Index">桌面下标（<see cref="DesktopBarPart.Desktop"/> / <see cref="DesktopBarPart.Remove"/>），其余为 -1。</param>
+public readonly record struct DesktopBarHit(DesktopBarPart Part, int Index)
+{
+    public static DesktopBarHit Nothing => new(DesktopBarPart.None, -1);
+}
+
 /// <summary>
 /// 一块屏上桌面条的几何（物理像素）。macOS 调度中心的样子：平时顶部一排桌面名（收起），
 /// 指针移到顶部时展开成一排桌面缩略图（壁纸 + 窗口），名字挪到缩略图下面；展开时下面的窗口区域整体往下缩，给它让位。
@@ -17,7 +38,8 @@ public sealed record DesktopBarState(IReadOnlyList<string> Names, int Current)
 /// </summary>
 public sealed class DesktopBarGeometry
 {
-    private DesktopBarGeometry(RectD area, double collapsedHeight, double expandedHeight, RectD[] thumbs, RectD[] pills, RectD[] labels)
+    private DesktopBarGeometry(RectD area, double collapsedHeight, double expandedHeight, RectD[] thumbs, RectD[] pills, RectD[] labels,
+        RectD addTile, RectD addPill, double removeSize)
     {
         Area = area;
         CollapsedHeight = collapsedHeight;
@@ -25,7 +47,12 @@ public sealed class DesktopBarGeometry
         Thumbs = thumbs;
         Pills = pills;
         Labels = labels;
+        AddTile = addTile;
+        AddPill = addPill;
+        _removeSize = removeSize;
     }
+
+    private readonly double _removeSize;
 
     /// <summary>这块屏的工作区（覆盖层范围）。</summary>
     public RectD Area { get; }
@@ -46,6 +73,19 @@ public sealed class DesktopBarGeometry
 
     public int Count => Thumbs.Count;
 
+    /// <summary>展开后末尾「+」的位置（与缩略图同高、窄一些）。</summary>
+    public RectD AddTile { get; }
+
+    /// <summary>收起时末尾「+」的位置。</summary>
+    public RectD AddPill { get; }
+
+    /// <summary>展开后第 <paramref name="index"/> 个桌面名字右端的「×」（悬停在这个桌面上时才显示）。</summary>
+    public RectD RemoveButton(int index)
+    {
+        var label = Labels[index];
+        return new RectD(label.Right - _removeSize, label.Top + (label.Height - _removeSize) / 2, _removeSize, _removeSize);
+    }
+
     /// <summary>收起时窗口区域（总览平铺用）。</summary>
     public RectD ContentArea => RectD.FromEdges(Area.Left, Area.Top + CollapsedHeight, Area.Right, Area.Bottom);
 
@@ -61,14 +101,16 @@ public sealed class DesktopBarGeometry
         double aspect = area.Width / Math.Max(1, area.Height);
         double thumbH = Math.Clamp(area.Height * 0.11, 64 * dip, 140 * dip);
         double thumbW = thumbH * aspect;
+        double addW = thumbH * 0.6; // 末尾的「+」：与缩略图同高、窄一些
         // 桌面多了放不下：整体缩小
-        double needW = count * thumbW + Math.Max(0, count - 1) * gap;
-        if (count > 0 && needW > area.Width - 2 * side)
+        double needW = count * thumbW + addW + count * gap;
+        if (needW > area.Width - 2 * side)
         {
-            double k = (area.Width - 2 * side - Math.Max(0, count - 1) * gap) / (count * thumbW);
+            double k = (area.Width - 2 * side - count * gap) / (count * thumbW + addW);
             thumbW *= k;
             thumbH *= k;
-            needW = count * thumbW + Math.Max(0, count - 1) * gap;
+            addW *= k;
+            needW = count * thumbW + addW + count * gap;
         }
         double expanded = top + thumbH + labelGap + labelH + bottom;
 
@@ -84,7 +126,9 @@ public sealed class DesktopBarGeometry
             labels[i] = new RectD(x, thumbs[i].Bottom + labelGap, thumbW, labelH);
             x += thumbW + gap;
         }
-        return new DesktopBarGeometry(area, collapsed, expanded, thumbs, pills, labels);
+        var addTile = new RectD(x, area.Top + top, addW, thumbH);
+        var addPill = new RectD(addTile.CenterX - pillH / 2, area.Top + (collapsed - pillH) / 2, pillH, pillH);
+        return new DesktopBarGeometry(area, collapsed, expanded, thumbs, pills, labels, addTile, addPill, labelH);
     }
 
     /// <summary>展开程度 <paramref name="expansion"/>（0 收起 ~ 1 展开）下第 <paramref name="index"/> 个缩略图的位置：从桌面名的位置长出来。</summary>
@@ -123,14 +167,27 @@ public sealed class DesktopBarGeometry
     /// <summary>指针下的桌面（-1 = 没有）：展开过半按缩略图与名字算，否则按桌面名算。</summary>
     public int HitTest(double x, double y, double expansion)
     {
+        var hit = Hit(x, y, expansion, removable: false);
+        return hit.Part == DesktopBarPart.Desktop ? hit.Index : -1;
+    }
+
+    /// <summary>
+    /// 指针下的东西：桌面、末尾的「+」，以及（<paramref name="removable"/> 时）展开后桌面名右端的「×」。
+    /// 「×」只在展开后、有两个以上桌面时有效（最后一个桌面不能删）。
+    /// </summary>
+    public DesktopBarHit Hit(double x, double y, double expansion, bool removable = true)
+    {
+        bool expanded = expansion >= 0.5;
+        if ((expanded ? AddTile : AddPill).Contains(x, y)) return new DesktopBarHit(DesktopBarPart.Add, -1);
         for (int i = 0; i < Count; i++)
         {
-            if (expansion >= 0.5)
+            if (expanded)
             {
-                if (Thumbs[i].Contains(x, y) || Labels[i].Contains(x, y)) return i;
+                if (removable && Count >= 2 && RemoveButton(i).Contains(x, y)) return new DesktopBarHit(DesktopBarPart.Remove, i);
+                if (Thumbs[i].Contains(x, y) || Labels[i].Contains(x, y)) return new DesktopBarHit(DesktopBarPart.Desktop, i);
             }
-            else if (Pills[i].Contains(x, y)) return i;
+            else if (Pills[i].Contains(x, y)) return new DesktopBarHit(DesktopBarPart.Desktop, i);
         }
-        return -1;
+        return DesktopBarHit.Nothing;
     }
 }
