@@ -1,4 +1,5 @@
 using GlideShell.Core.Geometry;
+using GlideShell.Core.Overview;
 using GlideShell.Core.Switcher;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Native;
@@ -70,14 +71,18 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 
     public void Hide(long? activateWindowId) => _ui.Post(() =>
     {
+        // 合成层模式下选中的缩略图已经飞到窗口原位、盖在它上面：先在覆盖层下面把窗口切到前台（最小化的不播系统动画直接还原），
+        // 等 DWM 合成一帧再撤层，画面无缝衔接
+        bool flew = _layer is not null;
+        bool activated = activateWindowId is not { } target || WindowActivator.Activate((nint)target, instant: true);
+        if (!activated) Log.Warn($"无法把窗口 0x{activateWindowId:X} 置为前台");
+        if (flew && activateWindowId is not null) Dwmapi.DwmFlush();
         _shown = false;
         _thumbs.HideAll();
         _layer?.HideAll();
         _decor?.HideAll();
         _band?.HideBand();
         Release();
-        if (activateWindowId is { } id && !WindowActivator.Activate((nint)id))
-            Log.Warn($"无法把窗口 0x{id:X} 置为前台");
     });
 
     public void Dispose()
@@ -129,7 +134,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             RecreateBand(monitor, bandRect, wantComposed);
         var scene = new SwitcherScene(windows, layout);
         var old = _thumbs;
-        bool composed = wantComposed && PrepareComposition(scene, monitor, bandRect);
+        bool composed = wantComposed && PrepareComposition(scene, monitor, _band!.WindowRect, bandRect);
         if (!composed && _band!.Composed) RecreateBand(monitor, bandRect, false); // 合成层失败：退回经典缩略图 + GDI
         _thumbs = composed ? Thumbs.Empty : Thumbs.Register(_band!.Handle, bandRect, scene);
         old.Unregister();
@@ -148,7 +153,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     }
 
     /// <summary>共享缩略图 + 合成层装饰；不可用或失败时返回 false（用经典缩略图）。</summary>
-    private bool PrepareComposition(SwitcherScene scene, MonitorInfo monitor, RectD bandRect)
+    /// <param name="windowRect">横带窗口在屏幕上的位置（合成层模式下是整个工作区，缩略图才能飞出横带）。</param>
+    private bool PrepareComposition(SwitcherScene scene, MonitorInfo monitor, RectD windowRect, RectD bandRect)
     {
         var backend = _shared?.Get();
         var res = _shared?.Decor(_ui);
@@ -164,7 +170,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         if (_composition is not null) _panelRoot ??= _composition.CreateBranch(out hr);
         if (_panelRoot is not null) _content ??= _composition!.CreateBranch(out hr);
         if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out hr);
-        var layer = _decorRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, bandRect, monitor.DpiScale,
+        var layer = _decorRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, windowRect, monitor.DpiScale,
             scene.Windows.Select((w, i) => (i, (nint)w.Id)).ToList(), _layer, out hr, withWallpaper: false);
         _layer = layer;
         if (layer is null)
@@ -180,7 +186,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             _decor.Dispose();
             _decor = null;
         }
-        _decor ??= new SwitcherDecor(res, _decorRoot!, _panelRoot!, monitor, bandRect, radiusDip);
+        _decor ??= new SwitcherDecor(res, _decorRoot!, _panelRoot!, monitor, windowRect, bandRect, radiusDip);
         _decor.Prepare(scene);
         if (_rects.Length < scene.Count)
         {
@@ -210,13 +216,23 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             if (_layer is { } layer && _backend is { } backend && _rects.Length >= scene.Count)
             {
                 int n = scene.Count;
+                double launch = frame.LaunchIndex >= 0 ? frame.Launch : 0;
                 for (int i = 0; i < n; i++)
                 {
                     _rects[i] = scene.Layout.ItemRect(i, frame.Position);
                     _opacity[i] = frame.Appear;
                     _active[i] = Math.Clamp(1 - Math.Abs(i - frame.Position), 0, 1); // 居中的那个用活动阴影
+                    if (frame.LaunchIndex < 0) continue;
+                    if (i == frame.LaunchIndex)
+                    {
+                        // 飞回：从切换条上的位置飞到窗口的真实位置与大小（落定时与窗口重合，撤层无跳变）
+                        _rects[i] = RectD.Lerp(_rects[i], scene.Windows[i].Source, launch);
+                        _active[i] = 1;
+                    }
+                    else _opacity[i] *= 1 - OverviewVisuals.SmoothStep(0, 0.6, launch);
                 }
-                layer.Apply(_rects.AsSpan(0, n), _opacity.AsSpan(0, n), _active.AsSpan(0, n), 0, commit: false, corner: 1, cardRadiusPx: _radiusPx);
+                // 圆角随飞回从卡片圆角过渡回窗口自己的（落定时与真实窗口一致）
+                layer.Apply(_rects.AsSpan(0, n), _opacity.AsSpan(0, n), _active.AsSpan(0, n), 0, commit: false, corner: 1 - launch, cardRadiusPx: _radiusPx);
                 _decor?.Apply(frame);
                 backend.Commit();
             }
@@ -324,10 +340,13 @@ internal sealed unsafe class SwitcherBand : NativeWindow
         Monitor = monitor;
         Rect = rect;
         Composed = composed;
+        // 合成层模式下窗口铺满工作区（透明），选中的缩略图松手后才能飞出横带、飞回窗口原位
+        WindowRect = composed ? monitor.WorkArea : rect;
+        var w = WindowRect;
         Create("GlideShell.Switcher", User32.WS_POPUP,
             User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U | 0x20 /* WS_EX_TRANSPARENT：鼠标穿透 */ |
             (composed ? 0x00200000u /* WS_EX_NOREDIRECTIONBITMAP */ : 0),
-            (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height);
+            (int)w.Left, (int)w.Top, (int)w.Width, (int)w.Height);
         if (composed) return;
 
         int round = Dwmapi.DWMWCP_ROUND, dark = 1;
@@ -345,7 +364,11 @@ internal sealed unsafe class SwitcherBand : NativeWindow
 
     public MonitorInfo Monitor { get; }
 
+    /// <summary>横带（面板）在屏幕上的位置。</summary>
     public RectD Rect { get; }
+
+    /// <summary>窗口在屏幕上的位置：合成层模式下是整个工作区，否则就是横带。</summary>
+    public RectD WindowRect { get; }
 
     /// <param name="drawTitle">GDI 画选中项标题（合成层画标题时为 false）。</param>
     public void SetScene(SwitcherScene scene, bool drawTitle = true)
@@ -363,8 +386,8 @@ internal sealed unsafe class SwitcherBand : NativeWindow
         User32.InvalidateRect(Handle, null, 1);
     }
 
-    public void ShowBand() => User32.SetWindowPos(Handle, User32.HWND_TOPMOST, (int)Rect.Left, (int)Rect.Top, (int)Rect.Width, (int)Rect.Height,
-        User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
+    public void ShowBand() => User32.SetWindowPos(Handle, User32.HWND_TOPMOST, (int)WindowRect.Left, (int)WindowRect.Top, (int)WindowRect.Width,
+        (int)WindowRect.Height, User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
 
     public void HideBand() => User32.ShowWindow(Handle, User32.SW_HIDE);
 
@@ -397,8 +420,8 @@ internal sealed unsafe class SwitcherBand : NativeWindow
             var label = _scene.Layout.LabelRect(Monitor.DpiScale);
             var r = new User32.RECT
             {
-                Left = (int)(label.Left - Rect.Left), Top = (int)(label.Top - Rect.Top),
-                Right = (int)(label.Right - Rect.Left), Bottom = (int)(label.Bottom - Rect.Top),
+                Left = (int)(label.Left - WindowRect.Left), Top = (int)(label.Top - WindowRect.Top),
+                Right = (int)(label.Right - WindowRect.Left), Bottom = (int)(label.Bottom - WindowRect.Top),
             };
             nint font = Gdi32.CreateFontW(-(int)Math.Round(16 * Monitor.DpiScale), 0, 0, 0, Gdi32.FW_NORMAL, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
             nint oldFont = Gdi32.SelectObject(hdc, font);

@@ -40,7 +40,8 @@ internal sealed unsafe class SwitcherDecor
     private readonly DecorResources _res;
     private readonly OverlayComposition _branch;
     private readonly MonitorInfo _monitor;
-    private readonly RectD _origin;
+    private readonly RectD _origin; // 横带窗口在屏幕上的位置（视觉坐标相对它）
+    private readonly RectD _band; // 横带（面板）在屏幕上的位置
     private readonly Dictionary<long, Label> _cache = []; // UI 线程，按窗口缓存
     private volatile Label?[] _labels = [];
     private volatile SwitcherScene _scene = SwitcherScene.Empty;
@@ -52,8 +53,11 @@ internal sealed unsafe class SwitcherDecor
     /// <param name="origin">横带在屏幕上的位置（视觉坐标相对它）。</param>
     /// <param name="cardRadiusDip">窗口原尺寸下的圆角（DIP）：缩略图按自己的缩放缩小它，选中框与之同心。</param>
     /// <param name="panelBranch">缩略图下面的一支：烟灰面板。</param>
-    public SwitcherDecor(DecorResources res, OverlayComposition branch, OverlayComposition panelBranch, MonitorInfo monitor, RectD origin, double cardRadiusDip)
+    /// <param name="band">横带（面板）在屏幕上的位置。</param>
+    public SwitcherDecor(DecorResources res, OverlayComposition branch, OverlayComposition panelBranch, MonitorInfo monitor, RectD origin, RectD band,
+        double cardRadiusDip)
     {
+        _band = band;
         _res = res;
         _branch = branch;
         _panelBranch = panelBranch;
@@ -146,7 +150,9 @@ internal sealed unsafe class SwitcherDecor
         var layout = scene.Layout;
         int n = Math.Min(labels.Length, scene.Count);
         if (n == 0) return;
-        double dpi = Dpi, p = frame.Position, appear = Math.Clamp(frame.Appear, 0, 1);
+        double dpi = Dpi, p = frame.Position;
+        // 松手后选中的缩略图飞回窗口原位：面板、选中框、标题随之淡出
+        double appear = Math.Clamp(frame.Appear, 0, 1) * (frame.LaunchIndex >= 0 ? 1 - OverviewVisuals.SmoothStep(0, 0.6, frame.Launch) : 1);
         lock (_res.Backend.Gate)
         {
             // 选中框：在 p 两侧的两项之间插值（两端橡皮筋时停在首 / 末项）
@@ -156,7 +162,7 @@ internal sealed unsafe class SwitcherDecor
             var rect = RectD.Lerp(layout.ItemRect(f, p), layout.ItemRect(g, p), c - f);
             double out_ = (RingGapDip + RingStrokeDip) * dpi;
             _ring?.Place(rect.Offset(-_origin.Left, -_origin.Top).Inflate(out_, out_), appear);
-            var band = new RectD(0, 0, _origin.Width, _origin.Height);
+            var band = _band.Offset(-_origin.Left, -_origin.Top);
             _panel?.Place(band, appear);
             _panelEdge?.Place(band, appear);
 

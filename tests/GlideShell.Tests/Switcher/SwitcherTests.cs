@@ -104,10 +104,30 @@ public class SwitcherControllerTests
         var (c, host) = Create();
         long end = Swipe(c, dx: -42, releaseVelocity: 0, start: 0); // 2.1 个窗口
 
-        var f = c.Sample(end + 5_000_000);
-        Assert.Equal(2, f.Position);
-        Assert.Equal("Hide:102", host.Calls[^1]);
+        var mid = c.Sample(end + 80_000);
+        Assert.Equal(2, mid.LaunchIndex); // 松手就开始飞回窗口原位（与吸附同时），还没切换
+        Assert.InRange(mid.Launch, 0.05, 0.99);
+        Assert.Equal(new[] { "Prewarm", "Show" }, host.Calls);
+
+        var last = c.Sample(end + 5_000_000);
+        Assert.Equal(2, last.Position);
+        Assert.Equal(1, last.Launch, 6); // 落定这一帧仍按飞回终点画
+        Assert.True(last.Visible);
         Assert.Equal(new[] { "Prewarm", "Show", "Hide:102" }, host.Calls);
+    }
+
+    [Fact]
+    public void A_new_swipe_during_launch_takes_over_from_the_current_position()
+    {
+        var (c, host) = Create();
+        long end = Swipe(c, dx: -42, releaseVelocity: 0, start: 0);
+        c.Sample(end + 50_000); // 飞回途中
+        c.Begin(Ev(GesturePhase.Began, 0, 0, end + 60_000));
+        var f = c.Sample(end + 70_000);
+        Assert.Equal(-1, f.LaunchIndex);
+        Assert.Equal(0, f.Launch);
+        Assert.InRange(f.Position, 1.5, 2.2);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("Hide"));
     }
 
     [Fact]
@@ -117,6 +137,7 @@ public class SwitcherControllerTests
         long end = Swipe(c, dx: -6, releaseVelocity: 0, start: 0);
 
         c.Sample(end + 5_000_000);
+        c.Sample(end + 10_000_000);
         Assert.Equal("Hide:-", host.Calls[^1]);
     }
 
@@ -127,6 +148,7 @@ public class SwitcherControllerTests
         long end = Swipe(c, dx: -10, releaseVelocity: -400, start: 0); // 投影 0.5 + 20 × 0.499 ≫ 2
 
         c.Sample(end + 5_000_000);
+        c.Sample(end + 10_000_000);
         Assert.Equal("Hide:102", host.Calls[^1]);
     }
 
@@ -165,6 +187,7 @@ public class SwitcherControllerTests
         c.End(Ev(GesturePhase.Cancelled, -60, -300, 20_000));
 
         c.Sample(5_000_000);
+        c.Sample(10_000_000);
         Assert.Equal("Hide:-", host.Calls[^1]);
     }
 }
