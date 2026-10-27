@@ -41,6 +41,8 @@ internal sealed class AppHost
     private UiThread _ui = null!;
     private TrayIcon? _tray;
     private HotKeys? _hotkeys;
+    private DesktopHotkeys? _desktopKeys;
+    private HotCornerWatcher? _hotCorners;
     private ForegroundMonitor? _foreground;
     private PtpInputThread? _input;
     private GestureRouter _router = null!;
@@ -76,6 +78,7 @@ internal sealed class AppHost
         _presenter = new OverviewPresenter(_ui, () => _config.Overview, _sharedThumbnails, _virtualDesktops);
         _overview = new OverviewController(_presenter, () => _config.Overview);
         _presenter.Attach(_overview);
+        _overview.DesktopShown = _presenter.DesktopShownNow;
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
         _switcherPresenter = new SwitcherPresenter(_ui);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
@@ -113,6 +116,8 @@ internal sealed class AppHost
         _hotkeys = new HotKeys(_ui);
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
+        _desktopKeys = new DesktopHotkeys(OnDesktopKey);
+        _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
         WatchConfig();
         _presenter.WarmUp();
         if (_simulate is not null) StartSimulation(_simulate);
@@ -136,6 +141,7 @@ internal sealed class AppHost
         GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled =>
             _overview.IsVisible && _overview.Desktops.Count >= 2 ? _overview.DesktopSwipe : _desktopSwitch,
         GestureAction.Drag => _drag,
+        GestureAction.ShowDesktop => _overview.DesktopGesture,
         _ => null,
     };
 
@@ -212,6 +218,9 @@ internal sealed class AppHost
         bool holdPage = name == "overview-hold-page";
         // app-hold：收起态三指下滑打开应用窗口视图，停 12 秒
         bool appHold = name == "app-hold";
+        // show-desktop-cycle：四指下滑显示桌面，3 秒后四指上滑拉回
+        bool desktopCycle = name == "show-desktop-cycle";
+        if (desktopCycle) name = "show-desktop";
         int linger = name is "overview-hold" or "overview-hold-page" or "app-hold" ? 12000 : 1500;
         if (appHold) name = "overview-close";
         if (bar || name is "overview-hold" or "overview-hold-page") name = "overview";
@@ -245,6 +254,13 @@ internal sealed class AppHost
                     Log.Info("模拟：三指下滑收起回放完毕");
                 }
             }
+            if (desktopCycle)
+            {
+                Thread.Sleep(3000);
+                Replay("restore-desktop");
+                Log.Info("模拟：四指上滑拉回回放完毕");
+                Thread.Sleep(1500);
+            }
             if (holdPage)
             {
                 Thread.Sleep(5000);
@@ -269,6 +285,48 @@ internal sealed class AppHost
             _ui.Quit();
         }) { IsBackground = true, Name = "GlideShell.Simulate" };
         thread.Start();
+    }
+
+    // ---------- 键盘与触发角 ----------
+
+    /// <summary>
+    /// Ctrl+Win+←/→（UI 线程，键盘钩子里）：返回 true 表示由 GlideShell 处理、吞掉按键。
+    /// 总览展开时在总览里翻页（不让系统在覆盖层下面切走）；否则用跟手切桌面的覆盖层与弹簧切过去。
+    /// </summary>
+    private bool OnDesktopKey(int direction)
+    {
+        var cfg = _config;
+        if (!_virtualDesktops.Available || !cfg.Desktops.Enabled || !cfg.Desktops.TakeOverHotkeys || Suppressed()) return false;
+        long now = HostClock.NowUs();
+        if (_overview.IsVisible)
+        {
+            _overview.StepPage(direction, now);
+            return true;
+        }
+        if (_switcher.IsVisible) return true;
+        _desktopSwitch.Step(direction, now);
+        return true;
+    }
+
+    /// <summary>触发角（UI 线程）：暂停、排除的程序在前台、全屏时不触发。</summary>
+    private void OnHotCorner(HotCornerAction action)
+    {
+        if (Suppressed() || _switcher.IsVisible || _desktopSwitch.IsVisible) return;
+        long now = HostClock.NowUs();
+        Log.Info($"触发角：{SettingsModel.HotCornerLabel(action)}");
+        switch (action)
+        {
+            case HotCornerAction.Overview:
+                _overview.Toggle(now);
+                break;
+            case HotCornerAction.AppWindows:
+                if (_overview.IsVisible) _overview.Close(null, now);
+                else _overview.Open(now, OverviewMode.App);
+                break;
+            case HotCornerAction.ShowDesktop:
+                _overview.ToggleDesktop(now);
+                break;
+        }
     }
 
     // ---------- 系统手势 ----------
@@ -427,6 +485,7 @@ internal sealed class AppHost
         bool mapChanged = !map.Bindings.SequenceEqual(_activeMap.Bindings);
         _activeMap = map;
         if (!_paused && mapChanged) TakeOverNativeGestures();
+        _hotCorners?.Refresh();
         Log.Info("配置已重载");
     }
 
@@ -557,6 +616,8 @@ internal sealed class AppHost
     {
         Log.Info("正在退出");
         _configWatcher?.Dispose();
+        _desktopKeys?.Dispose();
+        _hotCorners?.Dispose();
         _input?.Dispose();
         _presenter.Dispose();
         _switcherPresenter.Dispose();

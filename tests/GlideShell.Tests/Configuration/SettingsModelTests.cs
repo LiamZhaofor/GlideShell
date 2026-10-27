@@ -13,7 +13,7 @@ public class SettingsModelTests
         var config = new GlideShellConfig();
         var model = SettingsModel.FromConfig(config);
 
-        Assert.Equal(new[] { GestureAction.Overview, GestureAction.SwitchWindows, GestureAction.None, GestureAction.SwitchDesktops }, model.Actions);
+        Assert.Equal(new[] { GestureAction.Overview, GestureAction.SwitchWindows, GestureAction.ShowDesktop, GestureAction.SwitchDesktops }, model.Actions);
         Assert.Same(SensitivityPreset.All[1], model.Preset);
 
         var (saved, problems) = model.ApplyTo(config);

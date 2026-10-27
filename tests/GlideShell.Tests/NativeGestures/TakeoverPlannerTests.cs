@@ -23,7 +23,7 @@ public class TakeoverPlannerTests
     }
 
     [Fact]
-    public void Default_map_takes_over_all_three_finger_and_four_finger_horizontal_gestures()
+    public void Default_map_takes_over_all_three_and_four_finger_swipes()
     {
         var (changes, warnings) = TakeoverPlanner.Plan(GestureMap.Default, Reg(ThisMachine));
         var after = Apply(ThisMachine, changes);
@@ -34,9 +34,9 @@ public class TakeoverPlannerTests
         Assert.Equal(0xFFFF, after["FourFingerSlideEnabled"]);
         Assert.Equal(0, after["FourFingerLeft"]);
         Assert.Equal(0, after["FourFingerRight"]);
-        // 四指上下没被绑定：保持「切换桌面」预设下的原效果（上 = 任务视图，下 = 显示桌面）
-        Assert.Equal(2, after["FourFingerUp"]);
-        Assert.Equal(3, after["FourFingerDown"]);
+        // 四指上下绑定了显示桌面：系统的任务视图 / 显示桌面也关掉
+        Assert.Equal(0, after["FourFingerUp"]);
+        Assert.Equal(0, after["FourFingerDown"]);
     }
 
     [Fact]

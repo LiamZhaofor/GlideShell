@@ -58,6 +58,10 @@ public sealed record SettingsModel
     public double DragPixelsPerMm { get; init; }
     public double DragAcceleration { get; init; }
     public required IReadOnlyList<string> ExcludedProcesses { get; init; }
+    public bool GroupByApp { get; init; }
+    public bool AppWindows { get; init; }
+    public bool TakeOverDesktopHotkeys { get; init; }
+    public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
 
     /// <summary>开机启动不在配置文件里（是注册表 Run 项），由宿主读写。</summary>
     public bool Autostart { get; init; }
@@ -68,15 +72,36 @@ public sealed record SettingsModel
         GestureAction.SwitchWindows => "切换窗口",
         GestureAction.SwitchDesktops => "切换虚拟桌面",
         GestureAction.Drag => "三指拖移",
+        GestureAction.ShowDesktop => "显示桌面（上滑总览）",
         _ => "系统默认（不接管）",
     };
 
     /// <summary>某个位置可选的动作。开启三指拖移后三指两个方向固定为拖移。</summary>
+    public static string HotCornerLabel(HotCornerAction action) => action switch
+    {
+        HotCornerAction.Overview => "窗口总览",
+        HotCornerAction.AppWindows => "应用窗口",
+        HotCornerAction.ShowDesktop => "显示桌面",
+        _ => "无",
+    };
+
+    public static IReadOnlyList<HotCornerAction> HotCornerChoices { get; } =
+        [HotCornerAction.None, HotCornerAction.Overview, HotCornerAction.AppWindows, HotCornerAction.ShowDesktop];
+
+    public static IReadOnlyList<string> HotCornerNames { get; } = ["左上角", "右上角", "左下角", "右下角"];
+
+    public SettingsModel WithHotCorner(int corner, HotCornerAction action)
+    {
+        var corners = (HotCornerAction[])HotCorners.Clone();
+        corners[corner] = action;
+        return this with { HotCorners = corners };
+    }
+
     public static IReadOnlyList<GestureAction> Choices(GestureSlot slot, bool threeFingerDrag)
     {
         if (threeFingerDrag && slot.Fingers == 3) return [GestureAction.Drag];
         return slot.Axis == GestureAxis.Vertical
-            ? [GestureAction.None, GestureAction.Overview]
+            ? [GestureAction.None, GestureAction.Overview, GestureAction.ShowDesktop]
             : [GestureAction.None, GestureAction.Overview, GestureAction.SwitchWindows, GestureAction.SwitchDesktops];
     }
 
@@ -100,6 +125,10 @@ public sealed record SettingsModel
             DragAcceleration = c.Drag.Acceleration,
             ExcludedProcesses = [.. c.ExcludedProcesses],
             Autostart = autostart,
+            GroupByApp = c.Overview.GroupByApp,
+            AppWindows = c.Overview.AppWindows,
+            TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
+            HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
         };
     }
 
@@ -115,8 +144,8 @@ public sealed record SettingsModel
     }
 
     /// <summary>
-    /// 切换三指拖移（macOS 同款取舍）：开启时三指两个方向都给拖移，原来三指上下的总览挪到空着的四指上下；
-    /// 关闭时三指恢复为默认的总览 / 切换窗口。
+    /// 切换三指拖移（macOS 同款取舍）：开启时三指两个方向都给拖移，原来三指上下的总览挪到四指上下（替掉显示桌面）；
+    /// 关闭时三指恢复为默认的总览 / 切换窗口，四指上下恢复为显示桌面。
     /// </summary>
     public SettingsModel WithThreeFingerDrag(bool on)
     {
@@ -125,13 +154,15 @@ public sealed record SettingsModel
         int v3 = IndexOf(3, GestureAxis.Vertical), h3 = IndexOf(3, GestureAxis.Horizontal), v4 = IndexOf(4, GestureAxis.Vertical);
         if (on)
         {
-            if (actions[v3] == GestureAction.Overview && actions[v4] == GestureAction.None) actions[v4] = GestureAction.Overview;
+            // 四指上下默认是显示桌面（上滑也能打开总览）：让给总览
+            if (actions[v3] == GestureAction.Overview && actions[v4] is GestureAction.None or GestureAction.ShowDesktop) actions[v4] = GestureAction.Overview;
             actions[v3] = actions[h3] = GestureAction.Drag;
         }
         else
         {
             actions[v3] = GestureAction.Overview;
             actions[h3] = GestureAction.SwitchWindows;
+            if (actions[v4] == GestureAction.Overview) actions[v4] = GestureAction.ShowDesktop;
         }
         return this with { ThreeFingerDrag = on, Actions = actions };
     }
@@ -168,10 +199,14 @@ public sealed record SettingsModel
             ThreeFingerDrag = ThreeFingerDrag,
             PauseInFullscreen = PauseInFullscreen,
             Recognition = c.Recognition with { SlopMm = SlopMm, TapMaxMoveMm = Math.Min(c.Recognition.TapMaxMoveMm, SlopMm) },
-            Overview = c.Overview with { TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails },
+            Overview = c.Overview with
+            {
+                TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails, GroupByApp = GroupByApp, AppWindows = AppWindows,
+            },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow },
             // 界面用「系统默认」表达不接管切桌面，旧的 Enabled 开关统一置为 true，免得两处说法不一致
-            Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true },
+            Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true, TakeOverHotkeys = TakeOverDesktopHotkeys },
+            HotCorners = c.HotCorners with { TopLeft = HotCorners[0], TopRight = HotCorners[1], BottomLeft = HotCorners[2], BottomRight = HotCorners[3] },
             Drag = c.Drag with { PixelsPerMm = DragPixelsPerMm, Acceleration = DragAcceleration },
             ExcludedProcesses = [.. ExcludedProcesses],
         };

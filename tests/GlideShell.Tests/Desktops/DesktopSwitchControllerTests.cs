@@ -41,6 +41,28 @@ public class DesktopSwitchControllerTests
     }
 
     [Fact]
+    public void Keyboard_step_waits_for_the_neighbors_then_commits_and_slides()
+    {
+        var host = new FakeHost();
+        var c = new DesktopSwitchController(host, () => new DesktopConfig { TravelMm = Travel });
+        c.Step(1, 0);
+        Assert.Equal(new[] { "Prewarm", "Show" }, host.Calls);
+        Assert.True(c.IsVisible);
+        c.SetNeighbors(true, true, 10_000); // 宿主预热读到相邻桌面
+        Assert.Equal("Commit:1", host.Calls[^1]);
+        Assert.InRange(c.Sample(100_000).Position, 0.05, 1);
+        c.Step(1, 120_000); // 动画中又按了一次：落定后接着切
+        c.Sample(3_000_000);
+        Assert.Contains("Hide:1", host.Calls);
+        Assert.Equal("Show", host.Calls[^1]); // 接着下一次
+        c.SetNeighbors(true, false, 3_100_000); // 右边没有了：弹一下就收
+        Assert.DoesNotContain("Commit:1", host.Calls.Skip(host.Calls.IndexOf("Hide:1")));
+        c.Sample(6_000_000);
+        Assert.Equal("Hide:0", host.Calls[^1]);
+        Assert.False(c.IsVisible);
+    }
+
+    [Fact]
     public void Fingers_left_slide_the_right_desktop_in_one_to_one()
     {
         var (c, _) = Create();

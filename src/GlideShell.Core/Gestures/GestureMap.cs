@@ -16,6 +16,12 @@ public enum GestureAction
 
     /// <summary>三指拖移：按住左键拖动（三指拖移模式下三指的两个轴都绑定它）。</summary>
     Drag,
+
+    /// <summary>
+    /// 显示桌面（竖直轴）：下滑把窗口跟手推出屏幕、落定后最小化；桌面已显示时上滑把它们拉回来，
+    /// 否则上滑打开窗口总览（macOS 四指上滑 = 调度中心）。
+    /// </summary>
+    ShowDesktop,
 }
 
 /// <summary>一条绑定：几根手指、沿哪个轴 → 哪个动作。</summary>
@@ -24,11 +30,12 @@ public sealed record GestureBinding(int Fingers, GestureAxis Axis, GestureAction
 /// <summary>手势映射表。同一（指数，轴）只能绑定一个动作。</summary>
 public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
 {
-    /// <summary>默认：三指上下 = 总览，三指左右 = 切换窗口，四指左右 = 切换桌面。</summary>
+    /// <summary>默认：三指上下 = 总览，三指左右 = 切换窗口，四指上下 = 显示桌面，四指左右 = 切换桌面。</summary>
     public static GestureMap Default { get; } = new(
     [
         new(3, GestureAxis.Vertical, GestureAction.Overview),
         new(3, GestureAxis.Horizontal, GestureAction.SwitchWindows),
+        new(4, GestureAxis.Vertical, GestureAction.ShowDesktop),
         new(4, GestureAxis.Horizontal, GestureAction.SwitchDesktops),
     ]);
 
@@ -71,6 +78,8 @@ public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
         // 切换窗口 / 桌面是横向排列的，只跟随左右位移
         foreach (var b in Bindings.Where(b => b.Action is GestureAction.SwitchWindows or GestureAction.SwitchDesktops && b.Axis == GestureAxis.Vertical))
             problems.Add($"{b.Action} 只支持左右滑动（现在绑在了 {b.Fingers} 指上下）");
+        foreach (var b in Bindings.Where(b => b.Action == GestureAction.ShowDesktop && b.Axis == GestureAxis.Horizontal))
+            problems.Add($"{b.Action} 只支持上下滑动（现在绑在了 {b.Fingers} 指左右）");
         return problems;
     }
 

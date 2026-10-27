@@ -43,7 +43,40 @@ public static unsafe partial class WindowActivator
         }
     }
 
+    /// <summary>
+    /// 显示桌面：异步最小化（不激活别的窗口），先关掉它的 DWM 过渡动画——覆盖层下面不需要「缩到任务栏」的动画，
+    /// 而任务栏不在覆盖层下面，动画会露出来。动画开关之后用 <see cref="EnableTransitions"/> 恢复。
+    /// </summary>
+    public static void MinimizeQuietly(nint hwnd)
+    {
+        if (hwnd == 0 || !User32.IsWindow(hwnd)) return;
+        int disable = 1;
+        Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disable, sizeof(int));
+        ShowWindowAsync(hwnd, 7 /* SW_SHOWMINNOACTIVE */);
+    }
+
+    /// <summary>显示桌面后拉回：异步还原（会激活它，从下往上依次还原，最后一个就在最上层），同样先关掉过渡动画。</summary>
+    public static void RestoreQuietly(nint hwnd)
+    {
+        if (hwnd == 0 || !User32.IsWindow(hwnd) || !User32.IsIconic(hwnd)) return;
+        int disable = 1;
+        Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disable, sizeof(int));
+        ShowWindowAsync(hwnd, User32.SW_RESTORE);
+    }
+
+    /// <summary>恢复 <see cref="MinimizeQuietly"/> / <see cref="RestoreQuietly"/> 关掉的过渡动画。</summary>
+    public static void EnableTransitions(nint hwnd)
+    {
+        if (hwnd == 0 || !User32.IsWindow(hwnd)) return;
+        int enable = 0;
+        Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &enable, sizeof(int));
+    }
+
     private const uint DWMWA_TRANSITIONS_FORCEDISABLED = 3;
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool ShowWindowAsync(nint hwnd, int command);
 
     [System.Runtime.InteropServices.LibraryImport("kernel32.dll")]
     private static partial uint GetCurrentThreadId();

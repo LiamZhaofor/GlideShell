@@ -55,6 +55,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     }
     private Guid? _switchTarget; // UI 线程：点了桌面条上的别的桌面，已经在下面切过去
     private Guid? _switchPrevious;
+    private Guid? _removeOnSwitch; // UI 线程：删的是当前桌面——放大进入相邻桌面时由删除来切换（系统删当前桌面会自己切过去）
     private long _switchStartedMs;
     private DesktopBarHit _barHovered = DesktopBarHit.Nothing; // UI 线程
     private volatile bool _barShown; // 渲染线程决定、UI 线程重绘用
@@ -69,6 +70,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private Task<Guid?>? _dropMove; // 已放到别的桌面：移动窗口（新建桌面时先建）的任务，结果是目标桌面
     private readonly HashSet<long> _moved = []; // 本次会话移到别的桌面的窗口
     private bool _renderDragging; // 渲染线程：上一帧有拖动 / 放下中的窗口
+
+    // 显示桌面
+    private volatile nint[] _desktopHidden = []; // 上次显示桌面最小化的窗口（Z 序，最上层在前）
+    private bool _desktopPullBack; // UI 线程：本次会话是把窗口拉回来（从进度 1 开始）
+    private nint[] _desktopRestoring = []; // UI 线程：收起时正在还原的窗口
 
     /// <param name="desktops">虚拟桌面服务；为 null 或自检不通过时没有桌面条。</param>
     public OverviewPresenter(UiThread ui, Func<OverviewConfig> config, SharedThumbnailSource shared, VirtualDesktopService? desktops = null)
@@ -101,6 +107,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         if (!_prepared) PrepareScene();
         if (Controller.Mode == OverviewMode.App) FocusApp();
+        else if (Controller.Mode == OverviewMode.Desktop) FocusDesktop();
         // 先在 UI 线程把第一帧摆好再显示覆盖层：否则显示出来的第一帧是还没定位缩略图的黑底，看起来像闪屏
         ApplyFrame(Controller.ProgressAt(HostClock.NowUs()));
         foreach (var o in _overlays)
@@ -114,6 +121,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
     public void Activate() => _ui.Post(() =>
     {
+        if (Controller.Mode == OverviewMode.Desktop)
+        {
+            CommitDesktop();
+            return;
+        }
         _keys.Install();
         Log.Info($"{(Controller.Mode == OverviewMode.App ? "应用窗口视图" : "总览")}展开（{(HostClock.NowUs() - _sessionStartUs) / 1000.0:F0}ms），{Controller.Scene.PresentCount} 个窗口");
     });
@@ -121,6 +133,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     /// <summary>收起已经确定（输入线程 / UI 线程）：趁收起动画还在播，在覆盖层下面把选中的窗口提到最上层并切到前台。</summary>
     public void Closing(long? focusWindowId) => _ui.Post(() =>
     {
+        if (_shown && Controller.Mode == OverviewMode.Desktop)
+        {
+            if (_desktopPullBack) RestoreDesktopWindows();
+            return;
+        }
         if (focusWindowId is not { } id || !_shown) return;
         RaiseForDismiss(id);
         if (_activatedId == id) return;
@@ -133,6 +150,15 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _keys.Uninstall();
         EndPress();
         if (_overlays.Any(o => o.Handle == User32.GetCapture())) User32.ReleaseCapture();
+        if (_desktopRestoring.Length > 0)
+        {
+            // 显示桌面后拉回：等窗口都还原到位再撤层（还原是异步的）
+            var restoring = _desktopRestoring;
+            _desktopRestoring = [];
+            long until = Environment.TickCount64 + 600;
+            while (Environment.TickCount64 < until && restoring.Any(h => User32.IsWindow(h) && User32.IsIconic(h))) Dwmapi.DwmFlush();
+            foreach (var h in restoring) WindowActivator.EnableTransitions(h);
+        }
         // 前台窗口被拖到了别的桌面：焦点交给本桌面剩下最上层的窗口（否则还留在那个看不见的窗口里）
         if (focusWindowId is null && _pageTarget is null && _switchTarget is null && _moved.Contains(User32.GetForegroundWindow()) &&
             _barState.Current is { } here)
@@ -214,6 +240,18 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _switchStartedMs = Environment.TickCount64;
         foreach (var o in _overlays) o.BeginZoom(desktopIndex);
         Select(-1);
+        if (_removeOnSwitch is { } removed)
+        {
+            // 删当前桌面：它的窗口并入目标桌面、系统随即切过去。那些窗口的桌面号已过时，不按它们等 cloak
+            _removeOnSwitch = null;
+            _switchPrevious = null;
+            _ = _desktops.RemoveDesktopAsync(removed, target).ContinueWith(t =>
+            {
+                if (t.Result < 0) Log.Warn($"总览桌面条：删除当前桌面失败 0x{t.Result:X8}");
+            }, TaskScheduler.Default);
+            Log.Info($"总览桌面条：删除当前桌面，并入桌面 {desktopIndex + 1}「{_barState.Names[desktopIndex]}」");
+            return;
+        }
         _ = _desktops.SwitchToAsync(target).ContinueWith(t =>
         {
             if (t.Result < 0) Log.Warn($"总览桌面条：切换桌面失败 0x{t.Result:X8}");
@@ -297,7 +335,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         bool bar = desktops.Count >= 2 && desktops.CurrentIndex >= 0;
         var bars = monitors.Select(m => bar ? DesktopBarGeometry.Compute(m.WorkArea, desktops.Count, m.DpiScale) : null).ToList();
         var areas = monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, bars[m.Index])).ToList();
-        var scene = OverviewScene.Build(windows, areas, cfg.PrimaryMonitorOnly, primary);
+        var scene = OverviewScene.Build(windows, areas, cfg.PrimaryMonitorOnly, primary, groupByApp: cfg.GroupByApp);
         if (scene.Count > _rects.Length)
         {
             _rects = new RectD[scene.Count];
@@ -370,6 +408,95 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     }
 
     /// <summary>
+    /// 显示桌面：此刻桌面是否处于「显示桌面」状态——上次最小化的窗口都还最小化着，而且前台是桌面（用户没有又打开别的窗口）。
+    /// 输入线程调用（四指上滑开始时），只读几个窗口状态。
+    /// </summary>
+    public bool DesktopShownNow()
+    {
+        var hidden = _desktopHidden;
+        if (hidden.Length == 0) return false;
+        bool any = false;
+        foreach (var h in hidden)
+        {
+            if (!User32.IsWindow(h)) continue;
+            if (!User32.IsIconic(h)) return false;
+            any = true;
+        }
+        return any && IsDesktopForeground();
+    }
+
+    private static bool IsDesktopForeground()
+    {
+        nint fg = User32.GetForegroundWindow();
+        return fg == 0 || WindowCatalog.ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+    }
+
+    /// <summary>
+    /// 显示桌面：在预热好的场景上把每个窗口的「平铺位」设成推出屏幕的位置（<see cref="OverviewScene.PushAside"/>），
+    /// 没有桌面条、不分页、背景不变暗。拉回时上次最小化的那些窗口按没最小化处理（从屏幕外滑回原位）。
+    /// </summary>
+    private void FocusDesktop()
+    {
+        _desktopPullBack = Controller.ProgressAt(HostClock.NowUs()) > 0.5;
+        var hidden = _desktopPullBack ? _desktopHidden.Select(h => (long)h).ToHashSet() : [];
+        var scene = Controller.Scene;
+        var windows = scene.Windows.Select(w => hidden.Contains(w.Id) ? w with { IsMinimized = false } : w).ToList();
+        var cfg = _config();
+        var monitors = _overlays.Select(o => o.Monitor).ToList();
+        int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
+        var areas = monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale)).ToList();
+        var desk = OverviewScene.Build(windows, areas, cfg.PrimaryMonitorOnly, primary).PushAside(areas);
+        Controller.SetScene(desk);
+        Controller.SetDesktops(DesktopBarState.Empty);
+        _pageBuffers = null;
+        _barState = DesktopState.Empty;
+        nint foreground = User32.GetForegroundWindow();
+        foreach (var o in _overlays)
+        {
+            o.ClearPages();
+            o.ReplaceScene(-1, desk);
+            o.PrepareBar(null, DesktopState.Empty, [], foreground);
+        }
+        Log.Info($"显示桌面：{(_desktopPullBack ? "拉回" : "推开")} {desk.PresentCount} 个窗口");
+    }
+
+    /// <summary>
+    /// 显示桌面落定（进度 1）：推开的会话把窗口真正最小化（不播系统动画），等它们都最小化了、焦点交给桌面，再撤层；
+    /// 拉回的会话被弹回到 1（没拉过一半）：窗口本来就还最小化着，直接撤层。最后一帧就是壁纸 + 桌面图标，撤层无跳变。
+    /// </summary>
+    private void CommitDesktop()
+    {
+        if (!_shown) return;
+        if (!_desktopPullBack)
+        {
+            var scene = Controller.Scene;
+            var hide = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).Select(i => (nint)scene.Windows[i].Id).ToArray();
+            foreach (var h in hide) WindowActivator.MinimizeQuietly(h);
+            long until = Environment.TickCount64 + 600;
+            while (Environment.TickCount64 < until && hide.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
+            foreach (var h in hide) WindowActivator.EnableTransitions(h);
+            nint progman = User32.FindWindowW("Progman", null);
+            if (progman != 0) WindowActivator.Activate(progman);
+            _desktopHidden = hide;
+        }
+        foreach (var o in _overlays) o.HideOverlay();
+        _shown = false;
+        ReleaseScene();
+        Controller.EndDesktop();
+        Log.Info(_desktopPullBack ? "显示桌面：没有拉回，桌面仍显示" : $"显示桌面：已最小化 {_desktopHidden.Length} 个窗口");
+    }
+
+    /// <summary>显示桌面后拉回（松手决定收起、或触发角）：趁动画还在播，从下往上依次还原，最上层的最后还原、成为前台。</summary>
+    private void RestoreDesktopWindows()
+    {
+        var hidden = _desktopHidden;
+        _desktopHidden = [];
+        for (int i = hidden.Length - 1; i >= 0; i--) WindowActivator.RestoreQuietly(hidden[i]);
+        _desktopRestoring = hidden;
+        Log.Info($"显示桌面：还原 {hidden.Length} 个窗口");
+    }
+
+    /// <summary>
     /// 每个桌面排一页（总览里四指横滑翻页用）：<paramref name="home"/> 那一页就是 <paramref name="homeScene"/>（已注册、带壁纸），
     /// 其余桌面用跨桌面枚举到的窗口排版。各桌面最上层的窗口标成前台：换到那一页再收起时它会被激活，活动阴影要画在它身上。
     /// 任一块屏准备失败就不分页（四指横滑不接管）。
@@ -388,7 +515,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             int top = mine.FindIndex(w => !w.IsMinimized);
             for (int i = 0; i < mine.Count; i++)
                 if (mine[i].IsForeground != (i == top)) mine[i] = mine[i] with { IsForeground = i == top };
-            scenes[d] = OverviewScene.Build(mine, areas, primaryOnly, primary);
+            scenes[d] = OverviewScene.Build(mine, areas, primaryOnly, primary, groupByApp: _config().GroupByApp);
         }
         foreach (var o in _overlays)
         {
@@ -417,7 +544,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var active = new double[scene.Count];
         OverviewController.WindowRects(scene, frame, rects, opacity);
         OverviewController.ActiveShadowWeights(scene, frame, active);
-        double wallpaper = 1 - _config().BackdropDim * Math.Clamp(progress, 0, 1);
+        double wallpaper = 1 - BackdropDim * Math.Clamp(progress, 0, 1);
         foreach (var o in _overlays) o.Layer.Apply(rects, opacity, active, wallpaper);
     }
 
@@ -436,6 +563,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _pageBuffers = null;
         _moved.Clear();
         _dropMove = null;
+        _removeOnSwitch = null;
         _dragging = false;
         _press = null;
         Controller.SetHovered(null);
@@ -463,6 +591,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     /// </summary>
     private void OnMouse(OverlayWindow overlay, OverlayMouse kind, double x, double y)
     {
+        if (Controller.Mode == OverviewMode.Desktop) return; // 显示桌面的动画途中不响应鼠标
         switch (kind)
         {
             case OverlayMouse.Down:
@@ -508,6 +637,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private long? PressedWindow(OverlayWindow overlay, double x, double y)
     {
         if (_desktops is not { CanMoveWindows: true } || overlay.Bar is not { } bar || _barState.Count < 2) return null;
+        if (overlay.CloseButtonRect is { } close && CloseButton.Hit(close, x, y)) return null; // 按在关闭按钮上：不拖
         long now = HostClock.NowUs();
         if (bar.Contains(x, y, Controller.BarExpansionAt(now))) return null;
         var scene = Controller.Scene;
@@ -709,6 +839,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 return; // 点在桌面条的空白处：什么也不做
             }
         }
+        if (overlay.CloseButtonRect is { } close && CloseButton.Hit(close, x, y) && _hoveredId is { } hovered)
+        {
+            CloseWindow(hovered);
+            return;
+        }
         var scene = Controller.Scene;
         long hitUs = HostClock.NowUs();
         int index = scene.HitTest(x, y, Controller.ProgressAt(hitUs), Controller.BarExpansionAt(hitUs));
@@ -717,12 +852,42 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Controller.Close(id, HostClock.NowUs());
     }
 
-    /// <summary>桌面条命中：当前桌面不能在这里删（删了系统会立刻切走），它名字右端算作桌面本身。</summary>
-    private DesktopBarHit BarHit(DesktopBarGeometry bar, double x, double y, double expansion)
+    /// <summary>
+    /// 关闭按钮：像点窗口自己的「×」一样发 SC_CLOSE，然后每 50ms 看一次：窗口没了（或隐藏了）就在总览里移走它、其余窗口补位；
+    /// 弹出了确认框（例如「是否保存」），或 1.5 秒后还在，就收起总览并把它切到前台，让用户看到它在问什么。
+    /// </summary>
+    private void CloseWindow(long id)
     {
-        var hit = bar.Hit(x, y, expansion);
-        return hit.Part == DesktopBarPart.Remove && hit.Index == _barState.CurrentIndex ? hit with { Part = DesktopBarPart.Desktop } : hit;
+        nint hwnd = (nint)id;
+        User32.PostMessageW(hwnd, 0x0112 /* WM_SYSCOMMAND */, 0xF060 /* SC_CLOSE */, 0);
+        Log.Info($"总览：关闭窗口 0x{id:X}");
+        Select(-1);
+        WatchClose(id, Environment.TickCount64 + 1500);
     }
+
+    private void WatchClose(long id, long deadline) => _ui.PostDelayed(50, () =>
+    {
+        if (!_shown) return;
+        nint hwnd = (nint)id;
+        if (!User32.IsWindow(hwnd) || !User32.IsWindowVisible(hwnd))
+        {
+            if (Controller.RemoveWindow(id, HostClock.NowUs()) is { } after)
+                foreach (var o in _overlays) o.ReplaceScene(Controller.Page, after);
+            if (Controller.Mode == OverviewMode.All && _barState.Count >= 2) RefreshBarThumbnails();
+            return;
+        }
+        nint popup = User32.GetWindow(hwnd, 6 /* GW_ENABLEDPOPUP */);
+        if ((popup != 0 && popup != hwnd) || Environment.TickCount64 >= deadline)
+        {
+            Log.Info($"总览：窗口 0x{id:X} 没有直接关掉（{(popup != 0 && popup != hwnd ? "弹出了对话框" : "超时")}），收起并切到它");
+            RaiseForDismiss(id);
+            Controller.Close(id, HostClock.NowUs());
+            return;
+        }
+        WatchClose(id, deadline);
+    });
+
+    private static DesktopBarHit BarHit(DesktopBarGeometry bar, double x, double y, double expansion) => bar.Hit(x, y, expansion);
 
     /// <summary>桌面条末尾的「+」：新建桌面（加在最后、不切过去），桌面条随之多一个缩略图。</summary>
     private void AddDesktop()
@@ -735,13 +900,31 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         }, TaskScheduler.Default);
     }
 
-    /// <summary>桌面条上的「×」：删除这个桌面，它的窗口并入左边的桌面（第一个桌面并入右边，与任务视图一致）。</summary>
+    /// <summary>
+    /// 桌面条上的「×」：删除这个桌面，它的窗口并入左边的桌面（第一个桌面并入右边，与任务视图一致）。
+    /// 删的是当前桌面：放大进入并入的那个桌面后收起（系统删当前桌面会切过去）；
+    /// 删的是打开总览时所在的桌面（翻页之后，那一页带着背景壁纸）：删完总览收起到当前桌面。
+    /// </summary>
     private void RemoveDesktop(int index)
     {
-        if (_desktops is null || !_shown || index < 0 || index >= _barState.Count || _barState.Count < 2 || index == _barState.CurrentIndex) return;
-        if (_barState.Desktops[index] == _homeDesktop) return; // 打开总览时所在的桌面（那一页带着背景壁纸）本次不能删
-        Guid target = _barState.Desktops[index], fallback = _barState.Desktops[index > 0 ? index - 1 : index + 1];
+        if (_desktops is null || !_shown || index < 0 || index >= _barState.Count || _barState.Count < 2 || _switchTarget is not null) return;
+        int fallbackIndex = index > 0 ? index - 1 : index + 1;
+        Guid target = _barState.Desktops[index], fallback = _barState.Desktops[fallbackIndex];
         string name = _barState.Names[index];
+        if (index == _barState.CurrentIndex)
+        {
+            _removeOnSwitch = target;
+            Controller.GoToDesktop(fallbackIndex, HostClock.NowUs());
+            return;
+        }
+        if (target == _homeDesktop)
+        {
+            Controller.Close(null, HostClock.NowUs());
+            _ = _desktops.RemoveDesktopAsync(target, fallback).ContinueWith(t =>
+                Log.Info(t.Result < 0 ? $"总览桌面条：删除「{name}」失败 0x{t.Result:X8}" : $"总览桌面条：删除「{name}」（打开总览时所在的桌面，总览收起）"),
+                TaskScheduler.Default);
+            return;
+        }
         _ = _desktops.RemoveDesktopAsync(target, fallback).ContinueWith(t =>
         {
             if (t.Result < 0) Log.Warn($"总览桌面条：删除「{name}」失败 0x{t.Result:X8}");
@@ -784,7 +967,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     /// <summary>按最新的桌面列表与各桌面的窗口重新准备桌面条（缩略图里的窗口跟着变）。桌面不到两个时返回 false。</summary>
     private bool RefreshBarThumbnails()
     {
-        if (!_shown || _desktops is null) return false;
+        if (!_shown || _desktops is null || Controller.Mode != OverviewMode.All) return false;
         var state = _desktops.State;
         if (state.Count < 2 || state.CurrentIndex < 0) return false;
         var monitors = _overlays.Select(o => o.Monitor).ToList();
@@ -884,12 +1067,18 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         var scene = Controller.Scene;
         int hovered = _hoveredId is { } id ? scene.IndexOf(id) : -1;
+        // 关闭按钮跟着标题一起显示（展开落定、桌面条收起、没有在翻页 / 拖动 / 补位），画在悬停窗口的左上角
+        RectD? closeTile = _labelsShown && hovered >= 0 && scene.IsPresent(hovered) ? scene.Tile(hovered, 0) : null;
         foreach (var o in _overlays)
         {
             o.SetDecorations(_labelsShown, hovered);
             o.SetBarDecorations(_barShown, _barExpanded, _barHovered);
+            o.SetCloseButton(closeTile is { } t && o.Monitor.WorkArea.Intersects(t) ? t : null);
         }
     }
+
+    /// <summary>背景变暗的程度：显示桌面时不变暗（要露出的就是桌面本身）。</summary>
+    private double BackdropDim => Controller.Mode == OverviewMode.Desktop ? 0 : _config().BackdropDim;
 
     // ---------- 渲染线程 ----------
 
@@ -924,7 +1113,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 if (k != currentPage && pages[k].Count <= buffers!.Rects[k].Length)
                     OverviewController.PageRects(pages[k], frame, buffers.Rects[k], buffers.Opacity[k], buffers.Active[k]);
 
-        double wallpaper = (1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1)) * (1 - Math.Clamp(frame.Zoom, 0, 1));
+        double wallpaper = (1 - BackdropDim * Math.Clamp(frame.Progress, 0, 1)) * (1 - Math.Clamp(frame.Zoom, 0, 1));
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
@@ -941,7 +1130,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         // 窗口标题与悬停框：展开完成才显示；桌面条展开、翻页（窗口区域在动）或放大进入别的桌面时不显示（GDI 文字跟不上逐帧变化）
         bool steady = frame.ZoomDesktop < 0;
         bool pageSettled = currentPage < 0 || Math.Abs(frame.PagePosition - currentPage) < 0.01; // 翻页途中窗口在横移
-        bool labels = frame.LabelOpacity >= 0.5 && frame.BarExpansion < 0.02 && steady && pageSettled && !frame.Dragging && frame.Relayout >= 0.999;
+        bool labels = frame.LabelOpacity >= 0.5 && frame.BarExpansion < 0.02 && steady && pageSettled && !frame.Dragging && frame.Relayout >= 0.999 &&
+                      controller.Mode != OverviewMode.Desktop;
         if (frame.Dragging != _renderDragging)
         {
             _renderDragging = frame.Dragging;

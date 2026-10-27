@@ -226,6 +226,55 @@ public class WindowDragTests
         Assert.Equal(-1, c.AddToPage(0, c.Scene.Windows[2])); // 当前页不能加
     }
 
+    // ---------- 关闭窗口 ----------
+
+    [Fact]
+    public void Close_button_sits_on_the_top_left_corner_and_is_a_round_dark_disc_with_a_white_cross()
+    {
+        var tile = new RectD(400, 300, 800, 500);
+        var b = CloseButton.Rect(tile, 1.5);
+        Assert.Equal(CloseButton.DiameterDip * 1.5, b.Width, 6);
+        Assert.True(b.Contains(tile.Left + 1, tile.Top + 1)); // 盖着窗口左上角
+        Assert.True(b.Left < tile.Left && b.Top < tile.Top); // 也露出一点在外面
+        Assert.True(CloseButton.Hit(b, b.CenterX, b.CenterY));
+        Assert.False(CloseButton.Hit(b, b.Left + 1, b.Top + 1)); // 外接正方形的角不在圆里
+
+        int size = 39;
+        var px = CloseButton.Render(size);
+        int Alpha(int x, int y) => px[(y * size + x) * 4 + 3];
+        int Red(int x, int y) => px[(y * size + x) * 4 + 2];
+        Assert.Equal(0, Alpha(0, 0)); // 角上透明
+        Assert.Equal(255, Alpha(size / 2, size / 2)); // 正中是「×」的交点：白色不透明
+        Assert.Equal(255, Red(size / 2, size / 2));
+        Assert.InRange(Alpha(size / 2, 4), 200, 240); // 上方圆底：深色半透明
+        Assert.True(Red(size / 2, 4) < 80);
+    }
+
+    [Fact]
+    public void A_closed_window_shrinks_out_in_place_and_the_rest_fill_the_gap()
+    {
+        var (c, _, t) = Opened();
+        var before = c.Scene;
+        var tile = before.Tile(0, 0);
+        var other = before.Tile(1, 0);
+        var after = c.RemoveWindow(1, t);
+        Assert.NotNull(after);
+        Assert.True(c.Scene.IsRemoved(0));
+        Assert.True(c.Scene.Windows[1].IsForeground);
+
+        var start = Rect(c, t, 0, out double op0);
+        Assert.Equal(tile, start);
+        Assert.Equal(1, op0);
+        Assert.Equal(other, Rect(c, t, 1, out _));
+
+        var end = Rect(c, t + 3_000_000, 0, out double op1);
+        Assert.Equal(0, op1, 3);
+        Assert.Equal(tile.CenterX, end.CenterX, 3); // 原地缩小
+        Assert.True(end.Width < tile.Width);
+        Assert.Equal(c.Scene.Slots[1].Tile, Rect(c, t + 3_000_000, 1, out _));
+        Assert.Null(c.RemoveWindow(1, t + 3_000_000)); // 已经移走
+    }
+
     // ---------- 应用窗口视图 ----------
 
     [Fact]

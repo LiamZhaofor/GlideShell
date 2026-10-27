@@ -35,6 +35,9 @@ public sealed record OverviewConfig
 
     /// <summary>收起态下沿收起方向滑（默认三指下滑）：应用窗口视图，只平铺当前程序的窗口（macOS App Exposé）。</summary>
     public bool AppWindows { get; set; } = true;
+
+    /// <summary>总览里同一个程序的窗口排在一起（默认按窗口原来的位置就近排）。</summary>
+    public bool GroupByApp { get; set; }
 }
 
 public sealed record SwitcherConfig
@@ -56,7 +59,33 @@ public sealed record DesktopConfig
     /// <summary>横滑多少毫米 = 整整切过一个桌面。</summary>
     public double TravelMm { get; set; } = 55;
 
+    /// <summary>Ctrl+Win+←/→ 也用 GlideShell 的切桌面动画（替代系统动画）；总览展开时改为在总览里翻页。</summary>
+    public bool TakeOverHotkeys { get; set; } = true;
+
     public SpringConfig Spring { get; set; } = new() { Response = 0.32, DampingRatio = 0.92 };
+}
+
+/// <summary>触发角能做的事。</summary>
+public enum HotCornerAction
+{
+    None,
+    Overview,
+    AppWindows,
+    ShowDesktop,
+}
+
+public sealed record HotCornersConfig
+{
+    public HotCornerAction TopLeft { get; set; }
+    public HotCornerAction TopRight { get; set; }
+    public HotCornerAction BottomLeft { get; set; }
+    public HotCornerAction BottomRight { get; set; }
+
+    /// <summary>指针在角上停多久才触发（毫秒），免得甩过角落时误触。</summary>
+    public double DwellMs { get; set; } = 100;
+
+    public bool Any => TopLeft != HotCornerAction.None || TopRight != HotCornerAction.None ||
+                       BottomLeft != HotCornerAction.None || BottomRight != HotCornerAction.None;
 }
 
 public sealed record DragConfig
@@ -102,6 +131,9 @@ public sealed record GlideShellConfig
 
     /// <summary>前台是全屏应用（游戏、演示）时不接管手势。</summary>
     public bool PauseInFullscreen { get; set; } = true;
+
+    /// <summary>触发角：指针停在屏幕某个角上时触发的动作。</summary>
+    public HotCornersConfig HotCorners { get; set; } = new();
 
     [JsonIgnore] // 计算值，不写进配置文件
     public GestureMap EffectiveMap => Bindings is { Count: > 0 } b
@@ -177,6 +209,7 @@ public sealed record GlideShellConfig
                 TravelMm = Clamp(Desktops.TravelMm, 10, 150, "Desktops.TravelMm"),
                 Spring = FixSpring(Desktops.Spring, "Desktops.Spring"),
             },
+            HotCorners = HotCorners with { DwellMs = Clamp(HotCorners.DwellMs, 0, 2000, "HotCorners.DwellMs") },
             ExcludedProcesses = ExcludedProcesses
                 .Select(p => p.Trim())
                 .Select(p => p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? p[..^4] : p)

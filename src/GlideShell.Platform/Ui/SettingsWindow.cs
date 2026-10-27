@@ -22,11 +22,12 @@ public sealed record SettingsEnvironment(
 /// </summary>
 public sealed unsafe class SettingsWindow : NativeWindow
 {
-    private const int ClientWidth = 760, ClientHeight = 566;
+    private const int ClientWidth = 760, ClientHeight = 700;
     private const uint Style = User32.WS_OVERLAPPED | User32.WS_CAPTION | User32.WS_SYSMENU | User32.WS_MINIMIZEBOX;
     private const int IdOk = 1, IdCancel = 2; // IsDialogMessage 把 Enter / Esc 翻译成这两个命令
     private const int IdGestureBase = 100, IdDrag = 110, IdFullscreen = 111, IdAutostart = 112, IdShared = 113;
     private const int IdPresetBase = 120, IdRemove = 130, IdAdd = 131, IdDefaults = 140, IdOpenConfig = 141;
+    private const int IdAppWindows = 114, IdGroupByApp = 115, IdDesktopKeys = 116, IdCornerBase = 150;
 
     private static SettingsWindow? s_current;
     private static bool s_commonControls;
@@ -42,6 +43,8 @@ public sealed unsafe class SettingsWindow : NativeWindow
     private nint _font;
     private uint _dpi = 96;
     private nint _drag, _fullscreen, _autostart, _shared, _presetLabel, _desktopNote, _excludedList, _addCombo;
+    private nint _appWindows, _groupByApp, _desktopKeys;
+    private readonly nint[] _cornerCombos = new nint[4];
     private IReadOnlyList<string> _runningApps = [];
 
     private sealed class Slider(string label, double min, double max, double step, Func<double, string> format,
@@ -158,11 +161,28 @@ public sealed unsafe class SettingsWindow : NativeWindow
         Group("启动", 392, 428, 352, 56);
         _autostart = Child("BUTTON", "登录 Windows 时自动启动 GlideShell", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAutostart, 408, 452, 320, 22);
 
+        // 左栏：触发角
+        Group("触发角（指针停在屏幕角上）", 16, 516, 360, 124);
+        for (int c = 0; c < 4; c++)
+        {
+            int x = c % 2 == 0 ? 32 : 200, y = c < 2 ? 544 : 578;
+            Label(SettingsModel.HotCornerNames[c], x, y + 4, 52, 20);
+            _cornerCombos[c] = Child("COMBOBOX", null, User32.CBS_DROPDOWNLIST | User32.WS_VSCROLL | User32.WS_TABSTOP, IdCornerBase + c, x + 54, y, 106, 200);
+        }
+        Note("暂停、全屏、排除的程序在前台时不触发。", 32, 612, 330, 20);
+
+        // 右栏：总览与切桌面
+        Group("总览与切桌面", 392, 494, 352, 146);
+        _appWindows = Child("BUTTON", "收起时三指下滑：应用窗口视图", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAppWindows, 408, 518, 320, 22);
+        _groupByApp = Child("BUTTON", "总览里同一程序的窗口排在一起", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdGroupByApp, 408, 544, 320, 22);
+        _desktopKeys = Child("BUTTON", "Ctrl+Win+←/→ 也用跟手切换动画", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdDesktopKeys, 408, 570, 320, 22);
+        Note("四指下滑显示桌面、再上滑拉回；桌面没显示时四指上滑打开总览。", 408, 598, 330, 36);
+
         // 底部按钮
-        Child("BUTTON", "恢复默认", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdDefaults, 16, 522, 96, 28);
-        Child("BUTTON", "打开配置文件…", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdOpenConfig, 120, 522, 124, 28);
-        Child("BUTTON", "取消", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdCancel, 560, 522, 88, 28);
-        Child("BUTTON", "保存", User32.BS_DEFPUSHBUTTON | User32.WS_TABSTOP, IdOk, 656, 522, 88, 28);
+        Child("BUTTON", "恢复默认", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdDefaults, 16, 656, 96, 28);
+        Child("BUTTON", "打开配置文件…", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdOpenConfig, 120, 656, 124, 28);
+        Child("BUTTON", "取消", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdCancel, 560, 656, 88, 28);
+        Child("BUTTON", "保存", User32.BS_DEFPUSHBUTTON | User32.WS_TABSTOP, IdOk, 656, 656, 88, 28);
     }
 
     private void AddSlider(Slider s, int y)
@@ -206,6 +226,16 @@ public sealed unsafe class SettingsWindow : NativeWindow
         RefreshExcluded();
         Check(_autostart, _model.Autostart);
         Check(_shared, _model.SharedThumbnails);
+        Check(_appWindows, _model.AppWindows);
+        Check(_groupByApp, _model.GroupByApp);
+        Check(_desktopKeys, _model.TakeOverDesktopHotkeys);
+        for (int c = 0; c < 4; c++)
+        {
+            nint combo = _cornerCombos[c];
+            User32.SendMessageW(combo, User32.CB_RESETCONTENT, 0, 0);
+            foreach (var a in SettingsModel.HotCornerChoices) AddString(combo, User32.CB_ADDSTRING, SettingsModel.HotCornerLabel(a));
+            User32.SendMessageW(combo, User32.CB_SETCURSEL, Math.Max(0, IndexOf(SettingsModel.HotCornerChoices, _model.HotCorners[c])), 0);
+        }
     }
 
     private void RefreshGestures()
@@ -316,6 +346,13 @@ public sealed unsafe class SettingsWindow : NativeWindow
             if (sel >= 0 && sel < choices.Count) _model = _model.WithAction(slot, choices[sel]);
             return;
         }
+        if (id >= IdCornerBase && id < IdCornerBase + 4)
+        {
+            if (code != User32.CBN_SELCHANGE) return;
+            int sel = (int)User32.SendMessageW(_cornerCombos[id - IdCornerBase], User32.CB_GETCURSEL, 0, 0);
+            if (sel >= 0 && sel < SettingsModel.HotCornerChoices.Count) _model = _model.WithHotCorner(id - IdCornerBase, SettingsModel.HotCornerChoices[sel]);
+            return;
+        }
         if (id >= IdPresetBase && id < IdPresetBase + SensitivityPreset.All.Count)
         {
             _model = _model.WithPreset(SensitivityPreset.All[id - IdPresetBase]);
@@ -333,6 +370,15 @@ public sealed unsafe class SettingsWindow : NativeWindow
                 break;
             case IdShared:
                 _model = _model with { SharedThumbnails = IsChecked(_shared) };
+                break;
+            case IdAppWindows:
+                _model = _model with { AppWindows = IsChecked(_appWindows) };
+                break;
+            case IdGroupByApp:
+                _model = _model with { GroupByApp = IsChecked(_groupByApp) };
+                break;
+            case IdDesktopKeys:
+                _model = _model with { TakeOverDesktopHotkeys = IsChecked(_desktopKeys) };
                 break;
             case IdAutostart:
                 _model = _model with { Autostart = IsChecked(_autostart) };
@@ -485,10 +531,10 @@ public sealed unsafe class SettingsWindow : NativeWindow
         fixed (char* p = buffer) return new string(p, 0, User32.GetWindowTextW(hwnd, p, buffer.Length));
     }
 
-    private static int IndexOf(IReadOnlyList<GestureAction> list, GestureAction a)
+    private static int IndexOf<T>(IReadOnlyList<T> list, T a) where T : struct, Enum
     {
         for (int i = 0; i < list.Count; i++)
-            if (list[i] == a) return i;
+            if (EqualityComparer<T>.Default.Equals(list[i], a)) return i;
         return -1;
     }
 }

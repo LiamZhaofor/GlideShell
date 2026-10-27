@@ -171,6 +171,51 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         return 0;
     }
 
+    /// <summary>
+    /// 一张固定图片（预乘 BGRA，<paramref name="size"/>×<paramref name="size"/>）做成的视觉，挂到 <paramref name="parent"/> 下面，
+    /// 初始不可见（不透明度 0）。用于总览里的关闭按钮。失败返回 HRESULT。
+    /// </summary>
+    public int CreateImageVisual(OverlayComposition parent, int size, byte[] bgra, out nint visual)
+    {
+        lock (Gate)
+        {
+            visual = 0;
+            if (_device == null) return unchecked((int)0x80004001);
+            int hr = Upload(new ShadowImage(size, size, 1, 0, bgra), out nint surface);
+            if (hr < 0) return hr;
+            void* v2, v3 = null;
+            hr = Dcomp.CreateVisual(_device, &v2);
+            if (hr >= 0) hr = Dcomp.SetContent(v2, (void*)surface);
+            if (hr >= 0) hr = Dcomp.ToVisual3(v2, &v3);
+            else if (v2 != null) Dcomp.Release(v2);
+            Dcomp.Release((void*)surface); // 视觉持有表面
+            if (hr < 0) return hr;
+            Dcomp.SetOpacity(v3, 0);
+            hr = Dcomp.AddVisual(parent.Root, v3);
+            if (hr < 0)
+            {
+                Dcomp.Release(v3);
+                return hr;
+            }
+            Dcomp.Commit(_device);
+            visual = (nint)v3;
+            return 0;
+        }
+    }
+
+    /// <summary>把 <see cref="CreateImageVisual"/> 建的视觉移到 (<paramref name="x"/>, <paramref name="y"/>)（相对父视觉）并设不透明度，立即提交。</summary>
+    public void PlaceImageVisual(nint visual, double x, double y, double opacity)
+    {
+        lock (Gate)
+        {
+            if (_device == null || visual == 0) return;
+            var m = new System.Numerics.Matrix3x2(1, 0, 0, 1, (float)x, (float)y);
+            Dcomp.SetTransform((void*)visual, &m);
+            Dcomp.SetOpacity((void*)visual, (float)opacity);
+            Dcomp.Commit(_device);
+        }
+    }
+
     /// <summary>锁内调用：一个视觉不再用这张阴影表面；没人用了就释放。</summary>
     public void ReleaseShadow(nint surface)
     {

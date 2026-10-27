@@ -13,7 +13,8 @@ public class GestureMapTests
         Assert.Equal(GestureAction.Overview, map.Resolve(3, GestureAxis.Vertical));
         Assert.Equal(GestureAction.SwitchWindows, map.Resolve(3, GestureAxis.Horizontal));
         Assert.Equal(GestureAction.SwitchDesktops, map.Resolve(4, GestureAxis.Horizontal));
-        Assert.Equal(GestureAction.None, map.Resolve(4, GestureAxis.Vertical)); // 未绑定 = 留给系统
+        Assert.Equal(GestureAction.ShowDesktop, map.Resolve(4, GestureAxis.Vertical));
+        Assert.Equal(GestureAction.None, map.Resolve(5, GestureAxis.Vertical)); // 未绑定 = 留给系统
         Assert.Empty(map.Validate());
     }
 

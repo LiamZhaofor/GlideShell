@@ -42,6 +42,8 @@ public sealed class DesktopSwitchController : IGestureTarget
     private bool _ignoring;
     private int _committed;
     private double _travelMm = 55;
+    private int _pendingStep; // 键盘切换：等预热读到相邻桌面后再开始
+    private int _queuedStep; // 动画还没落定时又按了一次：落定后接着切
 
     public DesktopSwitchController(IDesktopSwitchHost host, Func<DesktopConfig> config)
     {
@@ -65,7 +67,48 @@ public sealed class DesktopSwitchController : IGestureTarget
 
     /// <summary>宿主读到相邻桌面后调用：没有左 / 右邻居时那一侧只剩橡皮筋。</summary>
     public void SetNeighbors(bool hasLeft, bool hasRight, long hostUs)
-        => _transition.SetRange(hasLeft ? -1 : 0, hasRight ? 1 : 0, hostUs);
+    {
+        _transition.SetRange(hasLeft ? -1 : 0, hasRight ? 1 : 0, hostUs);
+        int step;
+        lock (_gate)
+        {
+            step = _pendingStep;
+            _pendingStep = 0;
+            if (step == 0) return;
+            if (step < 0 ? !hasLeft : !hasRight)
+            {
+                // 那一侧没有桌面：带一点初速度弹一下（往外冲一点再回来），落定后撤层
+                _transition.AnimateTo(0, hostUs, velocity: step * 1.5);
+                return;
+            }
+            _committed = step;
+            _transition.AnimateTo(step, hostUs);
+        }
+        _host.Commit(step);
+    }
+
+    /// <summary>
+    /// 不用手势切到相邻桌面（Ctrl+Win+←/→，任意线程）：<paramref name="direction"/> −1 左 / +1 右。
+    /// 和手势切换同一套覆盖层与弹簧；动画还没落定时再按，落定后接着往同一方向切。
+    /// </summary>
+    public void Step(int direction, long hostUs)
+    {
+        direction = Math.Sign(direction);
+        if (direction == 0) return;
+        lock (_gate)
+        {
+            if (_visible)
+            {
+                if (_committed != 0 && !_tracking) _queuedStep = direction;
+                return;
+            }
+            _visible = true;
+            _prewarming = false;
+            _pendingStep = direction;
+        }
+        _host.Prewarm();
+        _host.Show();
+    }
 
     // ---------- 手势（输入线程） ----------
 
@@ -156,15 +199,17 @@ public sealed class DesktopSwitchController : IGestureTarget
     {
         var s = _transition.Sample(hostUs);
         bool hide = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
-        int committed = 0;
+        int committed = 0, queued = 0;
         bool visible;
         lock (_gate)
         {
-            if (s.JustSettled && _visible && !_tracking)
+            if (s.JustSettled && _visible && !_tracking && _pendingStep == 0)
             {
                 _visible = false;
                 committed = _committed;
                 _committed = 0;
+                queued = _queuedStep;
+                _queuedStep = 0;
                 hide = true;
             }
             visible = _visible || hide;
@@ -173,6 +218,7 @@ public sealed class DesktopSwitchController : IGestureTarget
         {
             _host.Hide(committed);
             _transition.SnapTo(0); // 下一次从（新的）当前桌面开始
+            if (queued != 0) Step(queued, hostUs);
         }
         return new DesktopSwitchFrame(s.Value, s.Phase, visible);
     }

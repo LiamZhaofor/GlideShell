@@ -53,6 +53,12 @@ public enum OverviewMode
 
     /// <summary>应用窗口视图：只平铺当前程序的窗口，其余窗口原地淡出（macOS App Exposé）。</summary>
     App,
+
+    /// <summary>
+    /// 显示桌面：窗口跟手滑出屏幕（进度 1 = 全部推出去），落定后宿主把它们真正最小化并撤层；
+    /// 桌面已显示时从进度 1 开始往回拉，落到 0 时宿主把它们还原。背景不变暗，没有标题与桌面条。
+    /// </summary>
+    Desktop,
 }
 
 /// <summary>渲染线程每帧取到的总览状态。</summary>
@@ -147,6 +153,7 @@ public sealed class OverviewController : IGestureTarget
     private bool _ignoring;
     private bool _closingGesture;
     private bool _openPending;
+    private double _openTarget = 1;
     private double _travelMm = 30;
     private double _valueAtBegin;
     private long? _hovered;
@@ -158,7 +165,17 @@ public sealed class OverviewController : IGestureTarget
         _config = config;
         _transition = new InteractiveTransition(0, 1, 0) { Spring = config().Spring.ToParameters() };
         DesktopSwipe = new DesktopSwipeTarget(this);
+        DesktopGesture = new DesktopGestureTarget(this);
     }
+
+    /// <summary>
+    /// 显示桌面手势（默认四指上下）：下滑显示桌面；桌面已显示时上滑把窗口拉回来，否则上滑打开窗口总览。
+    /// 总览已展开时与总览手势一样（跟手收起 / 越界）。
+    /// </summary>
+    public IGestureTarget DesktopGesture { get; }
+
+    /// <summary>宿主提供：此刻桌面是否处于「显示桌面」状态（上次显示桌面最小化的窗口都还最小化着）。输入线程调用，必须很快。</summary>
+    public Func<bool>? DesktopShown { get; set; }
 
     /// <summary>总览展开时，切桌面的手势（四指横滑）改由它处理：在总览里跟手预览并切到相邻桌面。</summary>
     public IGestureTarget DesktopSwipe { get; }
@@ -328,6 +345,33 @@ public sealed class OverviewController : IGestureTarget
     }
 
     /// <summary>
+    /// 窗口 <paramref name="windowId"/> 已经关掉（总览里点了关闭按钮）：它在原位缩小淡出，其余窗口补位。
+    /// 返回移走后的当前页场景；不在当前页、或正在拖动时返回 null（拖动中的不加动画，下次准备场景时自然没有它）。
+    /// </summary>
+    public OverviewScene? RemoveWindow(long windowId, long hostUs)
+    {
+        lock (_gate)
+        {
+            var scene = Scene;
+            int index = scene.IndexOf(windowId);
+            if (!_visible || index < 0 || !scene.IsPresent(index) || _drag != DragStage.None) return null;
+            var tile = scene.Tile(index, _bar.Peek(hostUs), _relayout.Peek(hostUs));
+            _dragIndex = index;
+            _dropFrom = tile;
+            _dropInto = tile.ScaleAroundCenter(0.8);
+            _drag = DragStage.Dropping;
+            _drop.SnapTo(0);
+            _drop.AnimateTo(1, hostUs);
+            var next = scene.Without(index, _relayout.Peek(hostUs));
+            ReplaceScene(_page, next);
+            _relayout.SnapTo(0);
+            _relayout.AnimateTo(1, hostUs);
+            if (_hovered == windowId) _hovered = null;
+            return next;
+        }
+    }
+
+    /// <summary>
     /// 第 <paramref name="page"/> 页（桌面下标）加入一个窗口（从别的页拖到了那个桌面），返回它在那一页的场景下标；没有多页时返回 -1。
     /// 那一页不在屏幕上，直接排到新位置。
     /// </summary>
@@ -390,9 +434,13 @@ public sealed class OverviewController : IGestureTarget
         if (cancel) _host.CancelPrewarm();
     }
 
-    public void Begin(in GestureEvent e)
+    public void Begin(in GestureEvent e) => Begin(e, desktopGesture: false);
+
+    /// <param name="desktopGesture">显示桌面手势：收起态下下滑 = 显示桌面，上滑 = 拉回窗口（桌面已显示时）或打开总览。</param>
+    private void Begin(in GestureEvent e, bool desktopGesture)
     {
         bool show = false, cancelPrewarm = false;
+        bool restore = desktopGesture && !_visible && e.Direction == GestureDirection.Up && DesktopShown?.Invoke() == true;
         lock (_gate)
         {
             if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging)
@@ -400,8 +448,17 @@ public sealed class OverviewController : IGestureTarget
                 _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口，等它落定
                 return;
             }
-            bool app = !_visible && !IsOpeningDirection(e) && e.Axis == GestureAxis.Vertical && _config().AppWindows;
-            if (!_visible && !IsOpeningDirection(e) && !app)
+            OverviewMode? open = null; // 收起态下这次手势要展开的形态（null = 不接管）
+            if (!_visible)
+            {
+                if (desktopGesture)
+                    open = e.Axis != GestureAxis.Vertical ? null
+                        : e.Direction == GestureDirection.Down || restore ? OverviewMode.Desktop
+                        : OverviewMode.All;
+                else if (IsOpeningDirection(e)) open = OverviewMode.All;
+                else if (e.Axis == GestureAxis.Vertical && _config().AppWindows) open = OverviewMode.App;
+            }
+            if (!_visible && open is null)
             {
                 // 收起态下朝「收起」方向滑、又没开应用窗口视图：不是总览手势，放弃预热
                 _ignoring = true;
@@ -414,10 +471,11 @@ public sealed class OverviewController : IGestureTarget
                 _openPending = false;
                 if (!_visible)
                 {
-                    _mode = app ? OverviewMode.App : OverviewMode.All;
+                    _mode = open!.Value;
                     _visible = true;
                     _prewarming = false;
                     show = true;
+                    if (restore) _transition.SnapTo(1); // 窗口此刻都在屏幕外：从「完全展开」往回拉
                 }
                 _tracking = true;
                 _travelMm = Math.Max(1, _config().TravelMm);
@@ -491,7 +549,10 @@ public sealed class OverviewController : IGestureTarget
         else Close(null, hostUs);
     }
 
-    public void Open(long hostUs)
+    public void Open(long hostUs) => Open(hostUs, OverviewMode.All);
+
+    /// <summary>不用手势展开（热键、托盘、触发角）：<paramref name="mode"/> 为展开的形态。</summary>
+    public void Open(long hostUs, OverviewMode mode)
     {
         bool show = false;
         lock (_gate)
@@ -500,9 +561,10 @@ public sealed class OverviewController : IGestureTarget
             if (!_visible)
             {
                 // 动画等覆盖层真正显示出来（OnShown）再开始，否则预热的那几十毫秒会吃掉动画开头
-                _mode = OverviewMode.All;
+                _mode = mode;
                 _visible = true;
                 _openPending = true;
+                _openTarget = 1;
                 show = true;
             }
             else
@@ -517,14 +579,52 @@ public sealed class OverviewController : IGestureTarget
         }
     }
 
+    /// <summary>
+    /// 触发角「显示桌面」：桌面已显示时把窗口拉回来（从进度 1 播到 0），否则显示桌面。总览开着时什么也不做。
+    /// </summary>
+    public void ToggleDesktop(long hostUs)
+    {
+        bool restore = DesktopShown?.Invoke() == true;
+        lock (_gate)
+        {
+            if (_visible) return;
+            _mode = OverviewMode.Desktop;
+            _visible = true;
+            _openPending = true;
+            _focusTarget = null;
+            _openTarget = restore ? 0 : 1;
+            if (restore) _transition.SnapTo(1);
+        }
+        _host.Prewarm();
+        _host.Show();
+    }
+
     /// <summary>宿主在覆盖层真正显示出来后调用（UI 线程）。热键展开的动画从这一刻开始。</summary>
     public void OnShown(long hostUs)
     {
+        bool closing;
         lock (_gate)
         {
             if (!_openPending) return;
             _openPending = false;
-            _transition.AnimateTo(1, hostUs);
+            _transition.AnimateTo(_openTarget, hostUs);
+            closing = _openTarget == 0;
+        }
+        if (closing) _host.Closing(null); // 不用手势拉回窗口：宿主现在就开始还原
+    }
+
+    /// <summary>
+    /// 宿主：显示桌面落定、窗口已真正最小化、覆盖层已撤（UI 线程）。复位到收起态（不再走收起动画）。
+    /// </summary>
+    public void EndDesktop()
+    {
+        lock (_gate)
+        {
+            _visible = false;
+            _tracking = false;
+            _focusTarget = null;
+            _transition.SnapTo(0);
+            _bar.SnapTo(0);
         }
     }
 
@@ -673,6 +773,41 @@ public sealed class OverviewController : IGestureTarget
 
     // ---------- 总览里四指横滑切桌面（输入线程） ----------
 
+    private sealed class DesktopGestureTarget(OverviewController owner) : IGestureTarget
+    {
+        public void Prepare(long hostUs) => owner.Prepare(hostUs);
+
+        public void Unprepare(long hostUs) => owner.Unprepare(hostUs);
+
+        public void Begin(in GestureEvent e) => owner.Begin(e, desktopGesture: true);
+
+        public void Update(in GestureEvent e) => owner.Update(e);
+
+        public void End(in GestureEvent e) => owner.End(e);
+    }
+
+    /// <summary>
+    /// 不用手势翻一页（Ctrl+Win+←/→，UI 线程）：总览展开、有多页、没在翻页 / 拖动 / 放大进入时，
+    /// 翻到相邻的一页并切换真实桌面。返回是否翻了（到头了也算处理过，返回 true）。
+    /// </summary>
+    public bool StepPage(int direction, long hostUs)
+    {
+        int changed = -1;
+        lock (_gate)
+        {
+            if (!_visible || _pages.Count < 2 || _page < 0 || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None) return false;
+            int target = Math.Clamp(_page + Math.Sign(direction), 0, _pages.Count - 1);
+            if (target == _page) return true;
+            _page = target;
+            _desktops = _desktops with { Current = target };
+            _hovered = null;
+            _pager.AnimateTo(target, hostUs);
+            changed = target;
+        }
+        _host.PageChanged(changed);
+        return true;
+    }
+
     private sealed class DesktopSwipeTarget(OverviewController owner) : IGestureTarget
     {
         public void Prepare(long hostUs)
@@ -758,10 +893,12 @@ public sealed class OverviewController : IGestureTarget
     /// <summary>第 <paramref name="page"/> 页在翻页位置 <paramref name="position"/> 下的横向偏移（像素）。</summary>
     public static double PageOffset(int page, double position, double width, double gap) => (page - position) * (width + gap);
 
-    // 展开方向：竖直轴向上、水平轴向右为正；应用窗口视图竖直轴反过来（向下展开）
-    private double OpenAxisMm(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (_mode == OverviewMode.App ? e.DyMm : -e.DyMm) : e.DxMm;
+    // 展开方向：竖直轴向上、水平轴向右为正；应用窗口视图与显示桌面竖直轴反过来（向下展开）
+    private bool OpensDownward => _mode is OverviewMode.App or OverviewMode.Desktop;
 
-    private double OpenAxisVelocity(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (_mode == OverviewMode.App ? e.VyMmS : -e.VyMmS) : e.VxMmS;
+    private double OpenAxisMm(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (OpensDownward ? e.DyMm : -e.DyMm) : e.DxMm;
+
+    private double OpenAxisVelocity(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (OpensDownward ? e.VyMmS : -e.VyMmS) : e.VxMmS;
 
     private static bool IsOpeningDirection(in GestureEvent e) => e.Direction is GestureDirection.Up or GestureDirection.Right;
 }

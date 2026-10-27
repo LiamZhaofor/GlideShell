@@ -24,7 +24,7 @@ public readonly record struct OverviewArea(RectD WorkArea, double DpiScale, Desk
 /// </summary>
 public sealed class OverviewScene
 {
-    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null), [], null, []);
+    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null, false), [], null, []);
 
     private readonly DesktopBarGeometry?[] _bars; // 每个窗口平铺所在那块屏的桌面条（没有为 null）
     private readonly Context _context; // 重新排版用
@@ -32,7 +32,7 @@ public sealed class OverviewScene
     private readonly RectD?[]? _from; // 重排前的平铺位（收起时的坐标）；新加入的窗口为 null
     private readonly bool[] _excluded; // 应用窗口视图里其他程序的窗口
 
-    private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options);
+    private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options, bool GroupByApp);
 
     private OverviewScene(IReadOnlyList<OverviewWindow> windows, LayoutSlot[] slots, DesktopBarGeometry?[] bars, Context context, bool[] removed, RectD?[]? from,
         bool[] excluded)
@@ -72,6 +72,34 @@ public sealed class OverviewScene
                 if (IsPresent(i)) n++;
             return n;
         }
+    }
+
+    /// <summary>
+    /// 显示桌面：每个窗口的「平铺位」是把它沿离屏幕中心最近的方向整个推出所在屏的工作区（再多出 <paramref name="marginPx"/>），
+    /// 进度 0 → 1 时窗口跟手滑出屏幕；最小化的窗口本来就不在桌面上，标成排除。窗口下标不变。
+    /// </summary>
+    public OverviewScene PushAside(IReadOnlyList<OverviewArea> areas, double marginPx = 40)
+    {
+        var slots = Slots.ToArray();
+        var excluded = new bool[Count];
+        for (int i = 0; i < Count; i++)
+        {
+            var w = Windows[i];
+            if (w.IsMinimized || _removed[i])
+            {
+                excluded[i] = true;
+                continue;
+            }
+            var area = areas.Count == 0 ? w.Source : areas[Math.Clamp(w.MonitorIndex, 0, areas.Count - 1)].WorkArea;
+            var s = w.Source;
+            // 往哪边推：窗口中心相对屏幕中心的方向，按屏幕宽高归一化后取较大的那个轴
+            double dx = (s.CenterX - area.CenterX) / Math.Max(1, area.Width), dy = (s.CenterY - area.CenterY) / Math.Max(1, area.Height);
+            RectD tile = Math.Abs(dx) >= Math.Abs(dy)
+                ? s.Offset(dx >= 0 ? area.Right + marginPx - s.Left : area.Left - marginPx - s.Right, 0)
+                : s.Offset(0, dy >= 0 ? area.Bottom + marginPx - s.Top : area.Top - marginPx - s.Bottom);
+            slots[i] = new LayoutSlot(tile, tile);
+        }
+        return new OverviewScene(Windows, slots, new DesktopBarGeometry?[Count], _context with { Areas = areas }, (bool[])_removed.Clone(), null, excluded);
     }
 
     /// <summary>
@@ -156,10 +184,11 @@ public sealed class OverviewScene
     /// 按显示器分组布局：窗口在哪块屏，就平铺在哪块屏（各屏独立排版）。
     /// <paramref name="primaryOnly"/> 时全部排到 <paramref name="primaryIndex"/> 那块屏。
     /// </summary>
+    /// <param name="groupByApp">同一个程序（进程名）的窗口排在一起：排版时把它们当作都在这组窗口的中心附近。</param>
     public static OverviewScene Build(IReadOnlyList<OverviewWindow> windows, IReadOnlyList<OverviewArea> areas,
-        bool primaryOnly = false, int primaryIndex = 0, LayoutOptions? options = null)
+        bool primaryOnly = false, int primaryIndex = 0, LayoutOptions? options = null, bool groupByApp = false)
     {
-        var context = new Context(areas, primaryOnly, primaryIndex, options);
+        var context = new Context(areas, primaryOnly, primaryIndex, options, groupByApp);
         if (windows.Count == 0 || areas.Count == 0) return new OverviewScene([], [], [], context, [], null, []);
         var (slots, bars) = Arrange(windows, new bool[windows.Count], context, new LayoutSlot[windows.Count], new DesktopBarGeometry?[windows.Count]);
         return new OverviewScene(windows, slots, bars, context, new bool[windows.Count], null, new bool[windows.Count]);
@@ -178,7 +207,18 @@ public sealed class OverviewScene
             var area = areas[Math.Clamp(g.Key, 0, areas.Count - 1)];
             var members = g.ToList();
             var opts = context.Options ?? LayoutOptions.Scaled(area.DpiScale);
-            var laid = OverviewLayout.Compute(members.Select(m => m.w.Source).ToList(), area.Bar?.ContentArea ?? area.WorkArea, opts);
+            var sources = members.Select(m => m.w.Source).ToList();
+            if (context.GroupByApp)
+            {
+                // 就近布局按中心分行、行内按中心排序：同一程序的窗口都挪到它们的共同中心，排出来就挨在一起，组与组之间仍按位置就近
+                foreach (var app in members.Select((m, k) => (m.w.ProcessName, k)).GroupBy(x => x.ProcessName))
+                {
+                    double cx = app.Average(x => sources[x.k].CenterX), cy = app.Average(x => sources[x.k].CenterY);
+                    foreach (var (_, k) in app)
+                        sources[k] = sources[k].Offset(cx - sources[k].CenterX, cy - sources[k].CenterY);
+                }
+            }
+            var laid = OverviewLayout.Compute(sources, area.Bar?.ContentArea ?? area.WorkArea, opts);
             for (int k = 0; k < members.Count; k++)
             {
                 slots[members[k].i] = laid[k];

@@ -23,6 +23,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private bool _releasingCapture;
     private OverlayComposition? _dragRoot; // 最上面：拖动中的窗口
     private nint _lifted; // 挂在 _dragRoot 下的分组视觉
+    private nint _closeVisual; // 关闭按钮（挂在 _dragRoot 下，按需创建）
+    private RectD? _closeButton; // 正在显示的关闭按钮（屏幕坐标）
     private volatile IThumbnailLayer _layer;
     private OverlayComposition? _composition; // 共享缩略图视觉模式下才创建
     private OverlayComposition? _content; // 其下：窗口缩略图
@@ -214,6 +216,31 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         return 0;
     }
 
+    /// <summary>当前显示的关闭按钮（屏幕坐标，没有为 null）。</summary>
+    public RectD? CloseButtonRect => _closeButton;
+
+    /// <summary>
+    /// UI 线程：在 <paramref name="tile"/>（悬停窗口的平铺位）左上角显示关闭按钮，null = 不显示。
+    /// 共享缩略图模式下按钮是最上面一支里的图片视觉（盖在窗口缩略图上）；经典模式用 GDI 画（只露出窗口外的部分）。
+    /// </summary>
+    public void SetCloseButton(RectD? tile)
+    {
+        var button = tile is { } t ? CloseButton.Rect(t, Monitor.DpiScale) : (RectD?)null;
+        if (button == _closeButton) return;
+        _closeButton = button;
+        if (_dragRoot is not null && _shared is not null && _layer is SharedThumbnailLayer)
+        {
+            if (_closeVisual == 0 && button is { } b)
+            {
+                int size = (int)Math.Round(b.Width);
+                if (_shared.CreateImageVisual(_dragRoot, size, CloseButton.Render(size), out _closeVisual) < 0) _closeVisual = 0;
+            }
+            if (_closeVisual != 0)
+                _shared.PlaceImageVisual(_closeVisual, (button?.Left ?? 0) - Monitor.WorkArea.Left, (button?.Top ?? 0) - Monitor.WorkArea.Top, button is null ? 0 : 1);
+        }
+        User32.InvalidateRect(Handle, null, 1);
+    }
+
     /// <summary>UI 线程：开始拖动当前页的某个窗口，把它挂到最上面一支（不是本屏的窗口、或不是共享缩略图时什么也不做）。</summary>
     public void Lift(int sceneIndex)
     {
@@ -365,6 +392,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _bar.Dispose();
         _content?.Dispose(); // 分支先于根释放
         _barRoot?.Dispose();
+        if (_closeVisual != 0) Dcomp.Release((void*)_closeVisual);
+        _closeVisual = 0;
         _dragRoot?.Dispose();
         _content = _barRoot = _dragRoot = null;
         _composition?.Dispose();
@@ -385,6 +414,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
         User32.ShowWindow(Handle, User32.SW_HIDE);
         Unlift();
+        SetCloseButton(null);
         _layer.HideAll();
         HidePages();
         _bar.HideAll();
@@ -485,6 +515,20 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                         frame.Left -= 1; frame.Top -= 1; frame.Right += 1; frame.Bottom += 1;
                         User32.FrameRect(hdc, &frame, hover);
                     }
+                    // 经典缩略图模式下关闭按钮用 GDI 画（盖在窗口上的那部分会被缩略图挡住）
+                    if (_closeButton is { } cb && _layer is not SharedThumbnailLayer)
+                    {
+                        var b = Local(cb, origin);
+                        nint disc = Gdi32.CreateSolidBrush(Gdi32.Rgb(58, 58, 62));
+                        nint oldBrush = Gdi32.SelectObject(hdc, disc);
+                        nint oldPen = Gdi32.SelectObject(hdc, Gdi32.GetStockObject(Gdi32.NULL_PEN));
+                        Gdi32.RoundRect(hdc, b.Left, b.Top, b.Right + 1, b.Bottom + 1, b.Right - b.Left, b.Bottom - b.Top);
+                        Gdi32.SelectObject(hdc, oldPen);
+                        Gdi32.SelectObject(hdc, oldBrush);
+                        Gdi32.DeleteObject(disc);
+                        Gdi32.SetTextColor(hdc, Gdi32.Rgb(255, 255, 255));
+                        User32.DrawTextW(hdc, "×", -1, &b, User32.DT_CENTER | User32.DT_VCENTER | User32.DT_SINGLELINE | User32.DT_NOPREFIX);
+                    }
                 }
                 var label = Local(slot.Label, origin);
                 Gdi32.SetTextColor(hdc, Gdi32.Rgb(225, 225, 230));
@@ -550,8 +594,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                     }
                 }
                 var label = Local(g.Labels[i], origin);
-                // 悬停的非当前桌面：名字右端出现「×」（删除，窗口并入相邻桌面）；名字给它让出位置
-                bool removable = isHovered && !isCurrent && g.Count >= 2;
+                // 悬停的桌面：名字右端出现「×」（删除，窗口并入相邻桌面）；名字给它让出位置
+                bool removable = isHovered && g.Count >= 2;
                 var x = Local(g.RemoveButton(i), origin);
                 if (removable) label.Right = x.Left - 2;
                 Gdi32.SetTextColor(hdc, isCurrent || isHovered ? Gdi32.Rgb(240, 240, 245) : Gdi32.Rgb(185, 185, 195));

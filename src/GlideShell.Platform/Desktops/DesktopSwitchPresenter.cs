@@ -102,7 +102,11 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     {
         long t0 = HostClock.NowUs();
         var state = _desktops.State;
-        if (state.Current is not { } current) return;
+        if (state.Current is not { } current)
+        {
+            Controller.SetNeighbors(false, false, HostClock.NowUs()); // 键盘切换在等它：没有桌面信息就原地弹一下收场
+            return;
+        }
         var monitors = Monitors.Enumerate();
         EnsureOverlays(monitors);
         var windows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true)

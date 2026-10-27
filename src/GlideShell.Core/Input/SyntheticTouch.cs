@@ -22,6 +22,8 @@ public static class SyntheticTouch
         ["desktop-right"] = (4, [new(350, -36, 0), new(150), new(0, Lift: true)]),
         ["desktop-left"] = (4, [new(350, 36, 0), new(150), new(0, Lift: true)]),
         ["desktop-peek"] = (4, [new(300, -20, 0), new(300, 18, 0), new(0, Lift: true)]),
+        ["show-desktop"] = (4, [new(300, 0, 32), new(150), new(0, Lift: true)]),
+        ["restore-desktop"] = (4, [new(300, 0, -32), new(150), new(0, Lift: true)]),
     };
 
     /// <summary>

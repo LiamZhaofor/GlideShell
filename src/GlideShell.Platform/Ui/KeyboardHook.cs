@@ -4,36 +4,42 @@ using GlideShell.Platform.Native;
 namespace GlideShell.Platform.Ui;
 
 /// <summary>
-/// 低级键盘钩子（只在总览展开时安装）：覆盖层不抢焦点，键盘靠它拦截 Esc / Enter 等。
+/// 低级键盘钩子。可以有多个订阅者（总览展开时的 Esc / Enter，常驻的 Ctrl+Win+←/→），共用一个系统钩子：
+/// 有订阅者安装时才挂上，最后一个卸下时摘掉。后安装的先收到按键。
 /// 回调在安装线程（UI 线程）的消息循环里执行，必须极快返回；返回 true 表示吞掉该按键。
 /// </summary>
 public sealed unsafe class KeyboardHook : IDisposable
 {
-    private static KeyboardHook? s_active;
-    private readonly Func<uint, bool> _onKeyDown;
-    private nint _hook;
+    private static readonly List<KeyboardHook> s_installed = [];
+    private static nint s_hook;
+    private readonly Func<uint, bool, bool> _onKey;
 
-    /// <param name="onKeyDown">参数为虚拟键码；返回 true 吞掉按键。</param>
-    public KeyboardHook(Func<uint, bool> onKeyDown)
-    {
-        _onKeyDown = onKeyDown;
-    }
+    /// <param name="onKeyDown">参数为虚拟键码（只收按下）；返回 true 吞掉按键。</param>
+    public KeyboardHook(Func<uint, bool> onKeyDown) => _onKey = (vk, down) => down && onKeyDown(vk);
 
-    public bool IsInstalled => _hook != 0;
+    /// <param name="onKey">参数为虚拟键码与是否按下（false = 松开）；返回 true 吞掉这次事件。</param>
+    public KeyboardHook(Func<uint, bool, bool> onKey) => _onKey = onKey;
+
+    public bool IsInstalled { get; private set; }
 
     public void Install()
     {
-        if (_hook != 0) return;
-        s_active = this;
-        _hook = User32.SetWindowsHookExW(User32.WH_KEYBOARD_LL, &Proc, Kernel32.GetModuleHandleW(null), 0);
+        if (IsInstalled) return;
+        IsInstalled = true;
+        s_installed.Add(this);
+        if (s_hook == 0) s_hook = User32.SetWindowsHookExW(User32.WH_KEYBOARD_LL, &Proc, Kernel32.GetModuleHandleW(null), 0);
     }
 
     public void Uninstall()
     {
-        if (_hook == 0) return;
-        User32.UnhookWindowsHookEx(_hook);
-        _hook = 0;
-        if (ReferenceEquals(s_active, this)) s_active = null;
+        if (!IsInstalled) return;
+        IsInstalled = false;
+        s_installed.Remove(this);
+        if (s_installed.Count == 0 && s_hook != 0)
+        {
+            User32.UnhookWindowsHookEx(s_hook);
+            s_hook = 0;
+        }
     }
 
     public void Dispose() => Uninstall();
@@ -41,16 +47,22 @@ public sealed unsafe class KeyboardHook : IDisposable
     [UnmanagedCallersOnly]
     private static nint Proc(int code, nint wParam, nint lParam)
     {
-        var self = s_active;
-        if (code >= 0 && self is not null && (wParam == (nint)User32.WM_KEYDOWN || wParam == (nint)User32.WM_SYSKEYDOWN))
+        bool down = wParam == (nint)User32.WM_KEYDOWN || wParam == (nint)User32.WM_SYSKEYDOWN;
+        bool up = wParam == (nint)0x0101 /* WM_KEYUP */ || wParam == (nint)0x0105 /* WM_SYSKEYUP */;
+        if (code >= 0 && (down || up))
         {
-            try
+            uint vk = ((User32.KBDLLHOOKSTRUCT*)lParam)->vkCode;
+            for (int i = s_installed.Count - 1; i >= 0; i--)
             {
-                if (self._onKeyDown(((User32.KBDLLHOOKSTRUCT*)lParam)->vkCode)) return 1;
-            }
-            catch
-            {
-                // 钩子回调里不能抛出；按键照常传递
+                if (i >= s_installed.Count) continue; // 回调里有订阅者卸下了
+                try
+                {
+                    if (s_installed[i]._onKey(vk, down)) return 1;
+                }
+                catch
+                {
+                    // 钩子回调里不能抛出；按键照常传递
+                }
             }
         }
         return User32.CallNextHookEx(0, code, wParam, lParam);

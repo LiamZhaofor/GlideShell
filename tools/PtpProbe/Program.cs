@@ -37,6 +37,7 @@ return command switch
     "desktops" when args.Contains("--move") => DesktopsMove(),
     "desktops" when args.Length > 2 && args[1] == "--remove" => DesktopsRemove(int.Parse(args[2])),
     "desktops" when args.Length > 2 && args[1] == "--switch" => DesktopsSwitch(int.Parse(args[2])),
+    "desktops" when args.Contains("--create") => DesktopsCreate(),
     "desktops" => Desktops(),
     "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump"), Option(args, "--monitor")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
@@ -66,6 +67,7 @@ static int Usage()
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
           PtpProbe desktops --remove <n>   删除第 n 个桌面（窗口并入左边的桌面；清理实测建出来的桌面）
           PtpProbe desktops --switch <n>   切到第 n 个桌面（实测后切回原来的桌面）
+          PtpProbe desktops --create       在最后新建一个桌面（不切过去）
           PtpProbe thumbnails [--classic]  缩略图后端自检（左下角显示约 1 秒测试小窗）
           PtpProbe thumbnails --shadow [--size 600x400] [--monitor 序号]
                                            阴影对照：逐点比较系统画的窗口阴影与总览自画的阴影（屏幕中央闪现约 3 秒）
@@ -333,6 +335,15 @@ static int DesktopsRemove(int n)
     int hr = service.RemoveDesktopAsync(state.Desktops[n - 1], state.Desktops[n > 1 ? n - 2 : 1]).GetAwaiter().GetResult();
     Console.WriteLine($"删除「{state.Names[n - 1]}」：0x{hr:X8}，剩 {service.State.Count} 个桌面");
     return hr >= 0 ? 0 : 1;
+}
+
+/// 在最后新建一个桌面。
+static int DesktopsCreate()
+{
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start();
+    var id = service.CreateDesktopAsync().GetAwaiter().GetResult();
+    Console.WriteLine(id is null ? "新建失败" : $"新建「{service.State.Names[^1]}」，共 {service.State.Count} 个桌面");
+    return id is null ? 1 : 0;
 }
 
 /// 切到第 n 个桌面（1 起）。
