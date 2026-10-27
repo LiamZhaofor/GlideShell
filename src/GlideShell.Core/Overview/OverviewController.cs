@@ -38,14 +38,18 @@ public interface IOverviewHost
     /// </summary>
     void SwitchDesktop(int desktopIndex);
 
-    /// <summary>总览里四指横滑开始预览相邻桌面（还没决定切换）：宿主把那个桌面的缩略图挪到最上层，随手指放大。</summary>
-    void PreviewDesktop(int desktopIndex);
+    /// <summary>
+    /// 总览里四指横滑决定换到第 <paramref name="desktopIndex"/> 个桌面那一页（松手就决定，翻页动画还在播）：
+    /// 宿主立刻在覆盖层下面切换真实桌面，总览留在新桌面上（macOS 调度中心）。
+    /// </summary>
+    void PageChanged(int desktopIndex);
 }
 
 /// <summary>渲染线程每帧取到的总览状态。</summary>
 /// <param name="BarExpansion">桌面条展开程度（0 收起 ~ 1 展开）。</param>
 /// <param name="ZoomDesktop">点击后正在放大进入的桌面（-1 = 没有）。</param>
 /// <param name="Zoom">放大进入的进度（0 ~ 1）：目标桌面缩略图从桌面条放大到全屏，其余内容随之淡出。</param>
+/// <param name="PagePosition">翻页位置（桌面下标，可带小数）：第 k 页横向偏移 (k − 位置) × (屏宽 + 间隙)。</param>
 public readonly record struct OverviewFrame(
     double Progress,
     double BackdropOpacity,
@@ -55,7 +59,8 @@ public readonly record struct OverviewFrame(
     long? EmphasizedWindow,
     double BarExpansion = 0,
     int ZoomDesktop = -1,
-    double Zoom = 0);
+    double Zoom = 0,
+    double PagePosition = 0);
 
 /// <summary>
 /// 窗口总览：手势 → 连续进度（0 = 收起，1 = 展开）→ 画面。
@@ -64,7 +69,8 @@ public readonly record struct OverviewFrame(
 /// <item>手指在板上只跟随；松手才按投影落点决定展开或收起，并以松手速度驱动弹簧。动画中可随时被新手势接管。</item>
 /// <item>收起时指针下的窗口逐渐放大，松手后它成为前台（macOS 行为）。</item>
 /// <item>桌面条：指针移到顶部展开；点另一个桌面时真实桌面立刻切换，覆盖层把那个桌面的缩略图放大到全屏后撤掉（macOS 调度中心）。</item>
-/// <item>总览里四指横滑（<see cref="DesktopSwipe"/>）：相邻桌面的缩略图随手指放大、其余内容淡出；松手按投影决定切过去还是缩回。</item>
+/// <item>总览里四指横滑（<see cref="DesktopSwipe"/>）：留在总览里，窗口区域 1:1 跟手横向滑到相邻桌面那一页（各桌面各排一页），
+/// 松手按投影决定停在哪一页，首尾橡皮筋；换页时真实桌面立刻切换（macOS 调度中心）。</item>
 /// </list>
 /// 线程：IGestureTarget 方法在输入线程；<see cref="Sample"/> / <see cref="WindowRects"/> 在渲染线程；
 /// <see cref="SetScene"/>、<see cref="SetHovered"/>、<see cref="Toggle"/> 等在 UI 线程。宿主回调都在锁外发出。
@@ -82,11 +88,13 @@ public sealed class OverviewController : IGestureTarget
     private volatile OverviewScene _scene = OverviewScene.Empty;
     private volatile DesktopBarState _desktops = DesktopBarState.Empty;
     private int _zoomDesktop = -1;
-    private bool _zoomTracking; // 四指横滑正在跟手预览 _zoomDesktop
-    private bool _zoomCommitted; // 已决定切过去（真实桌面已在切换）：放大落定时撤层
-    private int _swipeDirection; // +1 = 右边的桌面（手指向左），-1 = 左边
-    private double _swipeTravelMm = 45;
-    private bool _swipeIgnoring;
+    private readonly InteractiveTransition _pager = new(0, 0, 0) { OverscrollBelow = 0.12, OverscrollAbove = 0.12 };
+    private volatile IReadOnlyList<OverviewScene> _pages = []; // 每个桌面一页（下标 = 桌面下标）；没有时只有 _scene
+    private volatile int _page = -1; // 当前页（= 当前桌面）
+    private bool _pagerTracking;
+    private bool _pagerIgnoring;
+    private int _pageAtBegin;
+    private double _pageTravelMm = 55;
 
     private bool _visible;
     private bool _prewarming;
@@ -110,7 +118,22 @@ public sealed class OverviewController : IGestureTarget
     /// <summary>总览展开时，切桌面的手势（四指横滑）改由它处理：在总览里跟手预览并切到相邻桌面。</summary>
     public IGestureTarget DesktopSwipe { get; }
 
-    public OverviewScene Scene => _scene;
+    /// <summary>当前页的场景（有多页时随翻页变化；收起、选窗口、命中测试都按它）。</summary>
+    public OverviewScene Scene
+    {
+        get
+        {
+            var pages = _pages;
+            int page = _page;
+            return page >= 0 && page < pages.Count ? pages[page] : _scene;
+        }
+    }
+
+    /// <summary>各桌面的页（下标 = 桌面下标；没有多页时为空）。</summary>
+    public IReadOnlyList<OverviewScene> Pages => _pages;
+
+    /// <summary>当前页（= 当前桌面下标，-1 = 没有多页）。</summary>
+    public int Page => _page;
 
     public bool IsVisible
     {
@@ -123,7 +146,25 @@ public sealed class OverviewController : IGestureTarget
     public DesktopBarState Desktops => _desktops;
 
     /// <summary>宿主预热完成后提供场景（整体替换）。</summary>
-    public void SetScene(OverviewScene scene) => _scene = scene;
+    public void SetScene(OverviewScene scene)
+    {
+        _scene = scene;
+        _pages = [];
+        _page = -1;
+    }
+
+    /// <summary>
+    /// 宿主预热时提供每个桌面的页（<paramref name="pages"/>[<paramref name="current"/>] 就是当前桌面的场景）。
+    /// 有两页以上时总览里四指横滑可以翻页。
+    /// </summary>
+    public void SetPages(IReadOnlyList<OverviewScene> pages, int current)
+    {
+        _scene = current >= 0 && current < pages.Count ? pages[current] : OverviewScene.Empty;
+        _pager.SetRange(0, Math.Max(0, pages.Count - 1), 0);
+        _pager.SnapTo(Math.Max(0, current));
+        _pages = pages;
+        _page = current;
+    }
 
     /// <summary>宿主预热时提供桌面条内容（没有虚拟桌面服务时为 <see cref="DesktopBarState.Empty"/>）。</summary>
     public void SetDesktops(DesktopBarState desktops) => _desktops = desktops;
@@ -156,7 +197,6 @@ public sealed class OverviewController : IGestureTarget
             if (!current)
             {
                 _zoomDesktop = index;
-                _zoomCommitted = true;
                 _focusTarget = null;
                 _zoom.AnimateTo(1, hostUs);
             }
@@ -200,9 +240,9 @@ public sealed class OverviewController : IGestureTarget
         bool show = false, cancelPrewarm = false;
         lock (_gate)
         {
-            if (_zoomDesktop >= 0)
+            if (_zoomDesktop >= 0 || _pagerTracking)
             {
-                _ignoring = true; // 正在放大进入别的桌面（真实桌面已经切过去了），等它落定
+                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页，等它落定
                 return;
             }
             if (!_visible && !IsOpeningDirection(e))
@@ -229,6 +269,7 @@ public sealed class OverviewController : IGestureTarget
                 _closingGesture = _valueAtBegin > 0.5;
                 _focusTarget = null;
                 if (_bar.Target != 0) _bar.AnimateTo(0, e.HostTimeUs); // 手势接管：桌面条先收回
+                if (_page >= 0) _pager.SnapTo(_page); // 翻页动画还没播完就开始收起：先停到当前页
             }
         }
         if (cancelPrewarm) _host.CancelPrewarm();
@@ -334,9 +375,10 @@ public sealed class OverviewController : IGestureTarget
     {
         lock (_gate)
         {
-            if (!_visible || _zoomDesktop >= 0) return;
+            if (!_visible || _zoomDesktop >= 0 || _pagerTracking) return;
             _focusTarget = focusWindowId;
             _transition.AnimateTo(0, hostUs);
+            if (_page >= 0) _pager.SnapTo(_page);
             if (_bar.Target != 0) _bar.AnimateTo(0, hostUs);
         }
         _host.Closing(focusWindowId);
@@ -349,6 +391,7 @@ public sealed class OverviewController : IGestureTarget
         var s = _transition.Sample(hostUs);
         var bar = _bar.Sample(hostUs);
         var zoom = _zoom.Sample(hostUs);
+        var pager = _pager.Sample(hostUs);
         bool hide = false, activate = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
         long? focus = null;
         bool visible;
@@ -359,21 +402,15 @@ public sealed class OverviewController : IGestureTarget
             zoomDesktop = _zoomDesktop;
             if (_zoomDesktop >= 0)
             {
-                if (zoom.JustSettled && !_zoomTracking && _zoomCommitted && zoom.Value >= 1 - SettleEpsilon && _visible)
+                if (zoom.JustSettled && zoom.Value >= 1 - SettleEpsilon && _visible)
                 {
                     // 放大进入别的桌面：落定时撤层（真实桌面早已切过去），各状态复位，下次从收起态开始
                     _visible = false;
                     hide = true;
                     _zoomDesktop = -1;
-                    _zoomCommitted = false;
                     _transition.SnapTo(0);
                     _bar.SnapTo(0);
                     _zoom.SnapTo(0);
-                }
-                else if (zoom.JustSettled && !_zoomTracking && !_zoomCommitted && zoom.Value <= SettleEpsilon)
-                {
-                    _zoomDesktop = -1; // 四指横滑没切过去：缩回原位，回到普通总览
-                    zoomDesktop = -1;
                 }
             }
             else if (s.JustSettled && _visible && !_tracking)
@@ -397,7 +434,7 @@ public sealed class OverviewController : IGestureTarget
         if (hide) _host.Hide(focus);
         else if (activate) _host.Activate();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
-            s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0);
+            s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0, _page >= 0 ? pager.Value : 0);
     }
 
     /// <summary>
@@ -449,54 +486,71 @@ public sealed class OverviewController : IGestureTarget
 
     private void BeginDesktopSwipe(in GestureEvent e)
     {
-        int index;
         lock (_gate)
         {
-            // 手指向左 = 内容向左 = 右边的桌面过来（与四指切桌面一致）
-            _swipeDirection = e.Direction == GestureDirection.Left ? 1 : e.Direction == GestureDirection.Right ? -1 : 0;
-            index = _desktops.Current + _swipeDirection;
-            _swipeIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _swipeDirection == 0 ||
-                             _transition.Target < 1 - SettleEpsilon || index < 0 || index >= _desktops.Count;
-            if (_swipeIgnoring) return; // 首尾桌面之外、或总览还没展开好：不接管
-            _zoomDesktop = index;
-            _zoomTracking = true;
-            _zoomCommitted = false;
-            _swipeTravelMm = Math.Max(1, _config().TravelMm * 1.5);
-            _zoom.BeginTracking(e.HostTimeUs);
+            _pagerIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _pages.Count < 2 || _page < 0 ||
+                             _transition.Target < 1 - SettleEpsilon;
+            if (_pagerIgnoring) return; // 总览还没展开好、或只有一个桌面：不接管
+            _pagerTracking = true;
+            _pageAtBegin = _page;
+            _pageTravelMm = Math.Max(1, _config().TravelMm * 1.8);
+            if (_bar.Target != 0) _bar.AnimateTo(0, e.HostTimeUs);
+            _pager.BeginTracking(e.HostTimeUs);
         }
-        _host.PreviewDesktop(index);
     }
 
     private void UpdateDesktopSwipe(in GestureEvent e)
     {
         lock (_gate)
         {
-            if (_swipeIgnoring || !_zoomTracking) return;
+            if (_pagerIgnoring || !_pagerTracking) return;
         }
-        _zoom.Track(_swipeDirection * -e.DxMm / _swipeTravelMm);
+        _pager.Track(-e.DxMm / _pageTravelMm); // 手指向左 = 内容向左 = 右边的桌面过来
     }
 
     private void EndDesktopSwipe(in GestureEvent e)
     {
-        int commit = -1;
+        int changed = -1;
         lock (_gate)
         {
-            if (_swipeIgnoring || !_zoomTracking) return;
-            _zoomTracking = false;
+            if (_pagerIgnoring || !_pagerTracking) return;
+            _pagerTracking = false;
             if (e.Phase == GesturePhase.Cancelled)
             {
-                _zoom.CancelTracking(0, e.HostTimeUs);
+                _pager.CancelTracking(_pageAtBegin, e.HostTimeUs);
                 return;
             }
-            double target = _zoom.Release(_swipeDirection * -e.VxMmS / _swipeTravelMm, e.HostTimeUs);
-            if (target >= 1 - SettleEpsilon)
+            // 目标只能是开始那一页或它两侧相邻的一页，且在当前位置两侧的整数之间（反向甩只会弹回）
+            int start = _pageAtBegin;
+            double target = _pager.Release(-e.VxMmS / _pageTravelMm, e.HostTimeUs,
+                (current, projected) => Math.Clamp(Math.Round(projected), Math.Max(start - 1, Math.Floor(current)), Math.Min(start + 1, Math.Ceiling(current))));
+            int page = (int)Math.Round(target);
+            if (page != _page && page >= 0 && page < _pages.Count)
             {
-                _zoomCommitted = true;
-                commit = _zoomDesktop;
+                _page = page;
+                _desktops = _desktops with { Current = page };
+                _hovered = null;
+                changed = page;
             }
         }
-        if (commit >= 0) _host.SwitchDesktop(commit); // 松手就切（不等动画），覆盖层继续把放大播完
+        if (changed >= 0) _host.PageChanged(changed); // 松手就切真实桌面（不等动画），总览留在新桌面上
     }
+
+    /// <summary>非当前页的窗口（渲染线程，零分配）：总是在平铺位、不透明（翻页时它们已经展开好了），随放大进入别的桌面淡出。</summary>
+    public static void PageRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest, Span<double> opacity, Span<double> active)
+    {
+        double fade = 1 - Math.Clamp(frame.Zoom, 0, 1);
+        for (int i = 0; i < scene.Count; i++)
+        {
+            var w = scene.Windows[i];
+            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion), 1, false);
+            opacity[i] *= fade;
+            active[i] = w.IsForeground ? 1 : 0; // 宿主把各桌面最上层的窗口标成前台：换到那一页再收起时它会被激活
+        }
+    }
+
+    /// <summary>第 <paramref name="page"/> 页在翻页位置 <paramref name="position"/> 下的横向偏移（像素）。</summary>
+    public static double PageOffset(int page, double position, double width, double gap) => (page - position) * (width + gap);
 
     // 展开方向：竖直轴向上、水平轴向右为正
     private static double OpenAxisMm(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? -e.DyMm : e.DxMm;

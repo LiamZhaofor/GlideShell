@@ -104,7 +104,7 @@ public class DesktopBarTests
         public void Closing(long? focusWindowId) => Calls.Add($"Closing:{focusWindowId?.ToString() ?? "-"}");
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
         public void SwitchDesktop(int desktopIndex) => Calls.Add($"SwitchDesktop:{desktopIndex}");
-        public void PreviewDesktop(int desktopIndex) => Calls.Add($"PreviewDesktop:{desktopIndex}");
+        public void PageChanged(int desktopIndex) => Calls.Add($"PageChanged:{desktopIndex}");
     }
 
     private static (OverviewController C, FakeHost Host, long T) Opened()
@@ -171,50 +171,80 @@ public class DesktopBarTests
     private static GestureEvent Swipe4(GesturePhase phase, double dxMm, double vx, long t, GestureDirection direction = GestureDirection.Left)
         => new(GestureKind.Swipe, phase, 4, GestureAxis.Horizontal, direction, dxMm, 0, vx, 0, t, t);
 
-    [Fact]
-    public void Four_finger_swipe_in_the_overview_zooms_into_the_neighbor_and_switches_on_release()
+    /// <summary>展开好的总览，三个桌面各一页（每页一个窗口），当前第 1 个桌面。</summary>
+    private static (OverviewController C, FakeHost Host, long T, OverviewScene[] Pages) OpenedWithPages()
     {
-        var (c, host, t) = Opened(); // 当前是第 1 个桌面（下标 0），右边有桌面 2
-        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
-        Assert.Equal("PreviewDesktop:1", host.Calls[^1]);
-        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -30, -200, t + 100_000));
-        var mid = c.Sample(t + 110_000);
-        Assert.Equal(1, mid.ZoomDesktop);
-        Assert.Equal(30 / 45.0, mid.Zoom, 3); // 1:1 跟手（行程 = 总览行程 × 1.5）
-        Assert.DoesNotContain(host.Calls, x => x.StartsWith("SwitchDesktop", StringComparison.Ordinal)); // 手指在板上不切
+        var (c, host, t) = Opened();
+        var pages = Enumerable.Range(0, 3)
+            .Select(d => OverviewScene.Build([new OverviewWindow(d + 1, $"w{d}", new RectD(100, 100, 800, 600), false, d == 0, 0, "p")],
+                [new OverviewArea(Area, 1.5)]))
+            .ToArray();
+        c.SetPages(pages, 0);
+        return (c, host, t, pages);
+    }
 
-        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -30, -200, t + 120_000));
-        Assert.Equal("SwitchDesktop:1", host.Calls[^1]); // 松手就切
-        c.Sample(t + 3_000_000);
+    [Fact]
+    public void Four_finger_swipe_in_the_overview_pages_to_the_neighbor_and_stays_in_the_overview()
+    {
+        var (c, host, t, pages) = OpenedWithPages();
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -27, -200, t + 100_000));
+        var mid = c.Sample(t + 110_000);
+        Assert.Equal(27 / 54.0, mid.PagePosition, 3); // 1:1 跟手（一页 = 总览行程 × 1.8）
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("PageChanged", StringComparison.Ordinal)); // 手指在板上不切
+
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -27, -200, t + 120_000));
+        Assert.Equal("PageChanged:1", host.Calls[^1]); // 松手就切真实桌面
+        Assert.Same(pages[1], c.Scene); // 之后收起、选窗口都按新桌面那一页
+        Assert.Equal(1, c.Desktops.Current); // 桌面条高亮跟过去
+
+        var settled = c.Sample(t + 3_000_000);
+        Assert.Equal(1, settled.PagePosition, 3);
+        Assert.True(settled.Visible); // 留在总览里
+        Assert.Equal(1, settled.Progress, 3);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("Hide", StringComparison.Ordinal));
+
+        // 换页后照常收起
+        c.Close(null, t + 3_000_000);
+        c.Sample(t + 6_000_000);
         Assert.Equal("Hide:-", host.Calls[^1]);
     }
 
     [Fact]
-    public void Short_four_finger_swipe_in_the_overview_shrinks_back_without_switching()
+    public void Short_four_finger_swipe_in_the_overview_springs_back_to_the_same_page()
     {
-        var (c, host, t) = Opened();
+        var (c, host, t, pages) = OpenedWithPages();
         c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
         c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -8, 0, t + 100_000));
         c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -8, 0, t + 120_000));
-        var back = c.Sample(t + 3_000_000);
-        Assert.Equal(-1, back.ZoomDesktop);
-        Assert.Equal(0, back.Zoom, 6);
-        Assert.True(back.Visible); // 仍在总览里
-        Assert.DoesNotContain(host.Calls, x => x.StartsWith("SwitchDesktop", StringComparison.Ordinal) || x.StartsWith("Hide", StringComparison.Ordinal));
-        c.GoToDesktop(2, t + 3_000_000); // 之后还能正常点桌面条
-        Assert.Equal("SwitchDesktop:2", host.Calls[^1]);
+        Assert.Equal(0, c.Sample(t + 3_000_000).PagePosition, 3);
+        Assert.Same(pages[0], c.Scene);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("PageChanged", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Four_finger_swipe_past_the_last_desktop_is_ignored()
+    public void Four_finger_swipe_past_the_first_desktop_rubber_bands_back()
     {
-        var (c, host, t) = Opened();
+        var (c, host, t, _) = OpenedWithPages();
         const GestureDirection right = GestureDirection.Right; // 手指向右 = 左边的桌面，第 1 个桌面左边没有
         c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t, right));
         c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, 40, 0, t + 100_000, right));
+        var pulled = c.Sample(t + 110_000);
+        Assert.InRange(pulled.PagePosition, -0.2, -0.01); // 橡皮筋：跟一点但有阻尼
         c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, 40, 300, t + 120_000, right));
-        Assert.Equal(-1, c.Sample(t + 200_000).ZoomDesktop);
-        Assert.DoesNotContain(host.Calls, x => x.Contains("Desktop", StringComparison.Ordinal));
+        Assert.Equal(0, c.Sample(t + 3_000_000).PagePosition, 3);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("PageChanged", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Four_finger_swipe_is_ignored_without_pages()
+    {
+        var (c, host, t) = Opened(); // 有桌面条但没有多页（例如经典缩略图模式）
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -40, 0, t + 100_000));
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -40, -300, t + 120_000));
+        Assert.Equal(0, c.Sample(t + 200_000).PagePosition, 6);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("PageChanged", StringComparison.Ordinal));
     }
 
     [Fact]

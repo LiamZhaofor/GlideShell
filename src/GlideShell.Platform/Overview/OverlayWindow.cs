@@ -13,6 +13,8 @@ namespace GlideShell.Platform.Overview;
 /// 窗口自身只画黑底、标题、悬停框与桌面条的桌面名（偶尔重绘）；每帧变化的内容全部是 DWM 缩略图，由渲染线程更新。
 /// 共享缩略图模式下合成树分两支：下面是窗口（<see cref="Layer"/>），上面是桌面条（<see cref="DesktopBarView"/>），
 /// 放大进入别的桌面时那个桌面的缩略图要盖住全部窗口。
+/// 总览里可以翻页（每个桌面一页窗口）：打开时所在桌面的那一页就是 <see cref="Layer"/>（带壁纸，壁纸不动），
+/// 其余桌面各一层不带壁纸的缩略图；翻页时各页窗口的矩形整体横向平移。
 /// </summary>
 internal sealed unsafe class OverlayWindow : NativeWindow
 {
@@ -28,8 +30,21 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private bool _barVisible;
     private bool _barExpanded;
     private DesktopBarHit _barHovered = DesktopBarHit.Nothing;
-    private OverviewScene _scene = OverviewScene.Empty;
+    private OverviewScene _scene = OverviewScene.Empty; // 当前页（标题、悬停框按它画）
     private IReadOnlyList<int> _members = [];
+    private readonly Dictionary<Guid, SharedThumbnailLayer> _pageCache = []; // 非起始页的缩略图层，按桌面缓存、跨会话复用
+    private volatile Pages? _pages; // 本次会话的各页（没有多页时为 null）
+
+    /// <summary>本次会话的各页。下标 = 桌面下标；<see cref="Home"/> 那一页用 <see cref="Layer"/>，其余用 <see cref="Layers"/>。</summary>
+    private sealed class Pages(int home, IThumbnailLayer?[] layers, OverviewScene[] scenes, IReadOnlyList<int>[] members, RectD[][] scratch)
+    {
+        public int Home { get; } = home;
+        public IThumbnailLayer?[] Layers { get; } = layers;
+        public OverviewScene[] Scenes { get; } = scenes;
+        public IReadOnlyList<int>[] Members { get; } = members;
+        public RectD[][] Scratch { get; } = scratch; // 渲染线程：平移后的矩形
+        public volatile int Current = home;
+    }
     private bool _labelsVisible;
     private int _hovered = -1;
 
@@ -94,6 +109,79 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         return sharedFailure;
     }
 
+    /// <summary>本次会话有没有多页（共享缩略图模式下才有）。</summary>
+    public bool HasPages => _pages is not null;
+
+    /// <summary>
+    /// UI 线程：为其余桌面的页注册缩略图（不可见；当前桌面那一页已由 <see cref="Prepare"/> 注册）。
+    /// <paramref name="members"/>[k] 是第 k 页里画在本屏的窗口（场景下标）。只在共享缩略图模式下可用；失败返回 HRESULT。
+    /// </summary>
+    public int PreparePages(IReadOnlyList<OverviewScene> scenes, int home, IReadOnlyList<IReadOnlyList<int>> members, IReadOnlyList<Guid> desktops)
+    {
+        _pages = null;
+        if (_layer is not SharedThumbnailLayer || _shared is null || _content is null) return 0;
+        foreach (var id in _pageCache.Keys.Where(id => !desktops.Contains(id)).ToList())
+        {
+            _pageCache[id].Unregister();
+            _pageCache.Remove(id);
+        }
+        var layers = new IThumbnailLayer?[scenes.Count];
+        var scratch = new RectD[scenes.Count][];
+        for (int k = 0; k < scenes.Count; k++)
+        {
+            scratch[k] = new RectD[scenes[k].Count];
+            if (k == home) continue;
+            var windows = members[k].Select(i => (i, (nint)scenes[k].Windows[i].Id)).ToList();
+            _pageCache.TryGetValue(desktops[k], out var previous);
+            var layer = SharedThumbnailLayer.Register(_shared, _content, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, previous, out int hr, withWallpaper: false);
+            if (layer is null)
+            {
+                _pageCache.Remove(desktops[k]);
+                return hr == 0 ? unchecked((int)0x80004005) : hr;
+            }
+            _pageCache[desktops[k]] = layer;
+            layers[k] = layer;
+        }
+        _pages = new Pages(home, layers, [.. scenes], [.. members], scratch);
+        return 0;
+    }
+
+    /// <summary>UI 线程：翻到了第 <paramref name="page"/> 页（标题、悬停框、提层与重排都改按这一页）。</summary>
+    public void SetCurrentPage(int page)
+    {
+        if (_pages is not { } pages || page < 0 || page >= pages.Scenes.Length) return;
+        pages.Current = page;
+        _scene = pages.Scenes[page];
+        _members = pages.Members[page];
+        _hovered = -1;
+        User32.InvalidateRect(Handle, null, 1);
+    }
+
+    /// <summary>UI 线程：桌面条上的当前桌面变了（翻页后），重画高亮。</summary>
+    public void SetBarCurrent(int index)
+    {
+        _desktops = _desktops with { CurrentIndex = index };
+        User32.InvalidateRect(Handle, null, 1);
+    }
+
+    /// <summary>当前页的缩略图层（提层、重排用）。</summary>
+    private IThumbnailLayer CurrentLayer => _pages is { } p && p.Current != p.Home ? p.Layers[p.Current] ?? _layer : _layer;
+
+    private void ReplaceCurrentLayer(IThumbnailLayer layer)
+    {
+        if (_pages is { } p && p.Current != p.Home)
+        {
+            var old = p.Layers[p.Current];
+            p.Layers[p.Current] = layer;
+            // 缓存里也换成新层（旧层的视觉已经转交给它）
+            if (layer is SharedThumbnailLayer replaced)
+                foreach (var (id, cached) in _pageCache.ToList())
+                    if (ReferenceEquals(cached, old)) _pageCache[id] = replaced;
+            return;
+        }
+        _layer = layer;
+    }
+
     /// <summary>本次会话的桌面条几何（没有桌面条时为 null）。</summary>
     public DesktopBarGeometry? Bar => _bar.Geometry;
 
@@ -113,12 +201,36 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// <summary>UI 线程：点了第 <paramref name="index"/> 个桌面，它要放大进入，挪到其余桌面上面。</summary>
     public void BeginZoom(int index) => _bar.BringToFront(index);
 
-    /// <summary>渲染线程：摆好本帧的窗口与桌面条（共享缩略图模式下两者一次 Commit，同一帧生效）。返回第一个失败的 HRESULT。</summary>
-    public int Render(ReadOnlySpan<RectD> rects, ReadOnlySpan<double> opacity, ReadOnlySpan<double> active, double wallpaper, in OverviewFrame frame)
+    /// <summary>
+    /// 渲染线程：摆好本帧的窗口与桌面条（共享缩略图模式下一次 Commit，同一帧生效）。返回第一个失败的 HRESULT。
+    /// <paramref name="rects"/> 等是当前页（按进度飞行）；有多页时其余各页取 <paramref name="pageRects"/> 等（已在平铺位），
+    /// 每页按翻页位置整体横向平移。
+    /// </summary>
+    public int Render(ReadOnlySpan<RectD> rects, ReadOnlySpan<double> opacity, ReadOnlySpan<double> active, double wallpaper, in OverviewFrame frame,
+        RectD[][]? pageRects = null, double[][]? pageOpacity = null, double[][]? pageActive = null)
     {
-        if (_layer is SharedThumbnailLayer shared && _bar.HasThumbnails && _shared is { } backend)
+        if (_layer is SharedThumbnailLayer home && _shared is { } backend && (_bar.HasThumbnails || _pages is not null))
         {
-            int hr = shared.Apply(rects, opacity, active, wallpaper, commit: false);
+            int hr = 0;
+            if (_pages is { } pages && pageRects is not null && pageOpacity is not null && pageActive is not null)
+            {
+                double gap = 48 * Monitor.DpiScale, width = Monitor.WorkArea.Width;
+                for (int k = 0; k < pages.Scenes.Length && k < pageRects.Length; k++)
+                {
+                    bool current = k == pages.Current;
+                    var src = current ? rects : pageRects[k];
+                    var op = current ? opacity : pageOpacity[k];
+                    var ac = current ? active : pageActive[k];
+                    var dst = pages.Scratch[k];
+                    int n = Math.Min(dst.Length, Math.Min(src.Length, Math.Min(op.Length, ac.Length)));
+                    double dx = OverviewController.PageOffset(k, frame.PagePosition, width, gap);
+                    for (int i = 0; i < n; i++) dst[i] = src[i].Offset(dx, 0);
+                    var layer = k == pages.Home ? home : pages.Layers[k] as SharedThumbnailLayer;
+                    int r = layer?.Apply(dst.AsSpan(0, n), op[..n], ac[..n], k == pages.Home ? wallpaper : 0, commit: false) ?? 0;
+                    if (hr == 0) hr = r;
+                }
+            }
+            else hr = home.Apply(rects, opacity, active, wallpaper, commit: false);
             _bar.Apply(frame);
             int committed = backend.Commit();
             return hr != 0 ? hr : committed;
@@ -139,16 +251,18 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// <summary>UI 线程：把某个场景窗口的缩略图提到最上层（不是本屏的窗口时什么也不做）。</summary>
     public void RaiseWindow(int sceneIndex)
     {
-        if (_members.Contains(sceneIndex)) _layer = _layer.BringToTop(Handle, sceneIndex);
+        if (_members.Contains(sceneIndex)) ReplaceCurrentLayer(CurrentLayer.BringToTop(Handle, sceneIndex));
     }
 
     /// <summary>UI 线程：按真实桌面当前的 Z 序重排本屏缩略图的层次（撤层前用）。</summary>
-    public void Restack(IReadOnlyList<nint> topFirst) => _layer = _layer.Restack(Handle, topFirst);
+    public void Restack(IReadOnlyList<nint> topFirst) => ReplaceCurrentLayer(CurrentLayer.Restack(Handle, topFirst));
 
     /// <summary>会话结束：隐藏缩略图但保留注册，下次打开时复用。</summary>
     public void Release()
     {
         _layer.HideAll();
+        HidePages();
+        _pages = null;
         _bar.HideAll();
         _barVisible = false;
         _scene = OverviewScene.Empty;
@@ -161,6 +275,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         var old = _layer;
         _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
         old.Unregister();
+        _pages = null;
+        foreach (var layer in _pageCache.Values) layer.Unregister();
+        _pageCache.Clear();
         _bar.Dispose();
         _scene = OverviewScene.Empty;
         _members = [];
@@ -190,8 +307,15 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
         User32.ShowWindow(Handle, User32.SW_HIDE);
         _layer.HideAll();
+        HidePages();
         _bar.HideAll();
         IsShown = false;
+    }
+
+    private void HidePages()
+    {
+        if (_pages is not { } pages) return;
+        foreach (var layer in pages.Layers) layer?.HideAll();
     }
 
     /// <summary>UI 线程：标题显隐 / 悬停窗口变化时才重绘（不是每帧）。</summary>

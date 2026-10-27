@@ -14,6 +14,7 @@ public static class SyntheticTouch
     {
         ["overview"] = (3, [new(300, 0, -32), new(300), new(0, Lift: true)]),
         ["overview-cancel"] = (3, [new(250, 0, -9), new(250), new(0, Lift: true)]),
+        ["overview-close"] = (3, [new(300, 0, 32), new(150), new(0, Lift: true)]),
         ["overview-flick"] = (3, [new(70, 0, -12), new(0, Lift: true)]),
         ["switch"] = (3, [new(600, -46, 0), new(400), new(0, Lift: true)]),
         ["switch-back"] = (3, [new(400, -46, 0), new(400, 40, 0), new(300), new(0, Lift: true)]),

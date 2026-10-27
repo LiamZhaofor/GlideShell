@@ -374,9 +374,10 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     /// 注册（不可见）。先把新视觉全部建好（加在最上层），成功后才撤掉上一层里不再复用的部分——
     /// 留下的复用前缀在最下面、新建的按 Z 序在上面，顺序自然正确。
     /// 任何一步失败：撤掉本次新建的、把上一层整个释放，返回 null，调用方退回经典缩略图。
+    /// <paramref name="withWallpaper"/> 为 false 时只有窗口（总览里各桌面的窗口页共用一层静止的背景）。
     /// </summary>
     public static SharedThumbnailLayer? Register(SharedThumbnailBackend backend, OverlayComposition composition, nint overlay, RectD workArea,
-        double dpiScale, IReadOnlyList<(int SceneIndex, nint Hwnd)> windows, SharedThumbnailLayer? previous, out int hr)
+        double dpiScale, IReadOnlyList<(int SceneIndex, nint Hwnd)> windows, SharedThumbnailLayer? previous, out int hr, bool withWallpaper = true)
     {
         lock (backend.Gate)
         {
@@ -387,9 +388,11 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 
             // 壁纸：Progman 里本屏工作区那一块；Explorer 重启后句柄会变
             nint progman = User32.FindWindowW("Progman", null);
-            bool wallpaperKept = previous is not null && previous._wallpaper.Visual != 0 && previous._wallpaper.Hwnd == progman;
+            bool wallpaperKept = withWallpaper
+                ? previous is not null && previous._wallpaper.Visual != 0 && previous._wallpaper.Hwnd == progman
+                : previous is not null && previous._wallpaper.Visual == 0; // 不要壁纸：上一层也没有壁纸才能复用
             Entry wallpaper = wallpaperKept ? previous!._wallpaper : default;
-            if (!wallpaperKept && progman != 0)
+            if (withWallpaper && !wallpaperKept && progman != 0)
             {
                 User32.RECT pr;
                 User32.GetWindowRect(progman, &pr);

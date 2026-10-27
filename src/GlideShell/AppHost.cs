@@ -183,12 +183,29 @@ internal sealed class AppHost
     /// 在后台线程按真实时间回放合成手势（此模式不启动真实输入线程，识别器只有这一个调用方）。
     /// 回放结束 1.5 秒后退出，供自动化截屏验证。
     /// </summary>
+    /// <summary>模拟线程：按真实时间节奏回放一段预设脚本。</summary>
+    private void Replay(string script)
+    {
+        var (fingers, steps) = SyntheticTouch.Scripts[script];
+        long t0 = HostClock.NowUs();
+        foreach (var (atMs, contacts) in SyntheticTouch.Frames(fingers, steps))
+        {
+            long due = t0 + (long)(atMs * 1000);
+            while (HostClock.NowUs() < due) Thread.Sleep(1);
+            long now = HostClock.NowUs();
+            _recognizer?.Process(ContactFrame.Create(now, now, contacts));
+        }
+    }
+
     private void StartSimulation(string name)
     {
         // overview-bar：三指上滑展开总览，再（不动鼠标）展开桌面条、点相邻的桌面——验证桌面条与放大进入
         bool bar = name == "overview-bar";
-        // overview-swipe：三指上滑展开总览后，四指左滑在总览里切到右边的桌面
-        bool swipe = name == "overview-swipe";
+        // overview-swipe：三指上滑展开总览后，四指横滑在总览里翻到相邻桌面（右边有就往右，否则往左）；
+        // overview-swipe-close：翻页后再三指下滑收起；overview-swipe-left-close：固定往左翻（翻回有窗口的桌面）
+        bool swipe = name is "overview-swipe" or "overview-swipe-close" or "overview-swipe-left-close";
+        bool swipeClose = name is "overview-swipe-close" or "overview-swipe-left-close";
+        bool swipeLeft = name == "overview-swipe-left-close";
         if (swipe) name = "overview";
         // overview-hold：展开后停 6 秒再退出（留时间给外部用真实鼠标操作总览）
         int linger = name == "overview-hold" ? 6000 : 1500;
@@ -213,16 +230,15 @@ internal sealed class AppHost
             if (swipe)
             {
                 Thread.Sleep(900);
-                var (fingers, steps) = SyntheticTouch.Scripts["desktop-right"];
-                long t0 = HostClock.NowUs();
-                foreach (var (atMs, contacts) in SyntheticTouch.Frames(fingers, steps))
+                var d = _overview.Desktops;
+                Replay(!swipeLeft && d.Current < d.Count - 1 ? "desktop-right" : "desktop-left");
+                Log.Info("模拟：总览里四指横滑回放完毕");
+                if (swipeClose)
                 {
-                    long due = t0 + (long)(atMs * 1000);
-                    while (HostClock.NowUs() < due) Thread.Sleep(1);
-                    long now = HostClock.NowUs();
-                    _recognizer?.Process(ContactFrame.Create(now, now, contacts));
+                    Thread.Sleep(900);
+                    Replay("overview-close");
+                    Log.Info("模拟：三指下滑收起回放完毕");
                 }
-                Log.Info("模拟：总览里四指左滑回放完毕");
             }
             if (bar)
             {

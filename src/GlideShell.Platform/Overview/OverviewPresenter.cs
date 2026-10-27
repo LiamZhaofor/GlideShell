@@ -40,7 +40,19 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private readonly SharedThumbnailSource _shared;
     private readonly VirtualDesktopService? _desktops;
     private DesktopState _barState = DesktopState.Empty; // UI 线程：本次会话桌面条上的桌面
-    private List<OverviewWindow> _barWindows = []; // UI 线程：各桌面的窗口（Z 序），放大进入后交焦点用
+    private List<OverviewWindow> _barWindows = []; // UI 线程：各桌面不是最小化的窗口（Z 序），放大进入后交焦点用
+    private List<OverviewWindow> _allWindows = []; // UI 线程：各桌面的全部窗口（Z 序），排各桌面的页
+    private Guid? _homeDesktop; // UI 线程：打开总览时所在的桌面（那一页带壁纸，本次会话不能删）
+    private Guid? _pageTarget; // UI 线程：总览里翻页翻到的桌面（真实桌面已在切换）
+    private Guid? _pageFrom;
+    private volatile PageBuffers? _pageBuffers; // 其余各页每帧的矩形（UI 线程准备，渲染线程写）
+
+    private sealed class PageBuffers(int pages, Func<int, int> size)
+    {
+        public RectD[][] Rects { get; } = Enumerable.Range(0, pages).Select(k => new RectD[size(k)]).ToArray();
+        public double[][] Opacity { get; } = Enumerable.Range(0, pages).Select(k => new double[size(k)]).ToArray();
+        public double[][] Active { get; } = Enumerable.Range(0, pages).Select(k => new double[size(k)]).ToArray();
+    }
     private Guid? _switchTarget; // UI 线程：点了桌面条上的别的桌面，已经在下面切过去
     private Guid? _switchPrevious;
     private long _switchStartedMs;
@@ -113,6 +125,15 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             HideAfterDesktopSwitch(target);
             return;
         }
+        // 翻过页：等真实桌面切好；没有选中窗口就把焦点交给新桌面最上层的窗口（否则还留在旧桌面上看不见的窗口里）
+        if (_pageTarget is { } page)
+        {
+            long until = Environment.TickCount64 + 400;
+            while (Environment.TickCount64 < until &&
+                   (_desktops?.State.Current != page || !DesktopHandoff.CloakSettled(_allWindows, page, _pageFrom)))
+                Dwmapi.DwmFlush();
+            if (focusWindowId is null) DesktopHandoff.ActivateTop(_allWindows, page);
+        }
         // 选中的窗口通常已经在收起开始时切到前台了（Closing）；没有的话现在切，并等它真正成为前台（激活由目标程序的线程处理）
         if (focusWindowId is { } id)
         {
@@ -144,11 +165,26 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         ReleaseScene();
     });
 
-    public void PreviewDesktop(int desktopIndex) => _ui.Post(() =>
+    public void PageChanged(int desktopIndex) => _ui.Post(() =>
     {
-        if (!_shown) return;
-        foreach (var o in _overlays) o.BeginZoom(desktopIndex);
+        if (!_shown || _desktops is null || desktopIndex < 0 || desktopIndex >= _barState.Count) return;
+        var target = _barState.Desktops[desktopIndex];
+        _pageFrom ??= _barState.Current;
+        _pageTarget = target;
+        _barState = _barState with { CurrentIndex = desktopIndex };
+        foreach (var o in _overlays)
+        {
+            o.SetCurrentPage(desktopIndex);
+            o.SetBarCurrent(desktopIndex);
+        }
+        _raisedId = null;
+        _activatedId = null;
         Select(-1);
+        _ = _desktops.SwitchToAsync(target).ContinueWith(t =>
+        {
+            if (t.Result < 0) Log.Warn($"总览翻页：切换桌面失败 0x{t.Result:X8}");
+        }, TaskScheduler.Default);
+        Log.Info($"总览翻页：到桌面 {desktopIndex + 1}「{_barState.Names[desktopIndex]}」");
     });
 
     public void SwitchDesktop(int desktopIndex) => _ui.Post(() =>
@@ -241,8 +277,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         var desktops = _desktops is { Available: true } ? _desktops.State : DesktopState.Empty;
         bool bar = desktops.Count >= 2 && desktops.CurrentIndex >= 0;
         var bars = monitors.Select(m => bar ? DesktopBarGeometry.Compute(m.WorkArea, desktops.Count, m.DpiScale) : null).ToList();
-        var scene = OverviewScene.Build(windows, monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, bars[m.Index])).ToList(),
-            cfg.PrimaryMonitorOnly, primary);
+        var areas = monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, bars[m.Index])).ToList();
+        var scene = OverviewScene.Build(windows, areas, cfg.PrimaryMonitorOnly, primary);
         if (scene.Count > _rects.Length)
         {
             _rects = new RectD[scene.Count];
@@ -267,9 +303,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         // 桌面条里各桌面的窗口：跨桌面再枚举一次（最小化的不在桌面画面里）
         long t3 = HostClock.NowUs();
         _barState = bar ? desktops : DesktopState.Empty;
-        _barWindows = bar
-            ? WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true).Where(w => !w.IsMinimized).ToList()
-            : [];
+        _allWindows = bar ? WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true) : [];
+        _barWindows = _allWindows.Where(w => !w.IsMinimized).ToList();
         nint foreground = User32.GetForegroundWindow();
         foreach (var o in _overlays)
         {
@@ -278,11 +313,52 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             if (failure != 0) _shared.Disable(failure, "总览桌面条");
         }
         Controller.SetDesktops(bar ? new DesktopBarState(desktops.Names, desktops.CurrentIndex) : DesktopBarState.Empty);
+        _homeDesktop = bar ? desktops.Current : null;
+        _barStateHomeIndex = bar ? desktops.CurrentIndex : -1;
+        if (bar && shared is not null) PreparePages(desktops, desktops.CurrentIndex, scene, areas, cfg.PrimaryMonitorOnly, primary);
         _prepared = true;
         long t4 = HostClock.NowUs();
         Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t4 - t0) / 1000.0:F1}ms" +
                  $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}" +
                  (bar ? $" / 桌面条 {desktops.Count} 个桌面 {_barWindows.Count} 个窗口 {(t4 - t3) / 1000.0:F1}）" : "）"));
+    }
+
+    /// <summary>
+    /// 每个桌面排一页（总览里四指横滑翻页用）：<paramref name="home"/> 那一页就是 <paramref name="homeScene"/>（已注册、带壁纸），
+    /// 其余桌面用跨桌面枚举到的窗口排版。各桌面最上层的窗口标成前台：换到那一页再收起时它会被激活，活动阴影要画在它身上。
+    /// 任一块屏准备失败就不分页（四指横滑不接管）。
+    /// </summary>
+    private void PreparePages(DesktopState state, int home, OverviewScene homeScene, IReadOnlyList<OverviewArea> areas, bool primaryOnly, int primary)
+    {
+        var scenes = new OverviewScene[state.Count];
+        for (int d = 0; d < state.Count; d++)
+        {
+            if (d == home)
+            {
+                scenes[d] = homeScene;
+                continue;
+            }
+            var mine = _allWindows.Where(w => w.DesktopId == state.Desktops[d]).ToList();
+            int top = mine.FindIndex(w => !w.IsMinimized);
+            for (int i = 0; i < mine.Count; i++)
+                if (mine[i].IsForeground != (i == top)) mine[i] = mine[i] with { IsForeground = i == top };
+            scenes[d] = OverviewScene.Build(mine, areas, primaryOnly, primary);
+        }
+        foreach (var o in _overlays)
+        {
+            var members = scenes.Select(sc => (IReadOnlyList<int>)Enumerable.Range(0, sc.Count)
+                .Where(i => (primaryOnly ? primary : sc.Windows[i].MonitorIndex) == o.Monitor.Index || sc.Windows[i].Overlaps(o.Monitor.WorkArea))
+                .ToList()).ToList();
+            int failure = o.PreparePages(scenes, home, members, state.Desktops);
+            if (failure != 0)
+            {
+                _shared.Disable(failure, "总览翻页");
+                return;
+            }
+        }
+        if (!_overlays.All(o => o.HasPages)) return;
+        _pageBuffers = new PageBuffers(scenes.Length, k => scenes[k].Count);
+        Controller.SetPages(scenes, home);
     }
 
     /// <summary>UI 线程：按某个进度把全部缩略图摆好（显示覆盖层之前用；用局部数组，不碰渲染线程的缓冲）。</summary>
@@ -308,6 +384,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _raisedId = null;
         _activatedId = null;
         _barHovered = DesktopBarHit.Nothing;
+        _pageTarget = null;
+        _pageFrom = null;
+        _homeDesktop = null;
+        _pageBuffers = null;
         Controller.SetHovered(null);
     }
 
@@ -410,6 +490,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private void RemoveDesktop(int index)
     {
         if (_desktops is null || !_shown || index < 0 || index >= _barState.Count || _barState.Count < 2 || index == _barState.CurrentIndex) return;
+        if (_barState.Desktops[index] == _homeDesktop) return; // 打开总览时所在的桌面（那一页带着背景壁纸）本次不能删
         Guid target = _barState.Desktops[index], fallback = _barState.Desktops[index > 0 ? index - 1 : index + 1];
         string name = _barState.Names[index];
         _ = _desktops.RemoveDesktopAsync(target, fallback).ContinueWith(t =>
@@ -437,9 +518,26 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             if (failure != 0) _shared.Disable(failure, "总览桌面条");
         }
         Controller.SetDesktops(new DesktopBarState(state.Names, state.CurrentIndex));
+        // 桌面增删后页的下标都变了：按新列表重排各页（起始页的场景与注册不变）
+        var homeScene = Controller.Pages.Count > 0 && _homeDesktop is { } homeId && _barStateHomeIndex >= 0 && _barStateHomeIndex < Controller.Pages.Count
+            ? Controller.Pages[_barStateHomeIndex] : null;
+        int home = _homeDesktop is { } h ? state.Desktops.ToList().IndexOf(h) : -1;
+        _allWindows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true);
+        if (homeScene is not null && home >= 0 && _shared.Get() is not null)
+        {
+            var cfg = _config();
+            int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
+            var areas = monitors.Select(m => new OverviewArea(m.WorkArea, m.DpiScale, DesktopBarGeometry.Compute(m.WorkArea, state.Count, m.DpiScale))).ToList();
+            PreparePages(state, home, homeScene, areas, cfg.PrimaryMonitorOnly, primary);
+            foreach (var o in _overlays) o.SetCurrentPage(state.CurrentIndex);
+            Controller.SetPages(Controller.Pages, state.CurrentIndex);
+        }
+        _barStateHomeIndex = home;
         _barHovered = DesktopBarHit.Nothing;
         UpdateDecorations();
     }
+
+    private int _barStateHomeIndex = -1; // UI 线程：起始桌面在当前桌面列表里的下标
 
     private bool OnKey(uint vk)
     {
@@ -549,11 +647,23 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         OverviewController.WindowRects(scene, frame, rects.AsSpan(0, count), opacity.AsSpan(0, count));
         OverviewController.ActiveShadowWeights(scene, frame, active.AsSpan(0, count));
 
+        // 其余各页：已在平铺位，随翻页整体平移（覆盖层里按页偏移）
+        var pages = controller.Pages;
+        var buffers = _pageBuffers;
+        int currentPage = controller.Page;
+        bool paged = buffers is not null && pages.Count == buffers.Rects.Length && pages.Count > 1;
+        if (paged)
+            for (int k = 0; k < pages.Count; k++)
+                if (k != currentPage && pages[k].Count <= buffers!.Rects[k].Length)
+                    OverviewController.PageRects(pages[k], frame, buffers.Rects[k], buffers.Opacity[k], buffers.Active[k]);
+
         double wallpaper = (1 - _config().BackdropDim * Math.Clamp(frame.Progress, 0, 1)) * (1 - Math.Clamp(frame.Zoom, 0, 1));
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
-            int hr = o.Render(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame);
+            int hr = paged
+                ? o.Render(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame, buffers!.Rects, buffers.Opacity, buffers.Active)
+                : o.Render(rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame);
             if (hr != 0 && !_applyErrorLogged)
             {
                 _applyErrorLogged = true; // 每次会话只记一次
@@ -561,9 +671,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             }
         }
 
-        // 窗口标题：展开完成才显示；桌面条展开（窗口区域在动）或放大进入别的桌面时不显示（GDI 文字跟不上逐帧变化）
+        // 窗口标题与悬停框：展开完成才显示；桌面条展开、翻页（窗口区域在动）或放大进入别的桌面时不显示（GDI 文字跟不上逐帧变化）
         bool steady = frame.ZoomDesktop < 0;
-        bool labels = frame.LabelOpacity >= 0.5 && frame.BarExpansion < 0.02 && steady;
+        bool pageSettled = currentPage < 0 || Math.Abs(frame.PagePosition - currentPage) < 0.01; // 翻页途中窗口在横移
+        bool labels = frame.LabelOpacity >= 0.5 && frame.BarExpansion < 0.02 && steady && pageSettled;
         bool barShown = frame.LabelOpacity >= 0.5 && steady;
         bool barExpanded = frame.BarExpansion >= 0.5;
         if (labels != _labelsShown || barShown != _barShown || barExpanded != _barExpanded)

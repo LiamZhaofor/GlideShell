@@ -23,7 +23,7 @@ public class HotPathAllocationTests
         public void Closing(long? focusWindowId) { }
         public void Hide(long? focusWindowId) { }
         public void SwitchDesktop(int desktopIndex) { }
-        public void PreviewDesktop(int desktopIndex) { }
+        public void PageChanged(int desktopIndex) { }
     }
 
     private sealed class NoopSwitcherHost : ISwitcherHost
