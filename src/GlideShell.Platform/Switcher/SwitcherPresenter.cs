@@ -23,7 +23,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private volatile float _radiusPx;
     private readonly RenderLoop _render;
     private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
-    private OverlayComposition? _content, _decorRoot;
+    private OverlayComposition? _panelRoot, _content, _decorRoot; // 从下往上：烟灰面板、缩略图、文字与选中框
     private volatile SharedThumbnailLayer? _layer;
     private SwitcherDecor? _decor;
     private SharedThumbnailBackend? _backend;
@@ -94,10 +94,11 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _layer = null;
         _decor?.Dispose();
         _decor = null;
+        _panelRoot?.Dispose();
         _content?.Dispose();
         _decorRoot?.Dispose();
         _composition?.Dispose();
-        _content = _decorRoot = _composition = null;
+        _panelRoot = _content = _decorRoot = _composition = null;
     }
 
     // ---------- UI 线程 ----------
@@ -122,22 +123,28 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 
         var layout = SwitcherLayout.Create(windows.Select(w => (w.Source.Width, w.Source.Height)).ToList(), monitor.WorkArea, monitor.DpiScale);
         var bandRect = layout.BandRect(monitor.DpiScale);
-        if (_band is null || _band.Rect != bandRect || _band.Monitor.DpiScale != monitor.DpiScale)
-        {
-            DisposeComposition();
-            _band?.Dispose();
-            _band = new SwitcherBand(monitor, bandRect);
-        }
+        // 合成层可用时横带窗口本身完全透明（没有 GDI 表面），背景是合成层里半透明的烟灰面板
+        bool wantComposed = _shared?.Get() is not null && _shared.Decor(_ui) is not null;
+        if (_band is null || _band.Rect != bandRect || _band.Monitor.DpiScale != monitor.DpiScale || _band.Composed != wantComposed)
+            RecreateBand(monitor, bandRect, wantComposed);
         var scene = new SwitcherScene(windows, layout);
         var old = _thumbs;
-        bool composed = PrepareComposition(scene, monitor, bandRect);
-        _thumbs = composed ? Thumbs.Empty : Thumbs.Register(_band.Handle, bandRect, scene);
+        bool composed = wantComposed && PrepareComposition(scene, monitor, bandRect);
+        if (!composed && _band!.Composed) RecreateBand(monitor, bandRect, false); // 合成层失败：退回经典缩略图 + GDI
+        _thumbs = composed ? Thumbs.Empty : Thumbs.Register(_band!.Handle, bandRect, scene);
         old.Unregister();
-        _band.SetScene(scene, drawTitle: !composed);
+        _band!.SetScene(scene, drawTitle: !composed);
         _labelFor = -1;
         Controller.SetScene(scene, HostClock.NowUs());
         _prepared = true;
         Log.Info($"切换条预热：{windows.Count} 个窗口，耗时 {(HostClock.NowUs() - t0) / 1000.0:F1}ms");
+    }
+
+    private void RecreateBand(MonitorInfo monitor, RectD bandRect, bool composed)
+    {
+        DisposeComposition();
+        _band?.Dispose();
+        _band = new SwitcherBand(monitor, bandRect, composed);
     }
 
     /// <summary>共享缩略图 + 合成层装饰；不可用或失败时返回 false（用经典缩略图）。</summary>
@@ -154,7 +161,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         if (_backend != backend) DisposeComposition();
         _backend = backend;
         _composition ??= OverlayComposition.Create(backend, _band.Handle, out hr);
-        if (_composition is not null) _content ??= _composition.CreateBranch(out hr);
+        if (_composition is not null) _panelRoot ??= _composition.CreateBranch(out hr);
+        if (_panelRoot is not null) _content ??= _composition!.CreateBranch(out hr);
         if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out hr);
         var layer = _decorRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, bandRect, monitor.DpiScale,
             scene.Windows.Select((w, i) => (i, (nint)w.Id)).ToList(), _layer, out hr, withWallpaper: false);
@@ -172,7 +180,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             _decor.Dispose();
             _decor = null;
         }
-        _decor ??= new SwitcherDecor(res, _decorRoot!, monitor, bandRect, radiusDip);
+        _decor ??= new SwitcherDecor(res, _decorRoot!, _panelRoot!, monitor, bandRect, radiusDip);
         _decor.Prepare(scene);
         if (_rects.Length < scene.Count)
         {
@@ -300,8 +308,9 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 }
 
 /// <summary>
-/// 切换条横带：圆角，Windows 11 系统亚克力背景（不支持时为深灰），不激活、鼠标穿透。
-/// 只画选中项标题（选中项变化时重绘）；缩略图由渲染线程逐帧更新。
+/// 切换条横带：不激活、鼠标穿透。
+/// 合成层模式（<see cref="Composed"/>）下窗口本身完全透明（WS_EX_NOREDIRECTIONBITMAP），背景、缩略图、标题都在合成层里；
+/// 否则是圆角窗口 + 系统亚克力背景（只在窗口激活时才画，切换条从不激活，实际是深灰），GDI 画选中项标题。
 /// </summary>
 internal sealed unsafe class SwitcherBand : NativeWindow
 {
@@ -310,22 +319,29 @@ internal sealed unsafe class SwitcherBand : NativeWindow
     private bool _drawTitle = true;
     private readonly bool _acrylic;
 
-    public SwitcherBand(MonitorInfo monitor, RectD rect)
+    public SwitcherBand(MonitorInfo monitor, RectD rect, bool composed = false)
     {
         Monitor = monitor;
         Rect = rect;
+        Composed = composed;
         Create("GlideShell.Switcher", User32.WS_POPUP,
-            User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U | 0x20 /* WS_EX_TRANSPARENT：鼠标穿透 */,
+            User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U | 0x20 /* WS_EX_TRANSPARENT：鼠标穿透 */ |
+            (composed ? 0x00200000u /* WS_EX_NOREDIRECTIONBITMAP */ : 0),
             (int)rect.Left, (int)rect.Top, (int)rect.Width, (int)rect.Height);
+        if (composed) return;
 
-        int round = Dwmapi.DWMWCP_ROUND, dark = 1, backdrop = Dwmapi.DWMSBT_TRANSIENTWINDOW;
+        int round = Dwmapi.DWMWCP_ROUND, dark = 1;
         Dwmapi.DwmSetWindowAttribute(Handle, Dwmapi.DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int));
         Dwmapi.DwmSetWindowAttribute(Handle, Dwmapi.DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(int));
         // 亚克力：整个客户区延伸为「玻璃」，系统在其后绘制模糊背景；黑色像素在玻璃区域里是透明的
+        int backdrop = Dwmapi.DWMSBT_TRANSIENTWINDOW;
         var margins = new Dwmapi.MARGINS { Left = -1, Right = -1, Top = -1, Bottom = -1 };
         _acrylic = Dwmapi.DwmExtendFrameIntoClientArea(Handle, &margins) == 0 &&
                    Dwmapi.DwmSetWindowAttribute(Handle, Dwmapi.DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(int)) == 0;
     }
+
+    /// <summary>合成层模式：窗口本身透明，背景与文字都在合成层里。</summary>
+    public bool Composed { get; }
 
     public MonitorInfo Monitor { get; }
 

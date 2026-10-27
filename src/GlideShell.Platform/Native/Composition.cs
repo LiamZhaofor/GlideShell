@@ -104,6 +104,29 @@ internal static unsafe partial class Dcomp
             ((delegate* unmanaged[Stdcall]<void*, float, int>)v[slot])(clip, (slot / 2) % 2 == 0 ? rx : ry);
     }
 
+    // ---- 高斯模糊（IDCompositionDevice3::CreateGaussianBlurEffect = 24；IDCompositionGaussianBlurEffect：SetInput 3、
+    // SetStandardDeviation 数值版 5、SetBorderMode 6；视觉的 SetEffect = 10）----
+    public static readonly Guid IID_IDCompositionDevice3 = new("0987CB06-F916-48BF-8D35-CE7641781BD9");
+    public const int D2D1_BORDER_MODE_HARD = 1;
+
+    /// <summary>建一个高斯模糊效果（<paramref name="device"/> 要能 QI 成 IDCompositionDevice3）。</summary>
+    public static int CreateGaussianBlur(void* device, float standardDeviation, void** effect)
+    {
+        *effect = null;
+        Guid iid = IID_IDCompositionDevice3;
+        void* device3;
+        int hr = QueryInterface(device, &iid, &device3);
+        if (hr < 0) return hr;
+        hr = ((delegate* unmanaged[Stdcall]<void*, void**, int>)Vtbl(device3)[24])(device3, effect);
+        Release(device3);
+        if (hr < 0) return hr;
+        ((delegate* unmanaged[Stdcall]<void*, float, int>)Vtbl(*effect)[5])(*effect, standardDeviation);
+        ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(*effect)[6])(*effect, D2D1_BORDER_MODE_HARD); // 输出不超出输入范围
+        return 0;
+    }
+
+    public static int SetEffect(void* visual, void* effect) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(visual)[10])(visual, effect);
+
     /// <summary>任意视觉 QI 成 IDCompositionVisual3（成功时释放原指针）。</summary>
     public static int ToVisual3(void* visual, void** visual3)
     {

@@ -31,7 +31,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private OverlayComposition? _decorRoot; // 窗口上面：标题、图标、悬停框、关闭按钮（合成层里画，可逐帧动画）
     private WindowDecor? _decor; // 有 Direct2D 与 D3D11 时才有；否则标题等用 GDI 画
     private OverlayComposition? _barRoot; // 其下：桌面条（在窗口上面）
-    private OverlayComposition? _barDecorRoot; // 桌面条上面：桌面名、高亮、「×」「+」
+    private OverlayComposition? _barGlassRoot; // 桌面条上面：桌面名底下的毛玻璃
+    private OverlayComposition? _barDecorRoot; // 再上面：桌面名、高亮、「×」「+」
     private BarDecor? _barDecor;
     private SharedThumbnailBackend? _shared;
     private readonly DesktopBarView _bar = new();
@@ -106,7 +107,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             if (_composition is not null) _content ??= _composition.CreateBranch(out sharedFailure);
             if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_decorRoot is not null) _barRoot ??= _composition!.CreateBranch(out sharedFailure);
-            if (_barRoot is not null) _barDecorRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_barRoot is not null) _barGlassRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_barGlassRoot is not null) _barDecorRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_barDecorRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_dragRoot is not null)
                 next = SharedThumbnailLayer.Register(shared, _content!, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, _layer as SharedThumbnailLayer, out sharedFailure);
@@ -124,7 +126,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         }
         _layer = next;
         if (decor is not null && _decorRoot is not null && _layer is SharedThumbnailLayer) _decor ??= new WindowDecor(decor, _decorRoot, Monitor);
-        if (decor is not null && _barDecorRoot is not null && _layer is SharedThumbnailLayer) _barDecor ??= new BarDecor(decor, _barDecorRoot, Monitor);
+        if (decor is not null && _barDecorRoot is not null && _layer is SharedThumbnailLayer) _barDecor ??= new BarDecor(decor, _barDecorRoot, _barGlassRoot!, Handle, Monitor);
         if (_layer is not SharedThumbnailLayer)
         {
             _decor?.HideAll();
@@ -395,7 +397,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                 decor?.Apply(0, _scene, rects, opacity, labels, frame.DragIndex);
             }
             _bar.Apply(frame);
-            if (BarDecorActive) _barDecor!.Apply(frame, labels, nowUs);
+            if (BarDecorActive) _barDecor!.Apply(frame, labels, nowUs, wallpaper);
             int committed = backend.Commit();
             return hr != 0 ? hr : committed;
         }
@@ -471,11 +473,12 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _content?.Dispose(); // 分支先于根释放
         _decorRoot?.Dispose();
         _barRoot?.Dispose();
+        _barGlassRoot?.Dispose();
         _barDecorRoot?.Dispose();
         if (_closeVisual != 0) Dcomp.Release((void*)_closeVisual);
         _closeVisual = 0;
         _dragRoot?.Dispose();
-        _content = _decorRoot = _barRoot = _barDecorRoot = _dragRoot = null;
+        _content = _decorRoot = _barRoot = _barGlassRoot = _barDecorRoot = _dragRoot = null;
         _composition?.Dispose();
         _composition = null;
         base.Dispose();

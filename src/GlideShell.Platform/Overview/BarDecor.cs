@@ -11,14 +11,18 @@ namespace GlideShell.Platform.Overview;
 /// 一块屏总览桌面条上的文字与装饰（合成层，在桌面缩略图那一支上面）：桌面名、当前桌面与悬停桌面的高亮、展开后的「×」、末尾的「+」。
 /// 随桌面条展开程度逐帧变形：桌面名从顶部一排滑到缩略图下面；当前 / 悬停的高亮从名字底下的圆角块淡变成缩略图外的框；
 /// 「+」从小圆块长成与缩略图同高的方块。随总览展开进度淡入、随放大进入别的桌面淡出。
+/// 收起时当前 / 悬停桌面名底下是毛玻璃（模糊的壁纸，<see cref="GlassPatch"/>，在桌面条装饰下面单独一支）上叠很淡的白色与描边（Windows 11 Fluent 的半透明填充），
+/// 不是不透明的灰块。
 /// 线程：Prepare / SetState / HideAll 在 UI 线程；<see cref="Apply"/> 在渲染线程。
 /// </summary>
 internal sealed unsafe class BarDecor
 {
     private const double NameDip = 13, SymbolDip = 16;
     private static readonly D2D.ColorF NameColor = new(0.95f, 0.95f, 0.97f, 1);
-    private static readonly D2D.ColorF PillColor = new(78 / 255f, 78 / 255f, 86 / 255f, 0.9f);
-    private static readonly D2D.ColorF HoverPillColor = new(52 / 255f, 52 / 255f, 60 / 255f, 0.85f);
+    private static readonly D2D.ColorF PillColor = new(1, 1, 1, 0.14f); // 叠在毛玻璃上的白色（当前桌面、悬停的「+」「×」）
+    private static readonly D2D.ColorF HoverPillColor = new(1, 1, 1, 0.07f);
+    private static readonly D2D.ColorF EdgeColor = new(1, 1, 1, 0.16f); // 玻璃的细描边
+    private const double GlassSigmaDip = 12;
     private static readonly D2D.ColorF CurrentRingColor = new(0.93f, 0.93f, 0.95f, 1);
     private static readonly D2D.ColorF HoverRingColor = new(0.42f, 0.67f, 1f, 1);
     private const double DimName = 0.72; // 其余桌面的名字（相当于原来的 185 灰）
@@ -29,7 +33,8 @@ internal sealed unsafe class BarDecor
         public int NameMax;
         public nint Text;
         public double TextW, TextH;
-        public NineSlice? CurrentPill, CurrentRing, HoverPill, HoverRing, RemoveDisc;
+        public NineSlice? CurrentPill, CurrentRing, HoverPill, HoverRing, RemoveDisc, Edge;
+        public GlassPatch? Glass;
         public nint RemoveGlyph;
 
         // 渲染线程
@@ -39,6 +44,8 @@ internal sealed unsafe class BarDecor
 
     private readonly DecorResources _res;
     private readonly OverlayComposition _branch;
+    private readonly OverlayComposition _glassBranch; // 毛玻璃在装饰下面单独一支（重建时不会盖到文字上）
+    private readonly nint _overlay;
     private readonly MonitorInfo _monitor;
     private readonly List<Desktop> _desktops = []; // UI 线程建、渲染线程读（会话中不变）
     private volatile Desktop[] _active = [];
@@ -55,10 +62,12 @@ internal sealed unsafe class BarDecor
     private long _lastUs;
     private bool _renderPosted;
 
-    public BarDecor(DecorResources res, OverlayComposition branch, MonitorInfo monitor)
+    public BarDecor(DecorResources res, OverlayComposition branch, OverlayComposition glassBranch, nint overlay, MonitorInfo monitor)
     {
         _res = res;
         _branch = branch;
+        _glassBranch = glassBranch;
+        _overlay = overlay;
         _monitor = monitor;
     }
 
@@ -90,6 +99,7 @@ internal sealed unsafe class BarDecor
             // 先建的在下面：底块、文字、框、「×」
             d.CurrentPill = Make(_res.Shape(pillR, 0, PillColor));
             d.HoverPill = Make(_res.Shape(pillR, 0, HoverPillColor));
+            d.Edge = Make(_res.Shape(pillR, Math.Max(1, Math.Round(dpi)), EdgeColor));
             backend.CreateDecorVisual(root, 0, out d.Text);
             d.CurrentRing = Make(_res.Shape((thumbRadiusDip + 2) * dpi, 2 * dpi, CurrentRingColor));
             d.HoverRing = Make(_res.Shape((thumbRadiusDip + 3) * dpi, 3 * dpi, HoverRingColor));
@@ -108,9 +118,16 @@ internal sealed unsafe class BarDecor
             if (big.Surface != 0 && backend.CreateDecorVisual(root, big.Surface, out _plusBig) >= 0) _plusBigSize = big.Width;
         }
         double removeW = geometry.RemoveButton(0).Width;
+        nint black = _res.Image("black-1x1", _ => new ShadowImage(1, 1, 1, 0, [0, 0, 0, 255])).Surface;
         for (int i = 0; i < state.Count; i++)
         {
             var d = _desktops[i];
+            if (d.Glass is { } old && old.Rect != geometry.Pills[i])
+            {
+                lock (backend.Gate) old.Remove(_glassBranch.Root);
+                d.Glass = null;
+            }
+            d.Glass ??= GlassPatch.Create(backend, _glassBranch.Root, _overlay, geometry.Pills[i], geometry.Area, pillR, GlassSigmaDip * dpi, black);
             int max = Math.Max(20, (int)Math.Round(geometry.Labels[i].Width - 2 * removeW));
             if (d.Name != state.Names[i] || d.NameMax != max) d.TextW = 0;
             d.Name = state.Names[i];
@@ -146,6 +163,8 @@ internal sealed unsafe class BarDecor
             foreach (var d in _desktops)
             {
                 d.CurrentPill?.Hide();
+                d.Edge?.Hide();
+                d.Glass?.Place(0, 0);
                 d.CurrentRing?.Hide();
                 d.HoverPill?.Hide();
                 d.HoverRing?.Hide();
@@ -166,7 +185,8 @@ internal sealed unsafe class BarDecor
     /// 渲染线程（不提交）：按本帧的桌面条展开程度、放大进度摆放。<paramref name="alpha"/> 是整体不透明度（随总览展开淡入），
     /// <paramref name="nowUs"/> 是本帧时间（悬停与当前桌面高亮的过渡用）。
     /// </summary>
-    public void Apply(in OverviewFrame frame, double alpha, long nowUs)
+    /// <param name="wallpaper">总览背景里壁纸此刻的不透明度（毛玻璃里的壁纸与它同步变暗）。</param>
+    public void Apply(in OverviewFrame frame, double alpha, long nowUs, double wallpaper)
     {
         var g = _geometry;
         var desktops = _active;
@@ -192,8 +212,10 @@ internal sealed unsafe class BarDecor
                 var pill = Local(g.Pills[i], origin);
                 var thumb = Local(g.ThumbRect(i, e), origin);
                 double hover = d.Hover * (1 - d.Current);
+                d.Glass?.Place(a * (1 - e) * Math.Max(d.Current, d.Hover), wallpaper);
                 d.CurrentPill?.Place(pill, a * (1 - e) * d.Current);
                 d.HoverPill?.Place(pill, a * (1 - e) * hover);
+                d.Edge?.Place(pill, a * (1 - e) * Math.Max(d.Current, d.Hover));
                 d.CurrentRing?.Place(thumb.Inflate(2 * dpi, 2 * dpi), a * e * d.Current * (1 - d.Hover));
                 d.HoverRing?.Place(thumb.Inflate(3 * dpi, 3 * dpi), a * e * d.Hover);
 
@@ -306,7 +328,9 @@ internal sealed unsafe class BarDecor
             void* root = _branch.Root;
             foreach (var d in _desktops)
             {
-                foreach (var s in new[] { d.CurrentPill, d.HoverPill, d.CurrentRing, d.HoverRing, d.RemoveDisc }) s?.Remove(root);
+                foreach (var s in new[] { d.CurrentPill, d.HoverPill, d.CurrentRing, d.HoverRing, d.RemoveDisc, d.Edge }) s?.Remove(root);
+                d.Glass?.Remove(_glassBranch.Root);
+                d.Glass = null;
                 foreach (nint v in new[] { d.Text, d.RemoveGlyph })
                     if (v != 0)
                     {
