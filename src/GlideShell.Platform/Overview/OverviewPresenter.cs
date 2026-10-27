@@ -114,6 +114,13 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         foreach (var o in _overlays)
             if (o.Layer is not null) o.ShowOverlay();
         _shown = true;
+        if (Controller.Mode == OverviewMode.Desktop && _desktopPullBack)
+        {
+            // 拉回：窗口此刻全在屏幕外，覆盖层盖上之后就在它下面还原它们。缩略图从「最小化时留下的画面」换成实时画面时
+            // 会短暂空白、程序还要重绘（Chrome 先是一片底色），趁它们还在屏幕外换完，滑进来的就是真实画面，撤层无跳变
+            Dwmapi.DwmFlush();
+            RestoreDesktopWindows();
+        }
         _applyErrorLogged = false;
         _sessionStartUs = HostClock.NowUs();
         Controller.OnShown(_sessionStartUs);
@@ -134,11 +141,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     /// <summary>收起已经确定（输入线程 / UI 线程）：趁收起动画还在播，在覆盖层下面把选中的窗口提到最上层并切到前台。</summary>
     public void Closing(long? focusWindowId) => _ui.Post(() =>
     {
-        if (_shown && Controller.Mode == OverviewMode.Desktop)
-        {
-            if (_desktopPullBack) RestoreDesktopWindows();
-            return;
-        }
+        if (_shown && Controller.Mode == OverviewMode.Desktop) return; // 拉回会话一开始就已经在还原了（FocusDesktop）
         if (focusWindowId is not { } id || !_shown) return;
         RaiseForDismiss(id);
         if (_activatedId == id) return;
@@ -158,7 +161,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             _desktopRestoring = [];
             long until = Environment.TickCount64 + 600;
             while (Environment.TickCount64 < until && restoring.Any(h => User32.IsWindow(h) && User32.IsIconic(h))) Dwmapi.DwmFlush();
-            foreach (var h in restoring) WindowActivator.EnableTransitions(h);
+            foreach (var h in restoring)
+            {
+                WindowActivator.EnableTransitions(h);
+                ThumbnailLayer.IconicInsets.TryRemove(h, out _);
+            }
         }
         // 前台窗口被拖到了别的桌面：焦点交给本桌面剩下最上层的窗口（否则还留在那个看不见的窗口里）
         if (focusWindowId is null && _pageTarget is null && _switchTarget is null && _moved.Contains(User32.GetForegroundWindow()) &&
@@ -498,11 +505,25 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private void CommitDesktop()
     {
         if (!_shown) return;
+        if (_desktopPullBack && _desktopRestoring.Length > 0)
+        {
+            // 拉了一半又松回去（桌面继续显示）：一开始就还原了的窗口重新最小化
+            var again = _desktopRestoring;
+            _desktopRestoring = [];
+            foreach (var h in again) WindowActivator.MinimizeQuietly(h);
+            long deadline = Environment.TickCount64 + 600;
+            while (Environment.TickCount64 < deadline && again.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
+            foreach (var h in again) WindowActivator.EnableTransitions(h);
+            nint desktop = User32.FindWindowW("Progman", null);
+            if (desktop != 0) WindowActivator.Activate(desktop);
+            _desktopHidden = again;
+        }
         if (!_desktopPullBack)
         {
             var scene = Controller.Scene;
             var hide = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).Select(i => (nint)scene.Windows[i].Id).ToArray();
             _desktopHiddenRects = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).ToDictionary(i => (nint)scene.Windows[i].Id, i => scene.Windows[i].Source);
+            foreach (var h in hide) ThumbnailLayer.RememberInset(h); // 最小化后缩略图带着透明边框：拉回时按它裁掉
             foreach (var h in hide) WindowActivator.MinimizeQuietly(h);
             long until = Environment.TickCount64 + 600;
             while (Environment.TickCount64 < until && hide.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();
@@ -518,7 +539,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Log.Info(_desktopPullBack ? "显示桌面：没有拉回，桌面仍显示" : $"显示桌面：已最小化 {_desktopHidden.Length} 个窗口");
     }
 
-    /// <summary>显示桌面后拉回（松手决定收起、或触发角）：趁动画还在播，从下往上依次还原，最上层的最后还原、成为前台。</summary>
+    /// <summary>显示桌面后拉回（会话一开始）：从下往上依次还原，最上层的最后还原、成为前台；收起落定时等它们都还原到位再撤层。</summary>
     private void RestoreDesktopWindows()
     {
         var hidden = _desktopHidden;

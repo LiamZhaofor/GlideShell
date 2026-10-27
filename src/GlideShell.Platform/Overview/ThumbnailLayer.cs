@@ -243,13 +243,32 @@ internal sealed unsafe class ThumbnailLayer : IThumbnailLayer
     /// </item>
     /// </list>
     /// </summary>
+    /// <summary>
+    /// 窗口可见边框相对整个窗口矩形的内缩（左、上、右、下，物理像素），在窗口还可见时记下（显示桌面最小化窗口之前）。
+    /// 最小化窗口的缩略图是整个窗口、带着四周透明的调整边框；有这条记录就按它裁掉，画面与还原后的可见边框一致。
+    /// </summary>
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, (int Left, int Top, int Right, int Bottom)> IconicInsets = new();
+
+    /// <summary>记下窗口此刻的可见边框内缩（见 <see cref="IconicInsets"/>）。最小化的窗口量不到，不记。</summary>
+    internal static void RememberInset(nint hwnd)
+    {
+        if (User32.IsIconic(hwnd)) return;
+        User32.RECT wr, fr;
+        if (!User32.GetWindowRect(hwnd, &wr) ||
+            Dwmapi.DwmGetWindowAttribute(hwnd, Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS, &fr, (uint)sizeof(User32.RECT)) != 0) return;
+        IconicInsets[hwnd] = (fr.Left - wr.Left, fr.Top - wr.Top, wr.Right - fr.Right, wr.Bottom - fr.Bottom);
+    }
+
     internal static (User32.RECT Source, bool HasContent) ThumbnailSource(nint hwnd, nint thumb)
     {
         if (User32.IsIconic(hwnd))
         {
             Dwmapi.SIZE size;
             if (Dwmapi.DwmQueryThumbnailSourceSize(thumb, &size) != 0) return (default, false);
-            return (new User32.RECT { Right = size.cx, Bottom = size.cy }, size.cx >= MinContentSize && size.cy >= MinContentSize);
+            bool content = size.cx >= MinContentSize && size.cy >= MinContentSize;
+            if (IconicInsets.TryGetValue(hwnd, out var i) && size.cx > i.Left + i.Right && size.cy > i.Top + i.Bottom)
+                return (new User32.RECT { Left = i.Left, Top = i.Top, Right = size.cx - i.Right, Bottom = size.cy - i.Bottom }, content);
+            return (new User32.RECT { Right = size.cx, Bottom = size.cy }, content);
         }
         User32.RECT wr, fr;
         User32.GetWindowRect(hwnd, &wr);
