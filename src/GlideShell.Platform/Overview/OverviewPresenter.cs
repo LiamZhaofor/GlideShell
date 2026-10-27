@@ -493,11 +493,14 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _pageBuffers = null;
         _barState = DesktopState.Empty;
         nint foreground = User32.GetForegroundWindow();
+        // 拉回：最小化的窗口在系统里的层次已经被打乱（按最小化的先后排），缩略图要按推开前记下的层次叠
+        var stacking = _desktopPullBack ? _desktopHidden.Concat(WindowCatalog.ZOrder().Where(h => !hidden.Contains(h))).ToList() : null;
         foreach (var o in _overlays)
         {
             o.ClearPages();
             o.ReplaceScene(-1, desk);
             o.PrepareBar(null, DesktopState.Empty, [], foreground);
+            if (stacking is not null) o.Restack(stacking);
         }
         Log.Info($"显示桌面：{(_desktopPullBack ? "拉回" : "推开")} {desk.PresentCount} 个窗口");
     }

@@ -94,6 +94,10 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
     [System.Runtime.InteropServices.LibraryImport("user32.dll")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool InSendMessage();
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static partial bool ChangeWindowMessageFilterEx(nint hwnd, uint message, uint action, nint changeFilterStruct);
 
     /// <summary>打开设置窗口；已经开着就把它带到前台。</summary>
@@ -316,6 +320,15 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
     protected override nint? WndProc(uint msg, nint wParam, nint lParam)
     {
+        if (msg == 0x0112 /* WM_SYSCOMMAND */ && (wParam & 0xFFF0) is 0xF020 or 0xF120 or 0xF060)
+        {
+            // 诊断：设置窗口被最小化 / 还原 / 关闭时记下是谁在前台、消息是不是别的线程发来的（任务栏点不出窗口的问题）
+            nint fg = User32.GetForegroundWindow();
+            uint pid = 0;
+            User32.GetWindowThreadProcessId(fg, &pid);
+            string name = (wParam & 0xFFF0) switch { 0xF020 => "最小化", 0xF120 => "还原", _ => "关闭" };
+            GlideShell.Platform.Diagnostics.Log.Info($"设置窗口：收到{name}命令（{(InSendMessage() ? "别的线程发来" : "本线程")}），此时前台 0x{fg:X} [{GlideShell.Platform.Shell.WindowCatalog.ClassName(fg)}] {GlideShell.Platform.Shell.WindowCatalog.ProcessName(pid)}");
+        }
         switch (msg)
         {
             case User32.WM_COMMAND:

@@ -73,35 +73,24 @@ public static unsafe partial class WindowActivator
     }
 
     /// <summary>
-    /// 按 <paramref name="topFirst"/>（最上层在前）一次排好这些顶层窗口的层次，不激活（DeferWindowPos 一次生效）：
+    /// 按 <paramref name="topFirst"/>（最上层在前）排好这些顶层窗口的层次，不激活（从下往上逐个提到最上层，跳过没响应的程序）：
     /// 异步还原的窗口各在自己的线程里完成，谁先谁后不确定，还原完要按原来的层次重排。
     /// </summary>
     public static void Stack(IReadOnlyList<nint> topFirst)
     {
         var windows = topFirst.Where(h => h != 0 && User32.IsWindow(h)).ToList();
         if (windows.Count == 0) return;
-        nint dwp = BeginDeferWindowPos(windows.Count);
         const uint flags = 0x0001 | 0x0002 | 0x0010; // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
-        nint after = 0; // HWND_TOP
-        foreach (var h in windows)
-        {
-            if (dwp != 0) dwp = DeferWindowPos(dwp, h, after, 0, 0, 0, 0, flags);
-            after = h;
-        }
-        if (dwp != 0) EndDeferWindowPos(dwp);
+        // 一次性的 DeferWindowPos 里只要有一个窗口不让动（例如更高权限的程序），整批都不生效：逐个从下往上提到最上层
+        for (int i = windows.Count - 1; i >= 0; i--)
+            if (!IsHungAppWindow(windows[i])) User32.SetWindowPos(windows[i], 0 /* HWND_TOP */, 0, 0, 0, 0, flags);
     }
 
     private const uint DWMWA_TRANSITIONS_FORCEDISABLED = 3;
 
     [System.Runtime.InteropServices.LibraryImport("user32.dll")]
-    private static partial nint BeginDeferWindowPos(int count);
-
-    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
-    private static partial nint DeferWindowPos(nint dwp, nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
-
-    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-    private static partial bool EndDeferWindowPos(nint dwp);
+    private static partial bool IsHungAppWindow(nint hwnd);
 
     [System.Runtime.InteropServices.LibraryImport("user32.dll")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
