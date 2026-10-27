@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GlideShell — 让 Windows 触摸板手势真正跟手</title>
+  <meta name="description" content="GlideShell 为 Windows 11 精确式触摸板带来 macOS 式的跟手多任务：三指上滑窗口总览、四指切换桌面、显示桌面，全程 1:1 跟手、松手按速度决定。免费开源。">
+  <meta name="theme-color" content="#4f6cf0">
+  <meta property="og:title" content="GlideShell — 让 Windows 触摸板手势真正跟手">
+  <meta property="og:description" content="手指走多少，画面走多少；停住就停住，往回滑就倒退，松手才决定去留。">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/logo.svg" alt="">GlideShell</a>
+      <nav class="nav-links" aria-label="主导航">
+        <a class="hide-sm" href="#features">功能</a>
+        <a class="hide-sm" href="#gestures">手势</a>
+        <a href="guide.html">使用教程</a>
+        <a class="hide-sm" href="#download">下载</a>
+        <a href="https://github.com/LiamZhaofor/GlideShell" rel="noopener">GitHub</a>
+        <button class="theme-toggle" type="button" aria-label="切换主题"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- 首屏 -->
+    <div class="hero">
+      <div class="wrap">
+        <div class="hero-text">
+          <span class="eyebrow"><b>1.5</b> 圆角卡片、鼠标手势、全新设置界面</span>
+          <h1>让 Windows 触摸板手势<br><span class="grad-text">真正跟手</span></h1>
+          <p class="lead">手指走多少，画面走多少；停住就停住，往回滑就倒退，松手才决定去留。为 Windows 11 精确式触摸板打造的 macOS 式多任务体验。</p>
+          <div class="cta">
+            <a class="btn btn-primary" href="https://github.com/LiamZhaofor/GlideShell/releases/latest" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+              免费下载
+            </a>
+            <a class="btn btn-ghost" href="guide.html">阅读使用教程</a>
+          </div>
+          <p class="meta"><span>Windows 11</span><span>精确式触摸板</span><span>开源 · MIT</span><span>2.5 MB</span></p>
+        </div>
+
+        <!-- 跟手演示：往上拖 = 三指上滑 -->
+        <div class="demo" id="demo">
+          <div class="screen" tabindex="0" role="application" aria-label="跟手演示：在画面上按住往上拖打开窗口总览，往下拖收起；键盘用上下方向键">
+            <div class="wallpaper"></div>
+            <div class="dim"></div>
+            <div class="spaces"><span class="on">桌面 1</span><span>桌面 2</span><span>桌面 3</span><span>＋</span></div>
+
+            <div class="win" data-src="8,7,58,62" data-dst="6,14,32,34">
+              <div class="bar"><b></b><b></b><b></b></div>
+              <div class="body" style="grid-template-rows: 14% 30% 12% 12% 12%"><i style="width:60%"></i><i></i><i style="width:85%"></i><i style="width:70%"></i><i style="width:78%"></i></div>
+            </div>
+            <div class="win code" data-src="31,19,55,58" data-dst="41,14,30,32">
+              <div class="bar"><b></b><b></b><b></b></div>
+              <div class="body" style="grid-template-rows: repeat(7, 7%)"><i style="width:40%"></i><i style="width:72%"></i><i style="width:55%"></i><i style="width:80%"></i><i style="width:35%"></i><i style="width:64%"></i><i style="width:48%"></i></div>
+            </div>
+            <div class="win" data-src="63,9,30,50" data-dst="74,14,20,33">
+              <div class="bar"><b></b><b></b><b></b></div>
+              <div class="body" style="grid-template-rows: 13% 13% 13% 13% 13%"><i style="width:70%"></i><i style="width:55%;justify-self:end;background:#c7d2fe"></i><i style="width:80%"></i><i style="width:45%;justify-self:end;background:#c7d2fe"></i><i style="width:60%"></i></div>
+            </div>
+            <div class="win" data-src="12,51,34,34" data-dst="18,54,22,22">
+              <div class="bar"><b></b><b></b><b></b></div>
+              <div class="body" style="grid-template-columns: 38% 1fr; grid-template-rows: 60% 1fr"><i style="grid-row: span 2; background: linear-gradient(135deg,#f472b6,#a78bfa)"></i><i style="height:30%"></i><i style="height:30%"></i></div>
+            </div>
+            <div class="win" data-src="46,45,40,41" data-dst="47,52,30,30">
+              <div class="bar"><b></b><b></b><b></b></div>
+              <div class="body" style="grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(2, 38%)"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+
+            <span class="label"><i style="background:#3b82f6"></i>新标签页 — 浏览器</span>
+            <span class="label"><i style="background:#22c55e"></i>main.rs — 代码编辑器</span>
+            <span class="label"><i style="background:#f59e0b"></i>消息</span>
+            <span class="label"><i style="background:#ec4899"></i>音乐</span>
+            <span class="label"><i style="background:#64748b"></i>文件资源管理器</span>
+
+            <div class="taskbar"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="hint"><span class="fingers"><i></i><i></i><i></i></span>按住画面往上拖，试试「跟手」</div>
+          </div>
+          <div class="demo-caption">
+            <span>拖到一半停住，画面就停在半路；往回拖，画面就倒退。松手时按位置和速度决定展开还是收起。</span>
+            <span class="meter"><span class="track"><span class="fill"></span></span><code>0%</code></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 跟手 vs 原生 -->
+    <section class="alt" id="why">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">为什么是 GlideShell</div>
+          <h2>手势应该是「推着走」，不是「按开关」</h2>
+          <p>Windows 原生的多指手势大多是识别到手势就播放一段固定动画；GlideShell 直接读取触摸板的原始触点，画面的每一帧都由手指位置决定。</p>
+        </div>
+        <div class="compare">
+          <div class="card reveal">
+            <h3>Windows 原生</h3>
+            <p>识别到手势 → 播放固定动画。手指停住、往回滑，动画都不理会。</p>
+            <div class="lane" data-mode="native"><span class="finger"></span><span class="pane"></span></div>
+            <div class="lane-label"><span>● 手指</span><span>■ 画面</span></div>
+          </div>
+          <div class="card reveal">
+            <h3>GlideShell</h3>
+            <p>画面 1:1 跟着手指；停住就停住，往回就倒退，松手速度直接传给弹簧动画。</p>
+            <div class="lane" data-mode="glide"><span class="finger"></span><span class="pane"></span></div>
+            <div class="lane-label"><span>● 手指</span><span>■ 画面</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 功能 -->
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">功能</div>
+          <h2>一整套 macOS 式的多任务</h2>
+          <p>所有手势都跟手，所有动画都能随时被新手势接住。</p>
+        </div>
+        <div class="grid">
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="4" width="8" height="7" rx="1.6"/><rect x="13" y="4" width="8" height="7" rx="1.6"/><rect x="3" y="13" width="8" height="7" rx="1.6"/><rect x="13" y="13" width="8" height="7" rx="1.6"/></svg></div>
+            <h3>窗口总览</h3>
+            <p>三指上滑，每个窗口从原位飞向平铺位置；窗口下方是程序图标和标题，悬停出现关闭按钮。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="3" width="19" height="5" rx="1.5"/><rect x="2.5" y="11" width="8.5" height="10" rx="1.6"/><rect x="13" y="11" width="8.5" height="10" rx="1.6"/></svg></div>
+            <h3>桌面条与多桌面</h3>
+            <p>总览顶部列出所有虚拟桌面：点一下切过去，把窗口拖上去就移过去，「+」新建、「×」删除。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="3" width="11" height="8" rx="1.6"/><rect x="10" y="13" width="11" height="8" rx="1.6"/><path d="M6 14v4h2"/></svg></div>
+            <h3>应用窗口视图</h3>
+            <p>三指下滑只看当前程序的窗口（App Exposé），最小化的单独排一排；在总览里点标题也能直接切换过去。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M5 9l-3 3 3 3M19 9l3 3-3 3"/></svg></div>
+            <h3>四指切换桌面</h3>
+            <p>相邻桌面跟着手指滑入，没有起滑死区，首尾有橡皮筋；Ctrl+Win+←/→ 也用同样的动画。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="7" width="6" height="10" rx="1.4"/><rect x="9" y="5" width="6" height="14" rx="1.4"/><rect x="15.5" y="7" width="6" height="10" rx="1.4"/></svg></div>
+            <h3>三指切换窗口</h3>
+            <p>三指左右滑，窗口条随手指平移；松手后选中的窗口从切换条飞回原位，再切到前台。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 13h18M9 21h6"/><path d="M8 8l-2-2M16 8l2-2"/></svg></div>
+            <h3>显示桌面</h3>
+            <p>四指下滑，窗口跟着手指滑出屏幕边缘露出桌面；再四指上滑，按原来的层次拉回来。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="6.5" y="2.5" width="11" height="19" rx="5.5"/><path d="M12 6v4"/><path d="M3 12h-.01"/></svg></div>
+            <h3>鼠标也能跟手 <span class="tag">新</span></h3>
+            <p>像 Mac Mouse Fix 一样，按住鼠标侧键拖动：左右切换桌面、上拉总览、下拉应用窗口。只点一下仍是「后退」。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12c3-6 6-6 9 0s6 6 9 0"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg></div>
+            <h3>macOS 式物理</h3>
+            <p>松手按距离和速度决定去留，速度直接传给弹簧；越界有橡皮筋；动画随时能被新手势接住。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="5"/><path d="M4 9h16" opacity=".5"/></svg></div>
+            <h3>精致的细节 <span class="tag">新</span></h3>
+            <p>与系统一致的窗口阴影、随窗口缩放的圆角卡片、毛玻璃桌面条；撤掉覆盖层那一刻与真实桌面无缝衔接。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4v4M20 4h-4v4M4 20h4v-4M20 20h-4v-4"/></svg></div>
+            <h3>触发角</h3>
+            <p>把屏幕四个角设成窗口总览、应用窗口或显示桌面，指针停在角上就触发。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></div>
+            <h3>Windows 11 风格设置 <span class="tag">新</span></h3>
+            <p>Mica 背景、圆角卡片，跟随系统深浅色；每个选项都有一句白话说明，改动立即生效。</p>
+          </article>
+          <article class="card feature reveal">
+            <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+            <h3>轻量、可退回</h3>
+            <p>不装驱动，约 5.6MB 的原生程序；退出、暂停或意外崩溃时，自动把系统手势还原成你原来的设置。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 手势速查 -->
+    <section class="alt" id="gestures">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">手势</div>
+          <h2>四个方向，覆盖日常多任务</h2>
+          <p>每个手势都可以在设置里改，或者交还给 Windows。三指轻点（中键）始终由系统处理。</p>
+        </div>
+        <div class="gestures">
+          <div class="card gesture-card reveal"><span class="pad" data-fingers="3" data-dir="vertical"></span><h3>三指上下滑</h3><p>上滑打开窗口总览；下滑只看当前程序的窗口。</p></div>
+          <div class="card gesture-card reveal"><span class="pad" data-fingers="3" data-dir="horizontal"></span><h3>三指左右滑</h3><p>在窗口之间切换，松手切过去。</p></div>
+          <div class="card gesture-card reveal"><span class="pad" data-fingers="4" data-dir="vertical"></span><h3>四指上下滑</h3><p>下滑显示桌面；上滑把窗口拉回来。</p></div>
+          <div class="card gesture-card reveal"><span class="pad" data-fingers="4" data-dir="horizontal"></span><h3>四指左右滑</h3><p>切换虚拟桌面，桌面跟着手指走。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 性能 -->
+    <section id="performance">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">性能</div>
+          <h2>跟满高刷新率，几乎不占资源</h2>
+          <p>输入、逻辑、渲染各在自己的线程上，按显示器刷新晚取样，输入到上屏约一帧。</p>
+        </div>
+        <div class="stats">
+          <div class="card stat reveal"><b class="grad-text">165Hz</b><span>帧间隔 P50 6.1ms，跟满刷新率</span></div>
+          <div class="card stat reveal"><b class="grad-text">≈1 帧</b><span>从手指移动到画面更新</span></div>
+          <div class="card stat reveal"><b class="grad-text">16MB</b><span>刚启动时的私有内存</span></div>
+          <div class="card stat reveal"><b class="grad-text">5.6MB</b><span>NativeAOT 原生程序，不装驱动</span></div>
+        </div>
+        <p class="footnote">本机实测：Radeon 780M、2560×1600、150% 缩放、165Hz。</p>
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="alt" id="download">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">下载</div>
+          <h2>一分钟装好</h2>
+          <p>不需要管理员权限，不装驱动；卸载时自动还原系统手势。</p>
+        </div>
+        <div class="download">
+          <div class="card reveal">
+            <ol class="steps">
+              <li><b>下载最新版</b><span>从 GitHub Releases 下载 <code>GlideShell-版本号-win-x64.zip</code>。</span></li>
+              <li><b>解压后双击「安装.cmd」</b><span>程序装到你的用户目录，并添加开始菜单与开机启动。</span></li>
+              <li><b>用三指往上滑</b><span>窗口总览就会跟着手指展开。托盘图标右键可以打开设置。</span></li>
+            </ol>
+            <div class="cta" style="justify-content:flex-start;margin-top:8px">
+              <a class="btn btn-primary" href="https://github.com/LiamZhaofor/GlideShell/releases/latest" rel="noopener">下载最新版</a>
+              <a class="btn btn-ghost" href="guide.html#install">详细安装说明</a>
+            </div>
+          </div>
+          <div class="card reveal">
+            <h3 style="margin:0 0 12px">系统要求</h3>
+            <ul class="req">
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Windows 11（在 24H2 上开发与验证）</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>精确式触摸板（大多数近几年的笔记本都是）</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>鼠标手势：带侧键或中键的鼠标（可选）</li>
+            </ul>
+            <p style="margin:0;color:var(--text-2);font-size:15px">程序还没有正式签名，第一次运行时 Windows 可能提示「无法验证发布者」，选「更多信息 → 仍要运行」即可。完全开源，可以自己从源码构建。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 常见问题 -->
+    <section id="faq">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <div class="kicker">常见问题</div>
+          <h2>还有疑问？</h2>
+        </div>
+        <div class="faq">
+          <details><summary>怎么知道我的触摸板是不是「精确式触摸板」？</summary><p>打开 Windows「设置 → 蓝牙和其他设备 → 触摸板」，如果页面顶部写着「你的电脑具有精确式触摸板」就可以用。</p></details>
+          <details><summary>会不会弄乱我原来的手势设置？</summary><p>不会。GlideShell 只接管它实现了的手势，接管前会先把你原来的设置记下来；退出、暂停、卸载，甚至程序意外崩溃时，都会自动还原。万一没有还原，运行 <code>GlideShell.exe --restore-native</code> 即可。</p></details>
+          <details><summary>某个程序里我想用 Windows 自己的手势怎么办？</summary><p>在设置的「排除的程序」里加上它，这个程序在前台时 GlideShell 就不接管手势。全屏游戏、视频默认也不接管。</p></details>
+          <details><summary>支持 Windows 10 吗？</summary><p>暂时不支持。GlideShell 用到了 Windows 11 才有的合成器接口。</p></details>
+          <details><summary>收费吗？会收集数据吗？</summary><p>完全免费、开源（MIT 许可）。不联网，不收集任何数据；日志只保存在本机。</p></details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>© 2026 LiamZhaofor · MIT 许可</span>
+      <span><a href="guide.html">使用教程</a> · <a href="https://github.com/LiamZhaofor/GlideShell" rel="noopener">GitHub</a> · <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">反馈问题</a></span>
+    </div>
+  </footer>
+  <script src="assets/main.js"></script>
+</body>
+</html>

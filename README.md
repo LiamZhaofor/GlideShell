@@ -2,6 +2,8 @@
 
 > 让 Windows 触摸板手势真正跟手：手指走多少，画面走多少；停住就停住，反向就倒退，松手才决定去留。
 
+**官网与使用教程**：<https://liamzhaofor.github.io/GlideShell/> · [下载最新版](https://github.com/LiamZhaofor/GlideShell/releases/latest)
+
 Windows 原生的多指手势大多是「识别到手势 → 播放一段固定动画」。GlideShell 直接读取精确式触摸板（PTP）的原始触点，用自己的合成界面重做多任务交互，体验对标 macOS 调度中心：
 
 - **三指上滑 · 窗口总览**：每个窗口从原位飞向总览布局，进度完全由手指位移驱动。停住，画面就停在半路；往回滑，画面就倒退。
