@@ -32,6 +32,9 @@ public sealed record OverviewConfig
     /// 高刷新率屏幕上明显更流畅（S4）；系统不支持时自动退回经典缩略图。
     /// </summary>
     public bool SharedThumbnails { get; set; } = true;
+
+    /// <summary>收起态下沿收起方向滑（默认三指下滑）：应用窗口视图，只平铺当前程序的窗口（macOS App Exposé）。</summary>
+    public bool AppWindows { get; set; } = true;
 }
 
 public sealed record SwitcherConfig

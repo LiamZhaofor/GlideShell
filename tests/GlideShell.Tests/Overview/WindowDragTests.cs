@@ -226,6 +226,38 @@ public class WindowDragTests
         Assert.Equal(-1, c.AddToPage(0, c.Scene.Windows[2])); // 当前页不能加
     }
 
+    // ---------- 应用窗口视图 ----------
+
+    [Fact]
+    public void Focusing_an_app_tiles_only_its_windows_and_fades_the_rest_in_place()
+    {
+        var full = ThreeWindows(); // 窗口 1（前台）、2、3
+        var mixed = OverviewScene.Build(full.Windows.Select((w, i) => w with { ProcessName = i == 0 ? "a" : "b" }).ToList(), [new OverviewArea(Area, 1.5, Bar)]);
+        var app = mixed.Focus(w => w.ProcessName == "b", [new OverviewArea(Area, 1.5)]);
+        Assert.Equal(3, app.Count);
+        Assert.True(app.IsExcluded(0));
+        Assert.True(app.IsPresent(1) && app.IsPresent(2));
+        Assert.Equal(2, app.PresentCount);
+        Assert.True(app.Windows[1].IsForeground); // 前台标记交给这个程序最上层的窗口
+        Assert.False(app.Windows[0].IsForeground);
+        var only = OverviewScene.Build([mixed.Windows[1], mixed.Windows[2]], [new OverviewArea(Area, 1.5)]);
+        Assert.Equal(only.Slots[0].Tile, app.Slots[1].Tile); // 没有桌面条，按两个窗口排版
+
+        var source = app.Windows[0].Source;
+        Assert.NotEqual(0, app.HitTest(source.CenterX, source.CenterY, 1));
+        for (int i = 0; i < 6; i++) Assert.NotEqual(0, app.Cycle(i % 3, false));
+
+        var rects = new RectD[3];
+        var op = new double[3];
+        OverviewController.WindowRects(app, new OverviewFrame(0.25, 0, 0, Core.Motion.TransitionPhase.Tracking, true, null), rects, op);
+        Assert.Equal(source, rects[0]); // 不动
+        Assert.Equal(0.75, op[0], 6); // 随进度淡出
+        Assert.Equal(1, op[1]);
+        OverviewController.WindowRects(app, new OverviewFrame(1, 0, 0, Core.Motion.TransitionPhase.Resting, true, null), rects, op);
+        Assert.Equal(0, op[0], 6);
+        Assert.Equal(app.Slots[1].Tile, rects[1]);
+    }
+
     [Fact]
     public void In_thumb_maps_screen_rects_proportionally()
     {

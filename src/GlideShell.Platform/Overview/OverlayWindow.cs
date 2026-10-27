@@ -169,6 +169,14 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         User32.InvalidateRect(Handle, null, 1);
     }
 
+    /// <summary>UI 线程：本次会话不分页（应用窗口视图）。</summary>
+    public void ClearPages()
+    {
+        Unlift();
+        HidePages();
+        _pages = null;
+    }
+
     /// <summary>UI 线程：第 <paramref name="page"/> 页（没有多页时为 -1）的场景换了（窗口移走后补位，下标不变）。</summary>
     public void ReplaceScene(int page, OverviewScene scene)
     {
@@ -458,7 +466,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             nint hover = Gdi32.CreateSolidBrush(Gdi32.Rgb(160, 200, 255));
             foreach (int i in _members)
             {
-                if (_scene.IsRemoved(i)) continue; // 已移到别的桌面
+                if (!_scene.IsPresent(i)) continue; // 已移到别的桌面，或应用窗口视图里其他程序的窗口
                 var w = _scene.Windows[i];
                 var slot = _scene.Slots[i];
                 var tile = Local(slot.Tile, origin);

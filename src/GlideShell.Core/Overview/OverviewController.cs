@@ -45,6 +45,16 @@ public interface IOverviewHost
     void PageChanged(int desktopIndex);
 }
 
+/// <summary>总览的两种形态。</summary>
+public enum OverviewMode
+{
+    /// <summary>窗口总览：当前桌面的全部窗口（macOS 调度中心）。</summary>
+    All,
+
+    /// <summary>应用窗口视图：只平铺当前程序的窗口，其余窗口原地淡出（macOS App Exposé）。</summary>
+    App,
+}
+
 /// <summary>渲染线程每帧取到的总览状态。</summary>
 /// <param name="BarExpansion">桌面条展开程度（0 收起 ~ 1 展开）。</param>
 /// <param name="ZoomDesktop">点击后正在放大进入的桌面（-1 = 没有）。</param>
@@ -84,6 +94,8 @@ public readonly record struct OverviewFrame(
 /// <item>桌面条：指针移到顶部展开；点另一个桌面时真实桌面立刻切换，覆盖层把那个桌面的缩略图放大到全屏后撤掉（macOS 调度中心）。</item>
 /// <item>总览里四指横滑（<see cref="DesktopSwipe"/>）：留在总览里，窗口区域 1:1 跟手横向滑到相邻桌面那一页（各桌面各排一页），
 /// 松手按投影决定停在哪一页，首尾橡皮筋；换页时真实桌面立刻切换（macOS 调度中心）。</item>
+/// <item>收起态下沿收起方向滑（三指下滑）：应用窗口视图（<see cref="OverviewMode.App"/>），只平铺当前程序的窗口；
+/// 它的展开方向是下、收起是上（macOS App Exposé）。宿主在 <see cref="IOverviewHost.Show"/> 里按 <see cref="Mode"/> 准备场景。</item>
 /// <item>拖动窗口（<see cref="BeginDrag"/>）：窗口跟着指针走，移到桌面条上缩成缩略图大小；放到别的桌面上就飞进那个缩略图，
 /// 其余窗口补位（<see cref="OverviewScene.Without"/>）；放在别处就飞回原位（macOS 调度中心）。</item>
 /// </list>
@@ -128,6 +140,7 @@ public sealed class OverviewController : IGestureTarget
         Dropping,
     }
 
+    private volatile OverviewMode _mode;
     private bool _visible;
     private bool _prewarming;
     private bool _tracking;
@@ -166,6 +179,9 @@ public sealed class OverviewController : IGestureTarget
 
     /// <summary>当前页（= 当前桌面下标，-1 = 没有多页）。</summary>
     public int Page => _page;
+
+    /// <summary>本次（或上一次）展开的形态；只在收起态下随新的展开改变。</summary>
+    public OverviewMode Mode => _mode;
 
     public bool IsVisible
     {
@@ -384,9 +400,10 @@ public sealed class OverviewController : IGestureTarget
                 _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口，等它落定
                 return;
             }
-            if (!_visible && !IsOpeningDirection(e))
+            bool app = !_visible && !IsOpeningDirection(e) && e.Axis == GestureAxis.Vertical && _config().AppWindows;
+            if (!_visible && !IsOpeningDirection(e) && !app)
             {
-                // 收起态下朝「收起」方向滑：不是总览手势（留作将来的应用窗口视图），放弃预热
+                // 收起态下朝「收起」方向滑、又没开应用窗口视图：不是总览手势，放弃预热
                 _ignoring = true;
                 cancelPrewarm = _prewarming;
                 _prewarming = false;
@@ -397,6 +414,7 @@ public sealed class OverviewController : IGestureTarget
                 _openPending = false;
                 if (!_visible)
                 {
+                    _mode = app ? OverviewMode.App : OverviewMode.All;
                     _visible = true;
                     _prewarming = false;
                     show = true;
@@ -482,6 +500,7 @@ public sealed class OverviewController : IGestureTarget
             if (!_visible)
             {
                 // 动画等覆盖层真正显示出来（OnShown）再开始，否则预热的那几十毫秒会吃掉动画开头
+                _mode = OverviewMode.All;
                 _visible = true;
                 _openPending = true;
                 show = true;
@@ -646,6 +665,8 @@ public sealed class OverviewController : IGestureTarget
                 else (dest[i], opacity[i]) = (frame.DragRect, frame.DragOpacity);
             }
             else if (scene.IsRemoved(i)) opacity[i] = 0;
+            else if (scene.IsExcluded(i)) // 应用窗口视图里其他程序的窗口：留在原位，随进度淡出
+                (dest[i], opacity[i]) = (w.Source, w.IsMinimized ? 0 : 1 - Math.Clamp(frame.Progress, 0, 1));
             opacity[i] *= fade;
         }
     }
@@ -737,10 +758,10 @@ public sealed class OverviewController : IGestureTarget
     /// <summary>第 <paramref name="page"/> 页在翻页位置 <paramref name="position"/> 下的横向偏移（像素）。</summary>
     public static double PageOffset(int page, double position, double width, double gap) => (page - position) * (width + gap);
 
-    // 展开方向：竖直轴向上、水平轴向右为正
-    private static double OpenAxisMm(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? -e.DyMm : e.DxMm;
+    // 展开方向：竖直轴向上、水平轴向右为正；应用窗口视图竖直轴反过来（向下展开）
+    private double OpenAxisMm(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (_mode == OverviewMode.App ? e.DyMm : -e.DyMm) : e.DxMm;
 
-    private static double OpenAxisVelocity(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? -e.VyMmS : e.VxMmS;
+    private double OpenAxisVelocity(in GestureEvent e) => e.Axis == GestureAxis.Vertical ? (_mode == OverviewMode.App ? e.VyMmS : -e.VyMmS) : e.VxMmS;
 
     private static bool IsOpeningDirection(in GestureEvent e) => e.Direction is GestureDirection.Up or GestureDirection.Right;
 }

@@ -20,19 +20,22 @@ public readonly record struct OverviewArea(RectD WorkArea, double DpiScale, Desk
 /// 会话中可以移走 / 加入窗口（拖到别的桌面）：<see cref="Without"/> / <see cref="With"/> 返回新场景，
 /// 窗口下标不变（缩略图注册按下标，不用重建），移走的窗口留在原位但标成 <see cref="IsRemoved"/>；
 /// 其余窗口重新排版，新场景记着旧平铺位，<see cref="Tile(int, double, double)"/> 按重排进度从旧位置过渡过去。
+/// 应用窗口视图（<see cref="Focus"/>）也用同一套下标：其他程序的窗口标成 <see cref="IsExcluded"/>，不排版，留在原位随进度淡出。
 /// </summary>
 public sealed class OverviewScene
 {
-    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null), [], null);
+    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null), [], null, []);
 
     private readonly DesktopBarGeometry?[] _bars; // 每个窗口平铺所在那块屏的桌面条（没有为 null）
     private readonly Context _context; // 重新排版用
     private readonly bool[] _removed;
     private readonly RectD?[]? _from; // 重排前的平铺位（收起时的坐标）；新加入的窗口为 null
+    private readonly bool[] _excluded; // 应用窗口视图里其他程序的窗口
 
     private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options);
 
-    private OverviewScene(IReadOnlyList<OverviewWindow> windows, LayoutSlot[] slots, DesktopBarGeometry?[] bars, Context context, bool[] removed, RectD?[]? from)
+    private OverviewScene(IReadOnlyList<OverviewWindow> windows, LayoutSlot[] slots, DesktopBarGeometry?[] bars, Context context, bool[] removed, RectD?[]? from,
+        bool[] excluded)
     {
         Windows = windows;
         Slots = slots;
@@ -40,6 +43,7 @@ public sealed class OverviewScene
         _context = context;
         _removed = removed;
         _from = from;
+        _excluded = excluded;
     }
 
     public IReadOnlyList<OverviewWindow> Windows { get; }
@@ -51,6 +55,48 @@ public sealed class OverviewScene
 
     /// <summary>窗口已被移到别的桌面（不再显示、不参与选择与命中）。</summary>
     public bool IsRemoved(int index) => _removed[index];
+
+    /// <summary>应用窗口视图里其他程序的窗口：不排版、不参与选择与命中，留在原位随进度淡出。</summary>
+    public bool IsExcluded(int index) => _excluded[index];
+
+    /// <summary>平铺在总览里的窗口（没有移走、也没有被排除）。</summary>
+    public bool IsPresent(int index) => !_removed[index] && !_excluded[index];
+
+    /// <summary>平铺在总览里的窗口数。</summary>
+    public int PresentCount
+    {
+        get
+        {
+            int n = 0;
+            for (int i = 0; i < Count; i++)
+                if (IsPresent(i)) n++;
+            return n;
+        }
+    }
+
+    /// <summary>
+    /// 应用窗口视图：只平铺 <paramref name="include"/> 选中的窗口，排在 <paramref name="areas"/> 里（通常没有桌面条）；
+    /// 其余窗口标成排除。窗口下标不变，缩略图注册可以直接沿用。前台标记交给选中窗口里最上层的非最小化窗口。
+    /// </summary>
+    public OverviewScene Focus(Func<OverviewWindow, bool> include, IReadOnlyList<OverviewArea> areas)
+    {
+        var excluded = Windows.Select(w => !include(w)).ToArray();
+        var windows = Windows.ToArray();
+        int fg = Array.FindIndex(windows, w => w.IsForeground);
+        if (fg < 0 || excluded[fg])
+        {
+            int next = Enumerable.Range(0, windows.Length).FirstOrDefault(i => !excluded[i] && !_removed[i] && !windows[i].IsMinimized, -1);
+            if (next >= 0)
+            {
+                if (fg >= 0) windows[fg] = windows[fg] with { IsForeground = false };
+                windows[next] = windows[next] with { IsForeground = true };
+            }
+        }
+        var context = _context with { Areas = areas };
+        var hidden = _removed.Zip(excluded, (r, e) => r || e).ToArray();
+        var (slots, bars) = Arrange(windows, hidden, context, [.. Slots], new DesktopBarGeometry?[Count]);
+        return new OverviewScene(windows, slots, bars, context, (bool[])_removed.Clone(), null, excluded);
+    }
 
     /// <summary>第 <paramref name="index"/> 个窗口在桌面条展开 <paramref name="expansion"/> 时的平铺位（窗口区域往下缩，给桌面条让位）。</summary>
     public RectD Tile(int index, double expansion) => Tile(index, expansion, 1);
@@ -82,15 +128,15 @@ public sealed class OverviewScene
         {
             windows[index] = windows[index] with { IsForeground = false };
             for (int i = 0; i < windows.Length; i++)
-                if (!removed[i] && !windows[i].IsMinimized)
+                if (!removed[i] && !_excluded[i] && !windows[i].IsMinimized)
                 {
                     windows[i] = windows[i] with { IsForeground = true };
                     break;
                 }
         }
         var from = Enumerable.Range(0, Count).Select(i => (RectD?)RawTile(i, relayoutAt)).ToArray();
-        var (slots, bars) = Arrange(windows, removed, _context, [.. Slots], [.. _bars]);
-        return new OverviewScene(windows, slots, bars, _context, removed, from);
+        var (slots, bars) = Arrange(windows, removed.Zip(_excluded, (r, e) => r || e).ToArray(), _context, [.. Slots], [.. _bars]);
+        return new OverviewScene(windows, slots, bars, _context, removed, from, _excluded);
     }
 
     /// <summary>加入一个窗口（从别的桌面拖过来），排在最后（下标 = 原来的 <see cref="Count"/>）；其余窗口重新排版。</summary>
@@ -98,10 +144,12 @@ public sealed class OverviewScene
     {
         var windows = Windows.Append(window).ToArray();
         var removed = _removed.Append(false).ToArray();
-        if (_context.Areas.Count == 0) return new OverviewScene(windows, new LayoutSlot[windows.Length], new DesktopBarGeometry?[windows.Length], _context, removed, null);
+        var excluded = _excluded.Append(false).ToArray();
+        if (_context.Areas.Count == 0)
+            return new OverviewScene(windows, new LayoutSlot[windows.Length], new DesktopBarGeometry?[windows.Length], _context, removed, null, excluded);
         var from = Enumerable.Range(0, Count).Select(i => (RectD?)RawTile(i, relayoutAt)).Append(null).ToArray();
-        var (slots, bars) = Arrange(windows, removed, _context, [.. Slots, default], [.. _bars, null]);
-        return new OverviewScene(windows, slots, bars, _context, removed, from);
+        var (slots, bars) = Arrange(windows, removed.Zip(excluded, (r, e) => r || e).ToArray(), _context, [.. Slots, default], [.. _bars, null]);
+        return new OverviewScene(windows, slots, bars, _context, removed, from, excluded);
     }
 
     /// <summary>
@@ -112,12 +160,12 @@ public sealed class OverviewScene
         bool primaryOnly = false, int primaryIndex = 0, LayoutOptions? options = null)
     {
         var context = new Context(areas, primaryOnly, primaryIndex, options);
-        if (windows.Count == 0 || areas.Count == 0) return new OverviewScene([], [], [], context, [], null);
+        if (windows.Count == 0 || areas.Count == 0) return new OverviewScene([], [], [], context, [], null, []);
         var (slots, bars) = Arrange(windows, new bool[windows.Count], context, new LayoutSlot[windows.Count], new DesktopBarGeometry?[windows.Count]);
-        return new OverviewScene(windows, slots, bars, context, new bool[windows.Count], null);
+        return new OverviewScene(windows, slots, bars, context, new bool[windows.Count], null, new bool[windows.Count]);
     }
 
-    /// <summary>按屏分组排版没有移走的窗口（就地写进 <paramref name="slots"/> / <paramref name="bars"/>；移走的保留原来的值）。</summary>
+    /// <summary>按屏分组排版没有隐去（<paramref name="removed"/>）的窗口（就地写进 <paramref name="slots"/> / <paramref name="bars"/>；隐去的保留原来的值）。</summary>
     private static (LayoutSlot[] Slots, DesktopBarGeometry?[] Bars) Arrange(IReadOnlyList<OverviewWindow> windows, bool[] removed, Context context,
         LayoutSlot[] slots, DesktopBarGeometry?[] bars)
     {
@@ -155,13 +203,13 @@ public sealed class OverviewScene
     public int Navigate(int from, NavigationDirection direction)
     {
         if (Count == 0) return -1;
-        if (from < 0 || from >= Count || _removed[from]) return FirstPresent();
+        if (from < 0 || from >= Count || !IsPresent(from)) return FirstPresent();
         var c = Slots[from].Tile;
         int best = from;
         double bestScore = double.MaxValue;
         for (int i = 0; i < Count; i++)
         {
-            if (i == from || _removed[i]) continue;
+            if (i == from || !IsPresent(i)) continue;
             var t = Slots[i].Tile;
             double dx = t.CenterX - c.CenterX, dy = t.CenterY - c.CenterY;
             var (along, across) = direction switch
@@ -196,11 +244,16 @@ public sealed class OverviewScene
     }
 
     /// <summary>最上层的没有移走的窗口（-1 = 没有）。</summary>
-    public int FirstPresent() => Array.IndexOf(_removed, false);
+    public int FirstPresent()
+    {
+        for (int i = 0; i < Count; i++)
+            if (IsPresent(i)) return i;
+        return -1;
+    }
 
     private int[] ReadingOrder()
     {
-        var present = Enumerable.Range(0, Count).Where(i => !_removed[i]).ToList();
+        var present = Enumerable.Range(0, Count).Where(IsPresent).ToList();
         if (present.Count == 0) return [];
         double rowTolerance = present.Min(i => Slots[i].Tile.Height) / 2;
         var byY = present.OrderBy(i => Slots[i].Tile.CenterY).ToList();
@@ -221,7 +274,7 @@ public sealed class OverviewScene
     public int HitTest(double x, double y, double progress, double barExpansion = 0)
     {
         for (int i = 0; i < Windows.Count; i++)
-            if (!_removed[i] && OverviewVisuals.SceneWindow(Windows[i], Tile(i, barExpansion), progress, emphasized: false).Rect.Contains(x, y)) return i;
+            if (IsPresent(i) && OverviewVisuals.SceneWindow(Windows[i], Tile(i, barExpansion), progress, emphasized: false).Rect.Contains(x, y)) return i;
         return -1;
     }
 }

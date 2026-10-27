@@ -104,13 +104,49 @@ public class OverviewControllerTests
     }
 
     [Fact]
-    public void Swipe_down_while_hidden_is_not_an_overview_gesture()
+    public void Swipe_down_while_hidden_is_not_an_overview_gesture_when_the_app_view_is_off()
     {
-        var (c, host) = Create();
+        var host = new FakeHost();
+        var c = new OverviewController(host, () => new OverviewConfig { TravelMm = Travel, AppWindows = false });
         Swipe(c, upMm: -20, releaseVelocity: -100, start: 0);
 
         Assert.Equal(new[] { "Prewarm", "CancelPrewarm" }, host.Calls);
         Assert.False(c.IsVisible);
+    }
+
+    [Fact]
+    public void Swipe_down_while_hidden_opens_the_app_view_tracking_downwards()
+    {
+        var (c, host) = Create();
+        c.Prepare(0);
+        c.Begin(Ev(GesturePhase.Began, GestureDirection.Down, 0, 0, 0));
+        Assert.Equal(OverviewMode.App, c.Mode);
+        Assert.Equal(new[] { "Prewarm", "Show" }, host.Calls);
+        c.Update(Ev(GesturePhase.Changed, GestureDirection.Down, -15, -100, 50_000)); // 向下 15mm
+        Assert.Equal(0.5, c.Sample(60_000).Progress, 3);
+        c.End(Ev(GesturePhase.Ended, GestureDirection.Down, -15, -100, 70_000));
+        Assert.Equal(1, c.Sample(5_000_000).Progress, 3);
+
+        // 展开后向上滑收起（方向反过来），再向下是越界
+        long t = Swipe(c, upMm: 25, releaseVelocity: 0, start: 6_000_000);
+        Assert.Equal(0, c.Sample(t + 5_000_000).Progress, 3);
+        Assert.False(c.IsVisible);
+
+        // 下一次向上滑又是普通总览
+        Swipe(c, upMm: 25, releaseVelocity: 0, start: 20_000_000);
+        Assert.Equal(OverviewMode.All, c.Mode);
+    }
+
+    [Fact]
+    public void Hotkey_always_opens_the_full_overview()
+    {
+        var (c, _) = Create();
+        long t = Swipe(c, upMm: -25, releaseVelocity: 0, start: 0);
+        Assert.Equal(OverviewMode.App, c.Mode);
+        c.Close(null, t + 5_000_000);
+        c.Sample(t + 10_000_000);
+        c.Toggle(t + 11_000_000);
+        Assert.Equal(OverviewMode.All, c.Mode);
     }
 
     [Fact]

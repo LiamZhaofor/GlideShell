@@ -100,6 +100,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     public void Show() => _ui.Post(() =>
     {
         if (!_prepared) PrepareScene();
+        if (Controller.Mode == OverviewMode.App) FocusApp();
         // 先在 UI 线程把第一帧摆好再显示覆盖层：否则显示出来的第一帧是还没定位缩略图的黑底，看起来像闪屏
         ApplyFrame(Controller.ProgressAt(HostClock.NowUs()));
         foreach (var o in _overlays)
@@ -114,7 +115,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     public void Activate() => _ui.Post(() =>
     {
         _keys.Install();
-        Log.Info($"总览展开（{(HostClock.NowUs() - _sessionStartUs) / 1000.0:F0}ms），{Controller.Scene.Count} 个窗口");
+        Log.Info($"{(Controller.Mode == OverviewMode.App ? "应用窗口视图" : "总览")}展开（{(HostClock.NowUs() - _sessionStartUs) / 1000.0:F0}ms），{Controller.Scene.PresentCount} 个窗口");
     });
 
     /// <summary>收起已经确定（输入线程 / UI 线程）：趁收起动画还在播，在覆盖层下面把选中的窗口提到最上层并切到前台。</summary>
@@ -340,6 +341,32 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Log.Info($"总览预热：{scene.Count} 个窗口，{monitors.Count} 块屏，耗时 {(t4 - t0) / 1000.0:F1}ms" +
                  $"（显示器 {(t1 - t0) / 1000.0:F1} / 枚举 {(t2 - t1) / 1000.0:F1} / 布局+缩略图 {(t3 - t2) / 1000.0:F1}" +
                  (bar ? $" / 桌面条 {desktops.Count} 个桌面 {_barWindows.Count} 个窗口 {(t4 - t3) / 1000.0:F1}）" : "）"));
+    }
+
+    /// <summary>
+    /// 应用窗口视图：在预热好的场景上只平铺前台程序的窗口（按进程名；前台不是场景里的窗口时取最上层的窗口），
+    /// 其他程序的窗口原地淡出。下标不变，缩略图注册直接沿用；没有桌面条，也不分页。
+    /// </summary>
+    private void FocusApp()
+    {
+        var scene = Controller.Scene;
+        var front = scene.Windows.FirstOrDefault(w => w.IsForeground) ?? scene.Windows.FirstOrDefault(w => !w.IsMinimized);
+        if (front is null) return;
+        string app = front.ProcessName;
+        var areas = _overlays.Select(o => new OverviewArea(o.Monitor.WorkArea, o.Monitor.DpiScale)).ToList();
+        var focused = scene.Focus(w => app.Length > 0 ? w.ProcessName == app : w.Id == front.Id, areas);
+        Controller.SetScene(focused);
+        Controller.SetDesktops(DesktopBarState.Empty);
+        _pageBuffers = null;
+        _barState = DesktopState.Empty;
+        nint foreground = User32.GetForegroundWindow();
+        foreach (var o in _overlays)
+        {
+            o.ClearPages();
+            o.ReplaceScene(-1, focused);
+            o.PrepareBar(null, DesktopState.Empty, [], foreground);
+        }
+        Log.Info($"应用窗口视图：{Path.GetFileName(app)}，{focused.PresentCount} 个窗口");
     }
 
     /// <summary>

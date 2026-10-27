@@ -210,7 +210,10 @@ internal sealed class AppHost
         // overview-hold：展开后停 12 秒再退出（留时间给外部用真实鼠标操作总览）；
         // overview-hold-page：同上，展开 5 秒后在总览里四指往左滑翻到右边那一页（外部先把窗口拖到那个桌面）
         bool holdPage = name == "overview-hold-page";
-        int linger = name is "overview-hold" or "overview-hold-page" ? 12000 : 1500;
+        // app-hold：收起态三指下滑打开应用窗口视图，停 12 秒
+        bool appHold = name == "app-hold";
+        int linger = name is "overview-hold" or "overview-hold-page" or "app-hold" ? 12000 : 1500;
+        if (appHold) name = "overview-close";
         if (bar || name is "overview-hold" or "overview-hold-page") name = "overview";
         if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
         {
