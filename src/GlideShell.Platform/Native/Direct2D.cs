@@ -19,7 +19,10 @@ internal static unsafe partial class D2D
     public const int BITMAP_INTERPOLATION_MODE_LINEAR = 1;
 
     public const int DWRITE_FONT_STYLE_NORMAL = 0, DWRITE_FONT_STRETCH_NORMAL = 5;
-    public const int DWRITE_WORD_WRAPPING_NO_WRAP = 1;
+    public const int DWRITE_WORD_WRAPPING_WRAP = 0, DWRITE_WORD_WRAPPING_NO_WRAP = 1;
+    public const int DWRITE_TEXT_ALIGNMENT_LEADING = 0, DWRITE_TEXT_ALIGNMENT_TRAILING = 1, DWRITE_TEXT_ALIGNMENT_CENTER = 2;
+    public const int DWRITE_PARAGRAPH_ALIGNMENT_NEAR = 0, DWRITE_PARAGRAPH_ALIGNMENT_CENTER = 2;
+    public const int TEXT_ANTIALIAS_MODE_CLEARTYPE = 1;
     public const int DWRITE_TRIMMING_GRANULARITY_CHARACTER = 1;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -135,6 +138,8 @@ internal static unsafe partial class D2D
         => ((delegate* unmanaged[Stdcall]<void*, void*, void**, int>)Vtbl(factory)[20])(factory, format, sign);
 
     // ---- IDWriteTextFormat（IDWriteTextLayout 继承它）----
+    public static int SetTextAlignment(void* format, int alignment) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(format)[3])(format, alignment);
+    public static int SetParagraphAlignment(void* format, int alignment) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(format)[4])(format, alignment);
     public static int SetWordWrapping(void* format, int wrapping) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(format)[5])(format, wrapping);
     public static int SetTrimming(void* format, Trimming* trimming, void* sign)
         => ((delegate* unmanaged[Stdcall]<void*, Trimming*, void*, int>)Vtbl(format)[9])(format, trimming, sign);

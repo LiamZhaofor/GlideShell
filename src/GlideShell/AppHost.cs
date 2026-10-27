@@ -566,7 +566,9 @@ internal sealed class AppHost
             _virtualDesktops.Available,
             RunningApps,
             SaveSettings,
-            () => OpenPath(ConfigStore.DefaultPath)));
+            () => OpenPath(ConfigStore.DefaultPath),
+            typeof(AppHost).Assembly.GetName().Version?.ToString(3) ?? "",
+            () => OpenPath(Log.DefaultDirectory)));
     }
 
     /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>
