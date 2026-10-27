@@ -50,6 +50,10 @@ public interface IOverviewHost
 /// <param name="ZoomDesktop">点击后正在放大进入的桌面（-1 = 没有）。</param>
 /// <param name="Zoom">放大进入的进度（0 ~ 1）：目标桌面缩略图从桌面条放大到全屏，其余内容随之淡出。</param>
 /// <param name="PagePosition">翻页位置（桌面下标，可带小数）：第 k 页横向偏移 (k − 位置) × (屏宽 + 间隙)。</param>
+/// <param name="Relayout">当前页重排进度（窗口移到别的桌面后其余窗口补位；1 = 没有在重排）。</param>
+/// <param name="DragIndex">正在拖动 / 放下的窗口（当前页场景下标，-1 = 没有）。</param>
+/// <param name="DragRect">它这一帧的矩形（<paramref name="DragReturn"/> ≥ 0 时是飞回的起点）。</param>
+/// <param name="DragReturn">没放到别的桌面、正在飞回的进度（0 ~ 1）：从 <paramref name="DragRect"/> 插值到它本来的位置；-1 = 不是在飞回。</param>
 public readonly record struct OverviewFrame(
     double Progress,
     double BackdropOpacity,
@@ -60,7 +64,16 @@ public readonly record struct OverviewFrame(
     double BarExpansion = 0,
     int ZoomDesktop = -1,
     double Zoom = 0,
-    double PagePosition = 0);
+    double PagePosition = 0,
+    double Relayout = 1,
+    int DragIndex = -1,
+    RectD DragRect = default,
+    double DragOpacity = 1,
+    double DragReturn = -1)
+{
+    /// <summary>有窗口在拖动或放下途中（标题、悬停框不画）。</summary>
+    public bool Dragging => DragIndex >= 0;
+}
 
 /// <summary>
 /// 窗口总览：手势 → 连续进度（0 = 收起，1 = 展开）→ 画面。
@@ -71,6 +84,8 @@ public readonly record struct OverviewFrame(
 /// <item>桌面条：指针移到顶部展开；点另一个桌面时真实桌面立刻切换，覆盖层把那个桌面的缩略图放大到全屏后撤掉（macOS 调度中心）。</item>
 /// <item>总览里四指横滑（<see cref="DesktopSwipe"/>）：留在总览里，窗口区域 1:1 跟手横向滑到相邻桌面那一页（各桌面各排一页），
 /// 松手按投影决定停在哪一页，首尾橡皮筋；换页时真实桌面立刻切换（macOS 调度中心）。</item>
+/// <item>拖动窗口（<see cref="BeginDrag"/>）：窗口跟着指针走，移到桌面条上缩成缩略图大小；放到别的桌面上就飞进那个缩略图，
+/// 其余窗口补位（<see cref="OverviewScene.Without"/>）；放在别处就飞回原位（macOS 调度中心）。</item>
 /// </list>
 /// 线程：IGestureTarget 方法在输入线程；<see cref="Sample"/> / <see cref="WindowRects"/> 在渲染线程；
 /// <see cref="SetScene"/>、<see cref="SetHovered"/>、<see cref="Toggle"/> 等在 UI 线程。宿主回调都在锁外发出。
@@ -95,6 +110,23 @@ public sealed class OverviewController : IGestureTarget
     private bool _pagerIgnoring;
     private int _pageAtBegin;
     private double _pageTravelMm = 55;
+    private readonly InteractiveTransition _relayout = new(0, 1, 1) { Spring = new(0.32, 1.0) };
+    private readonly InteractiveTransition _dragShrink = new(0, 1, 0) { Spring = new(0.25, 1.0) };
+    private readonly InteractiveTransition _drop = new(0, 1, 0) { Spring = new(0.3, 1.0) };
+    private DragStage _drag;
+    private int _dragIndex = -1;
+    private double _dragX, _dragY; // 指针位置
+    private double _grabX, _grabY; // 按下处在窗口里的相对位置（0 ~ 1）
+    private double _dragW, _dragH, _smallW, _smallH; // 平铺位大小 / 在桌面条上缩到的大小
+    private RectD _dropFrom;
+    private RectD? _dropInto; // 放到别的桌面：飞到这里并淡出；null = 飞回原位
+
+    private enum DragStage
+    {
+        None,
+        Dragging,
+        Dropping,
+    }
 
     private bool _visible;
     private bool _prewarming;
@@ -205,6 +237,113 @@ public sealed class OverviewController : IGestureTarget
         else _host.SwitchDesktop(index);
     }
 
+    // ---------- 拖动窗口（UI 线程） ----------
+
+    /// <summary>正在拖动或放下途中。</summary>
+    public bool IsDragging
+    {
+        get { lock (_gate) return _drag != DragStage.None; }
+    }
+
+    /// <summary>
+    /// 开始拖动当前页的窗口 <paramref name="windowId"/>，指针在 (<paramref name="x"/>, <paramref name="y"/>)。
+    /// <paramref name="small"/> 是它移到桌面条上时缩到的大小（只用宽高）。只在总览完全展开、没有手势 / 翻页 / 放大进入时可以开始。
+    /// </summary>
+    public bool BeginDrag(long windowId, double x, double y, RectD small, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None) return false;
+            if (_transition.Target < 1 - SettleEpsilon || _transition.Peek(hostUs) < 1 - 0.02) return false;
+            if (_page >= 0 && Math.Abs(_pager.Peek(hostUs) - _page) > 0.01) return false;
+            var scene = Scene;
+            int index = scene.IndexOf(windowId);
+            if (index < 0 || scene.IsRemoved(index)) return false;
+            var tile = scene.Tile(index, _bar.Peek(hostUs), _relayout.Peek(hostUs));
+            _drag = DragStage.Dragging;
+            _dragIndex = index;
+            _dragX = x;
+            _dragY = y;
+            _grabX = Math.Clamp((x - tile.Left) / Math.Max(1, tile.Width), 0, 1);
+            _grabY = Math.Clamp((y - tile.Top) / Math.Max(1, tile.Height), 0, 1);
+            _dragW = tile.Width;
+            _dragH = tile.Height;
+            _smallW = Math.Min(small.Width, tile.Width);
+            _smallH = Math.Min(small.Height, tile.Height);
+            _dragShrink.SnapTo(0);
+            _hovered = null;
+            return true;
+        }
+    }
+
+    /// <summary>拖动中指针移动；<paramref name="overBar"/>：指针在桌面条上（窗口缩小）。</summary>
+    public void DragTo(double x, double y, bool overBar, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (_drag != DragStage.Dragging) return;
+            _dragX = x;
+            _dragY = y;
+            if (_dragShrink.Target != (overBar ? 1 : 0)) _dragShrink.AnimateTo(overBar ? 1 : 0, hostUs);
+        }
+    }
+
+    /// <summary>
+    /// 松开：<paramref name="into"/> 非空表示放到了别的桌面——窗口飞到那里（桌面条缩略图里它的位置）并淡出，
+    /// 当前页移走它、其余窗口补位，返回移走后的当前页场景；为 null 时窗口飞回原位，返回 null。
+    /// </summary>
+    public OverviewScene? EndDrag(RectD? into, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (_drag != DragStage.Dragging) return null;
+            _dropFrom = DragRect(_dragShrink.Peek(hostUs));
+            _dropInto = into;
+            _drag = DragStage.Dropping;
+            _drop.SnapTo(0);
+            _drop.AnimateTo(1, hostUs);
+            if (into is null) return null;
+            var next = Scene.Without(_dragIndex, _relayout.Peek(hostUs));
+            ReplaceScene(_page, next);
+            _relayout.SnapTo(0);
+            _relayout.AnimateTo(1, hostUs);
+            return next;
+        }
+    }
+
+    /// <summary>
+    /// 第 <paramref name="page"/> 页（桌面下标）加入一个窗口（从别的页拖到了那个桌面），返回它在那一页的场景下标；没有多页时返回 -1。
+    /// 那一页不在屏幕上，直接排到新位置。
+    /// </summary>
+    public int AddToPage(int page, OverviewWindow window)
+    {
+        lock (_gate)
+        {
+            if (page < 0 || page >= _pages.Count || page == _page) return -1;
+            var next = _pages[page].With(window);
+            ReplaceScene(page, next);
+            return next.Count - 1;
+        }
+    }
+
+    private void ReplaceScene(int page, OverviewScene scene)
+    {
+        if (page >= 0 && page < _pages.Count)
+        {
+            var pages = _pages.ToArray();
+            pages[page] = scene;
+            _pages = pages;
+            if (page == _page) _scene = scene;
+        }
+        else _scene = scene;
+    }
+
+    private RectD DragRect(double shrink)
+    {
+        double w = _dragW + (_smallW - _dragW) * shrink, h = _dragH + (_smallH - _dragH) * shrink;
+        return new RectD(_dragX - _grabX * w, _dragY - _grabY * h, w, h);
+    }
+
     /// <summary>指针下的窗口（UI 线程根据鼠标位置更新）。</summary>
     public void SetHovered(long? windowId)
     {
@@ -240,9 +379,9 @@ public sealed class OverviewController : IGestureTarget
         bool show = false, cancelPrewarm = false;
         lock (_gate)
         {
-            if (_zoomDesktop >= 0 || _pagerTracking)
+            if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging)
             {
-                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页，等它落定
+                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口，等它落定
                 return;
             }
             if (!_visible && !IsOpeningDirection(e))
@@ -376,6 +515,14 @@ public sealed class OverviewController : IGestureTarget
         lock (_gate)
         {
             if (!_visible || _zoomDesktop >= 0 || _pagerTracking) return;
+            if (_drag == DragStage.Dragging) // 拖动中按 Esc：窗口随收起飞回原位
+            {
+                _dropFrom = DragRect(_dragShrink.Peek(hostUs));
+                _dropInto = null;
+                _drag = DragStage.Dropping;
+                _drop.SnapTo(0);
+                _drop.AnimateTo(1, hostUs);
+            }
             _focusTarget = focusWindowId;
             _transition.AnimateTo(0, hostUs);
             if (_page >= 0) _pager.SnapTo(_page);
@@ -392,14 +539,41 @@ public sealed class OverviewController : IGestureTarget
         var bar = _bar.Sample(hostUs);
         var zoom = _zoom.Sample(hostUs);
         var pager = _pager.Sample(hostUs);
+        var relayout = _relayout.Sample(hostUs);
+        var shrink = _dragShrink.Sample(hostUs);
+        var drop = _drop.Sample(hostUs);
         bool hide = false, activate = false; // 落定后的宿主回调在锁外发出；不用委托，渲染线程零分配
         long? focus = null;
         bool visible;
         long? emphasized;
         int zoomDesktop;
+        int dragIndex = -1;
+        RectD dragRect = default;
+        double dragOpacity = 1, dragReturn = -1;
         lock (_gate)
         {
             zoomDesktop = _zoomDesktop;
+            if (_drag == DragStage.Dragging)
+            {
+                dragIndex = _dragIndex;
+                dragRect = DragRect(shrink.Value);
+            }
+            else if (_drag == DragStage.Dropping)
+            {
+                dragIndex = _dragIndex;
+                double t = Math.Clamp(drop.Value, 0, 1);
+                if (_dropInto is { } into)
+                {
+                    dragRect = RectD.Lerp(_dropFrom, into, t);
+                    dragOpacity = 1 - OverviewVisuals.SmoothStep(0.55, 1, t);
+                }
+                else
+                {
+                    dragRect = _dropFrom;
+                    dragReturn = t;
+                }
+                if (drop.JustSettled) _drag = DragStage.None; // 这一帧还按落点画（与之后的画面一致）
+            }
             if (_zoomDesktop >= 0)
             {
                 if (zoom.JustSettled && zoom.Value >= 1 - SettleEpsilon && _visible)
@@ -411,6 +585,8 @@ public sealed class OverviewController : IGestureTarget
                     _transition.SnapTo(0);
                     _bar.SnapTo(0);
                     _zoom.SnapTo(0);
+                    _drag = DragStage.None;
+                    _relayout.SnapTo(1);
                 }
             }
             else if (s.JustSettled && _visible && !_tracking)
@@ -422,6 +598,8 @@ public sealed class OverviewController : IGestureTarget
                     _focusTarget = null;
                     hide = true;
                     _bar.SnapTo(0);
+                    _drag = DragStage.None;
+                    _relayout.SnapTo(1);
                 }
                 else if (s.Value >= 1 - SettleEpsilon)
                 {
@@ -434,7 +612,8 @@ public sealed class OverviewController : IGestureTarget
         if (hide) _host.Hide(focus);
         else if (activate) _host.Activate();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
-            s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0, _page >= 0 ? pager.Value : 0);
+            s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0, _page >= 0 ? pager.Value : 0,
+            relayout.Value, dragIndex, dragRect, dragOpacity, dragReturn);
     }
 
     /// <summary>
@@ -452,7 +631,7 @@ public sealed class OverviewController : IGestureTarget
 
     /// <summary>
     /// 按帧计算每个窗口的当前矩形与不透明度，写进 <paramref name="dest"/>（长度 ≥ 场景窗口数，零分配）。
-    /// 桌面条展开时平铺区域往下缩；放大进入别的桌面时整体淡出。
+    /// 桌面条展开时平铺区域往下缩；放大进入别的桌面时整体淡出；移到别的桌面的窗口不画，拖动中的窗口跟着指针。
     /// </summary>
     public static void WindowRects(OverviewScene scene, in OverviewFrame frame, Span<RectD> dest, Span<double> opacity)
     {
@@ -460,7 +639,13 @@ public sealed class OverviewController : IGestureTarget
         for (int i = 0; i < scene.Count; i++)
         {
             var w = scene.Windows[i];
-            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion), frame.Progress, frame.EmphasizedWindow == w.Id);
+            (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion, frame.Relayout), frame.Progress, frame.EmphasizedWindow == w.Id);
+            if (i == frame.DragIndex)
+            {
+                if (frame.DragReturn >= 0) dest[i] = RectD.Lerp(frame.DragRect, dest[i], frame.DragReturn);
+                else (dest[i], opacity[i]) = (frame.DragRect, frame.DragOpacity);
+            }
+            else if (scene.IsRemoved(i)) opacity[i] = 0;
             opacity[i] *= fade;
         }
     }
@@ -489,7 +674,7 @@ public sealed class OverviewController : IGestureTarget
         lock (_gate)
         {
             _pagerIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _pages.Count < 2 || _page < 0 ||
-                             _transition.Target < 1 - SettleEpsilon;
+                             _transition.Target < 1 - SettleEpsilon || _drag != DragStage.None;
             if (_pagerIgnoring) return; // 总览还没展开好、或只有一个桌面：不接管
             _pagerTracking = true;
             _pageAtBegin = _page;
@@ -544,7 +729,7 @@ public sealed class OverviewController : IGestureTarget
         {
             var w = scene.Windows[i];
             (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion), 1, false);
-            opacity[i] *= fade;
+            opacity[i] *= scene.IsRemoved(i) ? 0 : fade;
             active[i] = w.IsForeground ? 1 : 0; // 宿主把各桌面最上层的窗口标成前台：换到那一页再收起时它会被激活
         }
     }

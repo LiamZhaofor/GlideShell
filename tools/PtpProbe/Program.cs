@@ -34,6 +34,9 @@ return command switch
     "windows" => Windows(),
     "native" => Native(),
     "desktops" when args.Contains("--create-remove") => DesktopsCreateRemove(),
+    "desktops" when args.Contains("--move") => DesktopsMove(),
+    "desktops" when args.Length > 2 && args[1] == "--remove" => DesktopsRemove(int.Parse(args[2])),
+    "desktops" when args.Length > 2 && args[1] == "--switch" => DesktopsSwitch(int.Parse(args[2])),
     "desktops" => Desktops(),
     "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump"), Option(args, "--monitor")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
@@ -61,6 +64,8 @@ static int Usage()
           PtpProbe windows                 列出显示器与总览会收录的窗口（及被排除的原因）
           PtpProbe native                  只读：系统手势设置的注册表值 / Explorer 生效值
           PtpProbe desktops                只读：虚拟桌面接口自检与桌面列表
+          PtpProbe desktops --remove <n>   删除第 n 个桌面（窗口并入左边的桌面；清理实测建出来的桌面）
+          PtpProbe desktops --switch <n>   切到第 n 个桌面（实测后切回原来的桌面）
           PtpProbe thumbnails [--classic]  缩略图后端自检（左下角显示约 1 秒测试小窗）
           PtpProbe thumbnails --shadow [--size 600x400] [--monitor 序号]
                                            阴影对照：逐点比较系统画的窗口阴影与总览自画的阴影（屏幕中央闪现约 3 秒）
@@ -317,6 +322,66 @@ static int DesktopsCreateRemove()
     bool same = after.Desktops.SequenceEqual(before.Desktops) && after.CurrentIndex == before.CurrentIndex;
     Console.WriteLine($"删除：0x{hr:X8} → {after.Count} 个桌面，当前第 {after.CurrentIndex + 1} 个，{(same ? "与开始时一致" : "与开始时不一致！")}");
     return hr >= 0 && same ? 0 : 1;
+}
+
+/// 删除第 n 个桌面（1 起），窗口并入左边的桌面（第一个并入右边）。
+static int DesktopsRemove(int n)
+{
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start(m => Console.WriteLine($"   [日志] {m}"));
+    var state = service.State;
+    if (!service.Available || n < 1 || n > state.Count || state.Count < 2) return 1;
+    int hr = service.RemoveDesktopAsync(state.Desktops[n - 1], state.Desktops[n > 1 ? n - 2 : 1]).GetAwaiter().GetResult();
+    Console.WriteLine($"删除「{state.Names[n - 1]}」：0x{hr:X8}，剩 {service.State.Count} 个桌面");
+    return hr >= 0 ? 0 : 1;
+}
+
+/// 切到第 n 个桌面（1 起）。
+static int DesktopsSwitch(int n)
+{
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start();
+    var state = service.State;
+    if (!service.Available || n < 1 || n > state.Count) return 1;
+    int hr = service.SwitchToAsync(state.Desktops[n - 1]).GetAwaiter().GetResult();
+    Console.WriteLine($"切到「{state.Names[n - 1]}」：0x{hr:X8}");
+    return hr >= 0 ? 0 : 1;
+}
+
+/// 实测移动窗口的槽位：开一个测试窗口，移到相邻桌面再移回来，每步用公开接口核对它所在的桌面。
+static int DesktopsMove()
+{
+    using var service = GlideShell.Platform.VirtualDesktops.VirtualDesktopService.Start(m => Console.WriteLine($"   [日志] {m}"));
+    if (!service.Available || service.State.Count < 2) return 1;
+    Console.WriteLine($"能否移动窗口：{service.CanMoveWindows}");
+    if (!service.CanMoveWindows) return 1;
+    var state = service.State;
+    var home = state.Current!.Value;
+    var other = state.Desktops[state.CurrentIndex > 0 ? state.CurrentIndex - 1 : state.CurrentIndex + 1];
+    var exe = Environment.ProcessPath!;
+    using var child = Process.Start(new ProcessStartInfo(exe, "testwindow 200 200 500 350 6000") { UseShellExecute = false })!;
+    nint hwnd = 0;
+    for (int i = 0; i < 100 && hwnd == 0; i++)
+    {
+        Thread.Sleep(30);
+        child.Refresh();
+        hwnd = child.MainWindowHandle;
+    }
+    if (hwnd == 0)
+    {
+        Console.WriteLine("测试窗口没出现");
+        return 1;
+    }
+    Guid? Where() => GlideShell.Platform.Shell.WindowCatalog.DesktopOf(hwnd);
+    Console.WriteLine($"测试窗口 0x{hwnd:X}：在 {Where()}（当前桌面 {home}）");
+    int hr = service.MoveWindowAsync(hwnd, other).GetAwaiter().GetResult();
+    Thread.Sleep(100);
+    bool moved = Where() == other;
+    Console.WriteLine($"移到 {other}：0x{hr:X8}，现在在 {Where()} {(moved ? "✓" : "✗")}");
+    hr = service.MoveWindowAsync(hwnd, home).GetAwaiter().GetResult();
+    Thread.Sleep(100);
+    bool back = Where() == home;
+    Console.WriteLine($"移回 {home}：0x{hr:X8}，现在在 {Where()} {(back ? "✓" : "✗")}");
+    child.Kill();
+    return moved && back ? 0 : 1;
 }
 
 static int Thumbnails(bool shared, bool fade)

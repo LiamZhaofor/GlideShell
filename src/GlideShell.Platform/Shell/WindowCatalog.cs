@@ -192,6 +192,10 @@ public static unsafe class WindowCatalog
     /// <summary>已文档化的虚拟桌面查询接口是否可用（诊断用）。</summary>
     public static bool VirtualDesktopQueryAvailable => VirtualDesktops is not null;
 
+    /// <summary>窗口所在的虚拟桌面（已文档化接口）；查不到返回 null。</summary>
+    public static Guid? DesktopOf(nint window)
+        => VirtualDesktops is { } vdm && vdm.GetWindowDesktopId(window, out Guid id) == 0 && id != Guid.Empty ? id : null;
+
     private static IVirtualDesktopManager? VirtualDesktops
     {
         get

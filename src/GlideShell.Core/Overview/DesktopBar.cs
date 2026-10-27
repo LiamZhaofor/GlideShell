@@ -140,6 +140,14 @@ public sealed class DesktopBarGeometry
         return RectD.Lerp(seed, full, Math.Clamp(expansion, 0, 1.05));
     }
 
+    /// <summary>屏幕上的矩形 <paramref name="source"/>（例如窗口原位）画在第 <paramref name="index"/> 个桌面缩略图里的位置。</summary>
+    public RectD InThumb(int index, RectD source, double expansion = 1)
+    {
+        var thumb = ThumbRect(index, expansion);
+        double k = thumb.Width / Math.Max(1, Area.Width);
+        return new RectD(thumb.Left + (source.Left - Area.Left) * k, thumb.Top + (source.Top - Area.Top) * k, source.Width * k, source.Height * k);
+    }
+
     /// <summary>点击某个桌面后：缩略图随 <paramref name="zoom"/>（0 ~ 1）从桌面条上的位置放大到整个工作区。</summary>
     public RectD ZoomRect(int index, double expansion, double zoom)
         => RectD.Lerp(ThumbRect(index, expansion), Area, Math.Clamp(zoom, 0, 1));

@@ -40,6 +40,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
     private VirtualDesktopLayout? _layout;
     private nint _shell;
     private nint _manager;
+    private nint _views; // IApplicationViewCollection；自检不通过时为 0（不能移动窗口）
     private NotificationSink? _sink;
     private volatile DesktopState _state = DesktopState.Empty;
 
@@ -57,6 +58,9 @@ public sealed unsafe class VirtualDesktopService : IDisposable
     public string Status { get; private set; } = "未启动";
 
     public DesktopState State => _state;
+
+    /// <summary>可以把窗口移到别的桌面（IApplicationViewCollection 自检通过）。</summary>
+    public bool CanMoveWindows { get; private set; }
 
     /// <summary>当前桌面变化（任何途径：GlideShell 自己、任务视图、Ctrl+Win+方向键……）。在 RPC 线程上回调，必须立刻返回。</summary>
     public event Action<Guid, Guid>? CurrentChanged;
@@ -132,6 +136,33 @@ public sealed unsafe class VirtualDesktopService : IDisposable
             int hr = ((delegate* unmanaged<nint, nint, nint, int>)Slot(_manager, _layout!.RemoveDesktop))(_manager, d, f);
             if (hr is RpcDisconnected or RpcServerUnavailable) Disconnect();
             else ReadState();
+            tcs.SetResult(hr);
+        });
+        return tcs.Task;
+    }
+
+    /// <summary>
+    /// 把顶层窗口 <paramref name="window"/> 移到桌面 <paramref name="desktop"/>（不切换桌面）。返回 HRESULT。
+    /// 公开的 IVirtualDesktopManager::MoveWindowToDesktop 只能移本进程的窗口，所以走 explorer 的视图对象。
+    /// </summary>
+    public Task<int> MoveWindowAsync(nint window, Guid desktop)
+    {
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Post(() =>
+        {
+            if (!EnsureConnected() || _views == 0 || !_desktops.TryGetValue(desktop, out nint d))
+            {
+                tcs.SetResult(unchecked((int)0x80004005));
+                return;
+            }
+            nint view;
+            int hr = ((delegate* unmanaged<nint, nint, nint*, int>)Slot(_views, _layout!.GetViewForHwnd))(_views, window, &view);
+            if (hr >= 0)
+            {
+                hr = ((delegate* unmanaged<nint, nint, nint, int>)Slot(_manager, _layout.MoveViewToDesktop))(_manager, view, d);
+                Release(view);
+            }
+            if (hr is RpcDisconnected or RpcServerUnavailable) Disconnect();
             tcs.SetResult(hr);
         });
         return tcs.Task;
@@ -222,8 +253,24 @@ public sealed unsafe class VirtualDesktopService : IDisposable
             return false;
         }
         _sink = NotificationSink.TryRegister(this, _shell, _layout, out string? sinkProblem);
-        Status = $"{_layout.Name} 布局，{_state.Count} 个桌面" + (sinkProblem is null ? "" : $"（{sinkProblem}）");
+        string? viewProblem = ConnectViews();
+        Status = $"{_layout.Name} 布局，{_state.Count} 个桌面" + (sinkProblem is null ? "" : $"（{sinkProblem}）") + (viewProblem is null ? "" : $"（{viewProblem}）");
         return true;
+    }
+
+    /// <summary>移动窗口用的视图集合：方法数与代理核对，不符就只是不能移动窗口（切换、增删桌面照常）。</summary>
+    private string? ConnectViews()
+    {
+        var layout = _layout!;
+        int? methods = ProxyCheck.MethodCount(layout.IidApplicationViewCollection);
+        if (methods != layout.ApplicationViewCollectionMethodCount)
+        {
+            CanMoveWindows = false;
+            return $"不能移动窗口：视图集合方法数 {methods?.ToString() ?? "（未登记）"}，应为 {layout.ApplicationViewCollectionMethodCount}";
+        }
+        int hr = QueryService(_shell, layout.IidApplicationViewCollection, layout.IidApplicationViewCollection, out _views);
+        CanMoveWindows = hr >= 0;
+        return hr < 0 ? $"不能移动窗口：QueryService(IApplicationViewCollection) 失败 0x{hr:X8}" : null;
     }
 
     private bool EnsureConnected()
@@ -241,9 +288,10 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         _sink = null;
         foreach (var d in _desktops.Values) Release(d);
         _desktops.Clear();
+        Release(_views);
         Release(_manager);
         Release(_shell);
-        _manager = _shell = 0;
+        _views = _manager = _shell = 0;
     }
 
     /// <summary>读桌面列表与当前桌面；互相核对（GetCount 与列表长度一致、当前桌面在列表里）。</summary>

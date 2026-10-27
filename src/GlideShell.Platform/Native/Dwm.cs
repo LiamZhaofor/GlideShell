@@ -85,6 +85,8 @@ internal static unsafe partial class User32
     public const uint WM_ERASEBKGND = 0x0014;
     public const uint WM_MOUSEMOVE = 0x0200;
     public const uint WM_LBUTTONDOWN = 0x0201;
+    public const uint WM_CAPTURECHANGED = 0x0215;
+    public const int SM_CXDRAG = 68;
     public const uint WM_MOUSEACTIVATE = 0x0021;
     public const uint WM_SETCURSOR = 0x0020;
     public const nint MA_NOACTIVATE = 3;
@@ -181,6 +183,19 @@ internal static unsafe partial class User32
 
     [LibraryImport("user32.dll")]
     public static partial nint SetCursor(nint cursor);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint SetCapture(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool ReleaseCapture();
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetCapture();
+
+    [LibraryImport("user32.dll")]
+    public static partial int GetSystemMetrics(int index);
 
     [LibraryImport("user32.dll")]
     public static partial nint LoadCursorW(nint instance, nint name);

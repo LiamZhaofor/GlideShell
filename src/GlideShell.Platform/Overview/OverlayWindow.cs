@@ -15,11 +15,14 @@ namespace GlideShell.Platform.Overview;
 /// 放大进入别的桌面时那个桌面的缩略图要盖住全部窗口。
 /// 总览里可以翻页（每个桌面一页窗口）：打开时所在桌面的那一页就是 <see cref="Layer"/>（带壁纸，壁纸不动），
 /// 其余桌面各一层不带壁纸的缩略图；翻页时各页窗口的矩形整体横向平移。
+/// 拖动窗口时它的缩略图分组临时挂到最上面一支（在桌面条上面，拖到桌面条上时不被缩略图挡住），放下落定后放回原来的层次。
 /// </summary>
 internal sealed unsafe class OverlayWindow : NativeWindow
 {
-    private readonly Action<OverlayWindow, double, double> _onMouseMove;
-    private readonly Action<OverlayWindow, double, double> _onClick;
+    private readonly Action<OverlayWindow, OverlayMouse, double, double> _onMouse;
+    private bool _releasingCapture;
+    private OverlayComposition? _dragRoot; // 最上面：拖动中的窗口
+    private nint _lifted; // 挂在 _dragRoot 下的分组视觉
     private volatile IThumbnailLayer _layer;
     private OverlayComposition? _composition; // 共享缩略图视觉模式下才创建
     private OverlayComposition? _content; // 其下：窗口缩略图
@@ -48,11 +51,10 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private bool _labelsVisible;
     private int _hovered = -1;
 
-    public OverlayWindow(MonitorInfo monitor, Action<OverlayWindow, double, double> onMouseMove, Action<OverlayWindow, double, double> onClick)
+    public OverlayWindow(MonitorInfo monitor, Action<OverlayWindow, OverlayMouse, double, double> onMouse)
     {
         Monitor = monitor;
-        _onMouseMove = onMouseMove;
-        _onClick = onClick;
+        _onMouse = onMouse;
         _layer = ThumbnailLayer.Empty(monitor.WorkArea);
         var wa = monitor.WorkArea;
         Create("GlideShell.Overlay", User32.WS_POPUP,
@@ -72,6 +74,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// </summary>
     public int Prepare(OverviewScene scene, IReadOnlyList<int> members, SharedThumbnailBackend? shared)
     {
+        Unlift();
         _scene = scene;
         _members = members;
         _hovered = -1;
@@ -90,7 +93,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             // 先建的分支在下面：窗口一支、桌面条一支
             if (_composition is not null) _content ??= _composition.CreateBranch(out sharedFailure);
             if (_content is not null) _barRoot ??= _composition!.CreateBranch(out sharedFailure);
-            if (_barRoot is not null)
+            if (_barRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_dragRoot is not null)
                 next = SharedThumbnailLayer.Register(shared, _content!, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, _layer as SharedThumbnailLayer, out sharedFailure);
             _shared = shared;
             if (next is null && sharedFailure == 0) sharedFailure = unchecked((int)0x80004005);
@@ -118,6 +122,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// </summary>
     public int PreparePages(IReadOnlyList<OverviewScene> scenes, int home, IReadOnlyList<IReadOnlyList<int>> members, IReadOnlyList<Guid> desktops)
     {
+        Unlift();
         _pages = null;
         if (_layer is not SharedThumbnailLayer || _shared is null || _content is null) return 0;
         foreach (var id in _pageCache.Keys.Where(id => !desktops.Contains(id)).ToList())
@@ -162,6 +167,63 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     {
         _desktops = _desktops with { CurrentIndex = index };
         User32.InvalidateRect(Handle, null, 1);
+    }
+
+    /// <summary>UI 线程：第 <paramref name="page"/> 页（没有多页时为 -1）的场景换了（窗口移走后补位，下标不变）。</summary>
+    public void ReplaceScene(int page, OverviewScene scene)
+    {
+        if (_pages is { } pages && page >= 0 && page < pages.Scenes.Length)
+        {
+            pages.Scenes[page] = scene;
+            if (page == pages.Current) _scene = scene;
+        }
+        else if (page < 0) _scene = scene;
+        User32.InvalidateRect(Handle, null, 1);
+    }
+
+    /// <summary>
+    /// UI 线程：第 <paramref name="page"/> 页加入了一个窗口（拖到了那个桌面），<paramref name="scene"/> 是加入后的场景，
+    /// 新窗口是最后一个。本屏画不画它按 <paramref name="mine"/>。失败返回 HRESULT（那一页就不显示它）。
+    /// </summary>
+    public int AddPageWindow(int page, OverviewScene scene, bool mine)
+    {
+        if (_pages is not { } pages || page < 0 || page >= pages.Scenes.Length) return 0;
+        int index = scene.Count - 1;
+        pages.Scenes[page] = scene;
+        pages.Scratch[page] = new RectD[scene.Count];
+        if (!mine) return 0;
+        var layer = (page == pages.Home ? _layer : pages.Layers[page]) as SharedThumbnailLayer;
+        var next = layer?.AddWindow(Handle, index, (nint)scene.Windows[index].Id, Monitor.DpiScale, out int hr);
+        if (next is null) return layer is null ? 0 : unchecked((int)0x80004005);
+        pages.Members[page] = [.. pages.Members[page], index];
+        if (page == pages.Home) _layer = next;
+        else
+        {
+            pages.Layers[page] = next;
+            foreach (var (id, cached) in _pageCache.ToList())
+                if (ReferenceEquals(cached, layer)) _pageCache[id] = next;
+        }
+        return 0;
+    }
+
+    /// <summary>UI 线程：开始拖动当前页的某个窗口，把它挂到最上面一支（不是本屏的窗口、或不是共享缩略图时什么也不做）。</summary>
+    public void Lift(int sceneIndex)
+    {
+        Unlift();
+        if (_dragRoot is null || !_members.Contains(sceneIndex) || CurrentLayer is not SharedThumbnailLayer layer) return;
+        _lifted = layer.Lift(sceneIndex, _dragRoot);
+    }
+
+    /// <summary>UI 线程：拖动落定，放回原来的层次（找它所在的那一层；那一层已经不在了就只摘下来）。</summary>
+    public void Unlift()
+    {
+        if (_lifted == 0 || _dragRoot is null) return;
+        nint group = _lifted;
+        _lifted = 0;
+        IEnumerable<IThumbnailLayer?> layers = [_layer, .. _pages?.Layers ?? [], .. _pageCache.Values];
+        foreach (var layer in layers)
+            if (layer is SharedThumbnailLayer shared && shared.PutBack(group, _dragRoot)) return;
+        _shared?.Detach(_dragRoot, group);
     }
 
     /// <summary>当前页的缩略图层（提层、重排用）。</summary>
@@ -251,15 +313,21 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// <summary>UI 线程：把某个场景窗口的缩略图提到最上层（不是本屏的窗口时什么也不做）。</summary>
     public void RaiseWindow(int sceneIndex)
     {
+        Unlift();
         if (_members.Contains(sceneIndex)) ReplaceCurrentLayer(CurrentLayer.BringToTop(Handle, sceneIndex));
     }
 
     /// <summary>UI 线程：按真实桌面当前的 Z 序重排本屏缩略图的层次（撤层前用）。</summary>
-    public void Restack(IReadOnlyList<nint> topFirst) => ReplaceCurrentLayer(CurrentLayer.Restack(Handle, topFirst));
+    public void Restack(IReadOnlyList<nint> topFirst)
+    {
+        Unlift();
+        ReplaceCurrentLayer(CurrentLayer.Restack(Handle, topFirst));
+    }
 
     /// <summary>会话结束：隐藏缩略图但保留注册，下次打开时复用。</summary>
     public void Release()
     {
+        Unlift();
         _layer.HideAll();
         HidePages();
         _pages = null;
@@ -272,6 +340,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// <summary>彻底注销（覆盖层销毁前）。</summary>
     public void ReleaseAll()
     {
+        Unlift();
         var old = _layer;
         _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
         old.Unregister();
@@ -288,7 +357,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _bar.Dispose();
         _content?.Dispose(); // 分支先于根释放
         _barRoot?.Dispose();
-        _content = _barRoot = null;
+        _dragRoot?.Dispose();
+        _content = _barRoot = _dragRoot = null;
         _composition?.Dispose();
         _composition = null;
         base.Dispose();
@@ -306,6 +376,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     {
         // 先藏窗口再藏缩略图：反过来的话中间可能合成出一帧「覆盖层还在、缩略图没了」的黑底
         User32.ShowWindow(Handle, User32.SW_HIDE);
+        Unlift();
         _layer.HideAll();
         HidePages();
         _bar.HideAll();
@@ -337,10 +408,23 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                 User32.SetCursor(User32.LoadCursorW(0, _hovered >= 0 ? User32.IDC_HAND : User32.IDC_ARROW));
                 return 1;
             case User32.WM_MOUSEMOVE:
-                _onMouseMove(this, Monitor.WorkArea.Left + (short)(lParam & 0xFFFF), Monitor.WorkArea.Top + (short)((lParam >> 16) & 0xFFFF));
+                Mouse(OverlayMouse.Move, lParam);
                 return 0;
             case User32.WM_LBUTTONDOWN:
-                _onClick(this, Monitor.WorkArea.Left + (short)(lParam & 0xFFFF), Monitor.WorkArea.Top + (short)((lParam >> 16) & 0xFFFF));
+                User32.SetCapture(Handle); // 拖出覆盖层（或拖过别的屏）也收得到移动与松开
+                Mouse(OverlayMouse.Down, lParam);
+                return 0;
+            case User32.WM_LBUTTONUP:
+                if (User32.GetCapture() == Handle)
+                {
+                    _releasingCapture = true;
+                    User32.ReleaseCapture();
+                    _releasingCapture = false;
+                }
+                Mouse(OverlayMouse.Up, lParam);
+                return 0;
+            case User32.WM_CAPTURECHANGED:
+                if (!_releasingCapture) _onMouse(this, OverlayMouse.Lost, 0, 0); // 被别人抢走（例如系统弹窗）：按取消处理
                 return 0;
             case User32.WM_ERASEBKGND:
                 return 1; // WM_PAINT 里整体画
@@ -350,6 +434,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         }
         return null;
     }
+
+    private void Mouse(OverlayMouse kind, nint lParam)
+        => _onMouse(this, kind, Monitor.WorkArea.Left + (short)(lParam & 0xFFFF), Monitor.WorkArea.Top + (short)((lParam >> 16) & 0xFFFF));
 
     private void Paint()
     {
@@ -371,6 +458,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             nint hover = Gdi32.CreateSolidBrush(Gdi32.Rgb(160, 200, 255));
             foreach (int i in _members)
             {
+                if (_scene.IsRemoved(i)) continue; // 已移到别的桌面
                 var w = _scene.Windows[i];
                 var slot = _scene.Slots[i];
                 var tile = Local(slot.Tile, origin);
@@ -506,4 +594,15 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         Left = (int)Math.Round(r.Left - origin.Left), Top = (int)Math.Round(r.Top - origin.Top),
         Right = (int)Math.Round(r.Right - origin.Left), Bottom = (int)Math.Round(r.Bottom - origin.Top),
     };
+}
+
+/// <summary>覆盖层上的鼠标事件（坐标为屏幕物理像素）。</summary>
+internal enum OverlayMouse
+{
+    Move,
+    Down,
+    Up,
+
+    /// <summary>鼠标捕获被别人抢走：正在进行的按下 / 拖动按取消处理。</summary>
+    Lost,
 }

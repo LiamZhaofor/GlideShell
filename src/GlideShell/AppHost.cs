@@ -207,9 +207,11 @@ internal sealed class AppHost
         bool swipeClose = name is "overview-swipe-close" or "overview-swipe-left-close";
         bool swipeLeft = name == "overview-swipe-left-close";
         if (swipe) name = "overview";
-        // overview-hold：展开后停 6 秒再退出（留时间给外部用真实鼠标操作总览）
-        int linger = name == "overview-hold" ? 6000 : 1500;
-        if (bar || name == "overview-hold") name = "overview";
+        // overview-hold：展开后停 12 秒再退出（留时间给外部用真实鼠标操作总览）；
+        // overview-hold-page：同上，展开 5 秒后在总览里四指往左滑翻到右边那一页（外部先把窗口拖到那个桌面）
+        bool holdPage = name == "overview-hold-page";
+        int linger = name is "overview-hold" or "overview-hold-page" ? 12000 : 1500;
+        if (bar || name is "overview-hold" or "overview-hold-page") name = "overview";
         if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
         {
             Log.Warn($"未知的模拟脚本 {name}，可用：{string.Join("、", SyntheticTouch.Scripts.Keys)}");
@@ -239,6 +241,12 @@ internal sealed class AppHost
                     Replay("overview-close");
                     Log.Info("模拟：三指下滑收起回放完毕");
                 }
+            }
+            if (holdPage)
+            {
+                Thread.Sleep(5000);
+                Replay("desktop-right");
+                Log.Info("模拟：总览里四指横滑回放完毕");
             }
             if (bar)
             {

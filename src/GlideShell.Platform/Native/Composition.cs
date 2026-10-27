@@ -73,6 +73,9 @@ internal static unsafe partial class Dcomp
     public static int SetBitmapInterpolationMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[11])(visual, mode);
     /// <summary>insertAbove=false 且 reference=null：加到兄弟的最上层。</summary>
     public static int AddVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, 0, null);
+    /// <summary>插到 <paramref name="reference"/> 的上面（<paramref name="above"/>）或下面。</summary>
+    public static int AddVisual(void* parent, void* visual, bool above, void* reference)
+        => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, above ? 1 : 0, reference);
     public static int RemoveVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(parent)[17])(parent, visual);
     public static int SetOpacity(void* visual3, float opacity) => ((delegate* unmanaged[Stdcall]<void*, float, int>)Vtbl(visual3)[30])(visual3, opacity);
 

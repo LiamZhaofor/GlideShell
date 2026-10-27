@@ -344,6 +344,20 @@ internal sealed unsafe class OverlayComposition : IDisposable
 /// 层次操作（复用前缀、提到最上层、按 Z 序重排）都以分组为单位，阴影始终紧贴在自己窗口的下面。
 /// 跨会话复用规则同经典路径（从最下层起、窗口与源矩形都没变的前缀），源矩形变了（窗口改过大小）就重建。
 /// </summary>
+internal static unsafe class SharedThumbnailBackendExtensions
+{
+    /// <summary>把挂在 <paramref name="branch"/> 下、已经不属于任何层的分组摘下来（它所在的层已注销）。</summary>
+    public static void Detach(this SharedThumbnailBackend backend, OverlayComposition branch, nint group)
+    {
+        lock (backend.Gate)
+        {
+            if (backend.Device == null) return;
+            Dcomp.RemoveVisual(branch.Root, (void*)group);
+            Dcomp.Commit(backend.Device);
+        }
+    }
+}
+
 internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 {
     private readonly record struct Shadow(nint Visual, nint Surface, int Downscale, double MarginPx);
@@ -524,6 +538,70 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             }
             if (commit) Check(Dcomp.Commit(_backend.Device));
             return firstError;
+        }
+    }
+
+    /// <summary>
+    /// 拖动窗口时把它的分组（连同阴影）从本层摘下、挂到 <paramref name="into"/>（桌面条上面那一支），返回分组视觉（0 = 没有）。
+    /// 两支坐标系相同，渲染照常按本层更新它的变换。放回用 <see cref="PutBack"/>。
+    /// </summary>
+    public nint Lift(int sceneIndex, OverlayComposition into)
+    {
+        lock (_backend.Gate)
+        {
+            int idx = Array.FindIndex(_windows, e => e.SceneIndex == sceneIndex);
+            if (_released || idx < 0 || _windows[idx].Group == 0) return 0;
+            void* g = (void*)_windows[idx].Group;
+            if (Dcomp.RemoveVisual(_composition.Root, g) < 0) return 0;
+            Dcomp.AddVisual(into.Root, g);
+            Dcomp.Commit(_backend.Device);
+            return (nint)g;
+        }
+    }
+
+    /// <summary>把 <see cref="Lift"/> 摘走的分组从 <paramref name="from"/> 放回本层原来的层次位置；不是本层的返回 false。</summary>
+    public bool PutBack(nint group, OverlayComposition from)
+    {
+        lock (_backend.Gate)
+        {
+            int idx = Array.FindIndex(_windows, e => e.Group == group);
+            if (_released || idx < 0 || group == 0) return false;
+            void* root = _composition.Root, g = (void*)group;
+            Dcomp.RemoveVisual(from.Root, g);
+            // 插在下面最近一个窗口的上面；没有就插在上面最近一个的下面；都没有就在壁纸上面（或最上层）
+            int below = Array.FindLastIndex(_windows, idx, e => e.Group != 0 && e.Group != group);
+            int above = idx + 1 < _windows.Length ? Array.FindIndex(_windows, idx + 1, e => e.Group != 0) : -1;
+            if (below >= 0) Dcomp.AddVisual(root, g, true, (void*)_windows[below].Group);
+            else if (above >= 0) Dcomp.AddVisual(root, g, false, (void*)_windows[above].Group);
+            else if (_wallpaper.Visual != 0) Dcomp.AddVisual(root, g, true, (void*)_wallpaper.Visual);
+            else Dcomp.AddVisual(root, g);
+            Dcomp.Commit(_backend.Device);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 加入一个窗口（从别的桌面拖到这一页），分组挂在最上层，场景下标 <paramref name="sceneIndex"/>；返回接管全部视觉的新层，失败返回 null（本层不变）。
+    /// </summary>
+    public SharedThumbnailLayer? AddWindow(nint overlay, int sceneIndex, nint hwnd, double dpiScale, out int hr)
+    {
+        lock (_backend.Gate)
+        {
+            hr = unchecked((int)0x80004005);
+            if (_released) return null;
+            var (source, hasContent) = SourceFor(overlay, hwnd);
+            Entry entry;
+            if (!hasContent) entry = new Entry(0, 0, 0, hwnd, sceneIndex, source, false, default, default);
+            else
+            {
+                hr = CreateWindowGroup(_backend, _composition.Root, overlay, hwnd, source, dpiScale, out entry);
+                if (hr < 0) return null;
+                entry = entry with { SceneIndex = sceneIndex };
+                Dcomp.Commit(_backend.Device);
+            }
+            hr = 0;
+            _released = true; // 视觉转交给新层
+            return new SharedThumbnailLayer(_backend, _composition, _wallpaper, [.. _windows, entry], _origin);
         }
     }
 
