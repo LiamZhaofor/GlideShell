@@ -69,6 +69,18 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _render.Wake();
     });
 
+    /// <summary>
+    /// 松手：目标窗口最小化着的话，现在就悄悄还原（不激活、不播系统动画）并压到最下层，让程序在飞回的 0.4 秒里重绘好；
+    /// 落定时只需提到前台。否则落定时才还原，程序重绘前的空白 / 旧画面会闪一下。
+    /// </summary>
+    public void Launching(long windowId) => _ui.Post(() =>
+    {
+        nint hwnd = (nint)windowId;
+        if (!User32.IsWindow(hwnd) || !User32.IsIconic(hwnd)) return;
+        WindowActivator.RestoreBehind(hwnd);
+        _ui.PostDelayed(1500, () => WindowActivator.EnableTransitions(hwnd));
+    });
+
     public void Hide(long? activateWindowId) => _ui.Post(() =>
     {
         // 合成层模式下选中的缩略图已经飞到窗口原位、盖在它上面：先在覆盖层下面把窗口切到前台（最小化的不播系统动画直接还原），

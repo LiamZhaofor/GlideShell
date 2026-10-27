@@ -65,6 +65,23 @@ public static unsafe partial class WindowActivator
     }
 
     /// <summary>恢复 <see cref="MinimizeQuietly"/> / <see cref="RestoreQuietly"/> 关掉的过渡动画。</summary>
+    /// <summary>
+    /// 不激活、不播系统动画地还原一个最小化窗口，并放到最下层（被别的窗口挡着，程序在后面重绘）。
+    /// 两步都投递给窗口自己的线程（ShowWindowAsync + SWP_ASYNCWINDOWPOS），顺序不变，程序没响应也不会卡住调用方。
+    /// DWM 过渡动画保持关闭，调用方稍后用 <see cref="EnableTransitions"/> 恢复。
+    /// </summary>
+    public static void RestoreBehind(nint hwnd)
+    {
+        if (hwnd == 0 || !User32.IsWindow(hwnd) || !User32.IsIconic(hwnd)) return;
+        int disable = 1;
+        Dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disable, sizeof(int));
+        ShowWindowAsync(hwnd, 4 /* SW_SHOWNOACTIVATE */);
+        // 置顶窗口压到最下层会失去置顶属性：它们留在原来的层次（置顶窗口本来就在最上面，挡不住也无妨）
+        if ((User32.GetWindowLongPtrW(hwnd, User32.GWL_EXSTYLE) & 0x00000008 /* WS_EX_TOPMOST */) != 0) return;
+        User32.SetWindowPos(hwnd, 1 /* HWND_BOTTOM */, 0, 0, 0, 0,
+            User32.SWP_NOACTIVATE | 0x0001 /* SWP_NOSIZE */ | 0x0002 /* SWP_NOMOVE */ | 0x4000 /* SWP_ASYNCWINDOWPOS */);
+    }
+
     public static void EnableTransitions(nint hwnd)
     {
         if (hwnd == 0 || !User32.IsWindow(hwnd)) return;

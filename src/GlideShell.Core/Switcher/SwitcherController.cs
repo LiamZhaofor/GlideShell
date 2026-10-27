@@ -17,6 +17,12 @@ public interface ISwitcherHost
 
     /// <summary>落定：隐藏切换条；<paramref name="activateWindowId"/> 非空时把它切到前台。</summary>
     void Hide(long? activateWindowId);
+
+    /// <summary>
+    /// 松手、选中的缩略图开始飞回 <paramref name="windowId"/>（不是当前窗口时才调用）。最小化的窗口可以趁飞回途中
+    /// 悄悄还原到最下层、让程序重绘好，落定时只需提到前台，不会闪一下。
+    /// </summary>
+    void Launching(long windowId) { }
 }
 
 /// <summary>一次切换会话的窗口（第 0 个是当前前台窗口，之后按最近使用顺序）与切换条布局。</summary>
@@ -148,6 +154,7 @@ public sealed class SwitcherController : IGestureTarget
 
     public void End(in GestureEvent e)
     {
+        long? launching = null;
         lock (_gate)
         {
             if (!_tracking) return;
@@ -169,8 +176,10 @@ public sealed class SwitcherController : IGestureTarget
                 _launchIndex = (int)Math.Clamp(Math.Round(target), 0, _scene.Count - 1);
                 _launch.SnapTo(0);
                 _launch.AnimateTo(1, e.HostTimeUs);
+                if (_launchIndex > 0) launching = _scene.Windows[_launchIndex].Id;
             }
         }
+        if (launching is { } id) _host.Launching(id);
     }
 
     // ---------- 渲染线程 ----------
