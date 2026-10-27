@@ -171,7 +171,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
         Group("外观", 392, 224, 352, 122);
         AddSlider(new Slider("总览背景变暗", 0, 1, 0.05, v => $"{v * 100:0}%", m => m.BackdropDim, (m, v) => m with { BackdropDim = v }), 250);
-        AddSlider(new Slider("窗口卡片圆角", 0, 24, 1, v => v == 0 ? "原样" : $"{v:0}", m => m.CornerRadius, (m, v) => m with { CornerRadius = v }), 284);
+        AddSlider(new Slider("窗口圆角", 0, 32, 1, v => v == 0 ? "原样" : $"{v:0}", m => m.CornerRadius, (m, v) => m with { CornerRadius = v }), 284);
         _shared = Child("BUTTON", "共享缩略图（实验，高刷新率下更流畅）", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdShared, 408, 316, 320, 22);
 
         Group("三指拖移", 392, 356, 352, 96);

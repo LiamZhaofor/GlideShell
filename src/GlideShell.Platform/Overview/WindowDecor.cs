@@ -30,7 +30,8 @@ internal sealed unsafe class WindowDecor
         public int WantTextMax;
         public nint Text, Icon, Close;
         public NineSlice? Ring, Card;
-        public double RingRadius, CardRadius; // 建的时候用的圆角（配置改了要重建）
+        public double RingRadius, CardRadius; // 建的时候用的圆角（物理像素；配置或平铺大小变了要重建）
+        public double Scale = 1; // 平铺位相对窗口原尺寸的缩放（卡片圆角随它缩小）
         public nint CardIcon;
         public bool WantsCard;
         public volatile bool HasIcon, HasCardIcon;
@@ -60,10 +61,13 @@ internal sealed unsafe class WindowDecor
 
     private double Dpi => _monitor.DpiScale;
 
-    /// <summary>UI 线程：窗口卡片的圆角半径（DIP）。悬停框与它同心，占位卡片用同样的圆角。</summary>
+    /// <summary>UI 线程：窗口原尺寸下的圆角半径（DIP），在平铺位上按窗口的缩放缩小。悬停框与卡片同心，占位卡片用同样的圆角。</summary>
     public double CardRadiusDip { get; set; } = 12;
 
-    private double RingRadiusDip => CardRadiusDip + RingGapDip + RingStrokeDip;
+    /// <summary>某个窗口在平铺位上的卡片圆角（物理像素，取到半像素，图按它缓存）。</summary>
+    private double CardRadiusPx(Entry e) => Math.Round(CardRadiusDip * Dpi * e.Scale * 2) / 2;
+
+    private double RingRadiusPx(Entry e) => CardRadiusPx(e) + (RingGapDip + RingStrokeDip) * Dpi;
 
     /// <summary>
     /// UI 线程：本次会话的各页（没有多页时只有一页）。<paramref name="members"/>[k] 是第 k 页里画在本屏的窗口，
@@ -146,15 +150,16 @@ internal sealed unsafe class WindowDecor
         {
             // 悬停框与关闭按钮第一次用到时才建
             var backend = _res.Backend;
-            if (e.Ring is not null && e.RingRadius != RingRadiusDip)
+            double ringRadius = RingRadiusPx(e);
+            if (e.Ring is not null && e.RingRadius != ringRadius)
             {
                 lock (backend.Gate) e.Ring.Remove(_branch.Root);
                 e.Ring = null;
             }
-            if (e.Ring is null && _res.Shape(RingRadiusDip * Dpi, RingStrokeDip * Dpi, RingColor) is { } ring)
+            if (e.Ring is null && _res.Shape(ringRadius, RingStrokeDip * Dpi, RingColor) is { } ring)
             {
                 e.Ring = NineSlice.Create(backend, _branch.Root, ring);
-                e.RingRadius = RingRadiusDip;
+                e.RingRadius = ringRadius;
             }
             if (e.Close == 0)
             {
@@ -286,15 +291,17 @@ internal sealed unsafe class WindowDecor
         e.WantTextMax = Math.Max(24, (int)Math.Round(tile - (IconDip + IconGapDip) * Dpi));
         if (e.Title != w.Title) e.TextMax = 0; // 标题变了：重画
         e.Title = w.Title;
-        if (e.Card is not null && e.CardRadius != CardRadiusDip)
+        e.Scale = scene.Slots[index].Tile.Width / Math.Max(1, w.Source.Width);
+        double cardRadius = Math.Max(1, CardRadiusPx(e));
+        if (e.Card is not null && e.CardRadius != cardRadius)
         {
             lock (_res.Backend.Gate) e.Card.Remove(_branch.Root);
             e.Card = null;
         }
-        if (wantsCard && e.Card is null && _res.Shape(Math.Max(1, CardRadiusDip) * Dpi, 0, CardColor) is { } shape)
+        if (wantsCard && e.Card is null && _res.Shape(cardRadius, 0, CardColor) is { } shape)
         {
             e.Card = NineSlice.Create(_res.Backend, _branch.Root, shape);
-            e.CardRadius = CardRadiusDip;
+            e.CardRadius = cardRadius;
             if (e.CardIcon == 0 && _res.Backend.CreateDecorVisual(_branch.Root, 0, out nint icon) >= 0) e.CardIcon = icon;
         }
         e.WantsCard = wantsCard;

@@ -622,7 +622,8 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 
     /// <param name="commit">false：不提交，由调用方把几层的修改一起 Commit（切桌面的三个桌面要同一帧生效）。</param>
     /// <param name="corner">
-    /// 圆角卡片的程度（0 = 窗口自己的圆角，1 = <paramref name="cardRadiusPx"/>，屏幕上的半径按它插值）；负数 = 不裁剪（切桌面、桌面条里的窗口）。
+    /// 圆角卡片的程度（0 = 窗口自己的圆角，1 = <paramref name="cardRadiusPx"/>，按它插值）；负数 = 不裁剪（切桌面、桌面条里的窗口）。
+    /// 两个半径都是窗口原尺寸下的（物理像素），跟着缩略图一起缩放——macOS 调度中心里窗口缩小，圆角也按比例缩小。
     /// 总览里传展开进度：窗口在原位时与真实窗口一致，到平铺位时是 macOS 那样的圆角卡片（最大化的窗口也是）。
     /// </param>
     public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity, bool commit,
@@ -677,19 +678,22 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         }
     }
 
-    /// <summary>锁内：缩略图按屏幕上半径 <paramref name="radiusPx"/> 的圆角裁剪（缩略图视觉按源尺寸 1:1 建、整体缩放，半径要除回去）。</summary>
+    /// <summary>
+    /// 锁内：缩略图按窗口原尺寸下半径 <paramref name="radiusPx"/> 的圆角裁剪（缩略图视觉按源尺寸 1:1 建、整体缩放，圆角随之缩放）。
+    /// 横纵缩放略有不同时把纵向半径换算一下，屏幕上仍是正圆角。
+    /// </summary>
     private void Round(in Entry e, double sx, double sy, double radiusPx)
     {
         if (!_clips.TryGetValue(e.Visual, out nint clip))
         {
-            if (radiusPx < 0.5) return; // 还没裁剪过、也不需要：保持不裁
+            if (radiusPx * sx < 0.5) return; // 还没裁剪过、也不需要：保持不裁
             void* c;
             if (Dcomp.CreateRectangleClip(_backend.Device, &c) < 0) return;
             Dcomp.SetClipRect(c, 0, 0, e.Source.Width, e.Source.Height);
             Dcomp.SetClipObject((void*)e.Visual, c);
             _clips[e.Visual] = clip = (nint)c;
         }
-        Dcomp.SetClipRadius((void*)clip, (float)(radiusPx / Math.Max(1e-3, sx)), (float)(radiusPx / Math.Max(1e-3, sy)));
+        Dcomp.SetClipRadius((void*)clip, (float)radiusPx, (float)(radiusPx * sx / Math.Max(1e-3, sy)));
     }
 
     /// <summary>锁内：释放某个缩略图视觉的圆角裁剪。</summary>

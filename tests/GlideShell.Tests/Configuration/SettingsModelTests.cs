@@ -25,7 +25,7 @@ public class SettingsModelTests
         Assert.Contains("\"Middle\"", json); // 枚举按名字存，配置文件里看得懂
 
         var (clamped, clampProblems) = (config with { Overview = config.Overview with { CornerRadius = 99 }, Mouse = new MouseGesturesConfig { Sensitivity = 9 } }).Sanitize();
-        Assert.Equal(24, clamped.Overview.CornerRadius);
+        Assert.Equal(32, clamped.Overview.CornerRadius);
         Assert.Equal(4, clamped.Mouse.Sensitivity);
         Assert.Equal(2, clampProblems.Count);
     }

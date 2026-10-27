@@ -40,7 +40,8 @@ public sealed record OverviewConfig
     public bool GroupByApp { get; set; }
 
     /// <summary>
-    /// 总览里窗口卡片的圆角半径（DIP，0–24）：窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8）过渡到这个值。0 = 保持窗口原样。
+    /// 总览里窗口卡片的圆角半径（DIP，0–32），按窗口原尺寸算、随卡片一起缩小（macOS 调度中心的做法：缩小的窗口圆角也按比例缩小）。
+    /// 窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8，最大化是 0）过渡到这个值。0 = 保持窗口原样。
     /// </summary>
     public double CornerRadius { get; set; } = 12;
 }
@@ -229,7 +230,7 @@ public sealed record GlideShellConfig
             {
                 TravelMm = Clamp(Overview.TravelMm, 5, 100, "Overview.TravelMm"),
                 BackdropDim = Clamp(Overview.BackdropDim, 0, 1, "Overview.BackdropDim"),
-                CornerRadius = Clamp(Overview.CornerRadius, 0, 24, "Overview.CornerRadius"),
+                CornerRadius = Clamp(Overview.CornerRadius, 0, 32, "Overview.CornerRadius"),
                 Spring = FixSpring(Overview.Spring, "Overview.Spring"),
             },
             Switcher = Switcher with

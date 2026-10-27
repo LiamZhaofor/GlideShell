@@ -43,7 +43,7 @@ internal sealed unsafe class SwitcherDecor
     private bool _renderPosted;
 
     /// <param name="origin">横带在屏幕上的位置（视觉坐标相对它）。</param>
-    /// <param name="cardRadiusDip">缩略图卡片的圆角（DIP）：选中框与它同心。</param>
+    /// <param name="cardRadiusDip">窗口原尺寸下的圆角（DIP）：缩略图按自己的缩放缩小它，选中框与之同心。</param>
     public SwitcherDecor(DecorResources res, OverlayComposition branch, MonitorInfo monitor, RectD origin, double cardRadiusDip)
     {
         _res = res;
@@ -51,9 +51,21 @@ internal sealed unsafe class SwitcherDecor
         _monitor = monitor;
         _origin = origin;
         CardRadiusDip = cardRadiusDip;
-        double ring = cardRadiusDip + RingGapDip + RingStrokeDip;
-        if (res.Shape(ring * monitor.DpiScale, RingStrokeDip * monitor.DpiScale, RingColor) is { } shape)
-            _ring = NineSlice.Create(res.Backend, branch.Root, shape);
+    }
+
+    private double _ringRadius = -1; // 建选中框用的圆角（物理像素）
+
+    /// <summary>选中框的圆角：选中的缩略图（放大后）上卡片的圆角加上框与卡片的间距；各窗口缩放不同，取中位数（取到半像素）。</summary>
+    private void EnsureRing(SwitcherScene scene)
+    {
+        var scales = Enumerable.Range(0, scene.Count)
+            .Select(i => scene.Layout.ItemRect(i, i).Width / Math.Max(1, scene.Windows[i].Source.Width)).Order().ToList();
+        double scale = scales.Count > 0 ? scales[scales.Count / 2] : 0.2;
+        double radius = Math.Round((CardRadiusDip * scale + RingGapDip + RingStrokeDip) * Dpi * 2) / 2;
+        if (_ring is not null && radius == _ringRadius) return;
+        lock (_res.Backend.Gate) _ring?.Remove(_branch.Root);
+        _ring = _res.Shape(radius, RingStrokeDip * Dpi, RingColor) is { } shape ? NineSlice.Create(_res.Backend, _branch.Root, shape) : null;
+        _ringRadius = radius;
     }
 
     private double Dpi => _monitor.DpiScale;
@@ -64,6 +76,7 @@ internal sealed unsafe class SwitcherDecor
     public void Prepare(SwitcherScene scene)
     {
         HideAll();
+        EnsureRing(scene);
         int max = (int)Math.Round(scene.Layout.LabelRect(Dpi).Width - (IconDip + IconGapDip) * Dpi);
         var labels = new Label?[scene.Count];
         for (int i = 0; i < scene.Count; i++)

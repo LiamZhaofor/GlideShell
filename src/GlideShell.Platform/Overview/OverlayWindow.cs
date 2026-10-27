@@ -70,7 +70,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     public MonitorInfo Monitor { get; }
 
-    /// <summary>总览里窗口卡片的圆角半径（DIP，配置 overview.cornerRadius）；悬停框、占位卡片跟着它。</summary>
+    /// <summary>窗口卡片的圆角半径（窗口原尺寸下的 DIP，配置 overview.cornerRadius），随卡片缩放；悬停框、占位卡片跟着它。</summary>
     public double CornerRadiusDip { get; set; } = 12;
 
     /// <summary>指针在某个窗口的标题行上（点它切换总览 / 应用窗口视图）：显示手形指针。</summary>
