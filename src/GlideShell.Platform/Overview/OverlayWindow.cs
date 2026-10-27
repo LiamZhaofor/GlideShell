@@ -300,6 +300,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         nint hover = Gdi32.CreateSolidBrush(Gdi32.Rgb(160, 200, 255));
         nint oldPen = Gdi32.SelectObject(hdc, Gdi32.GetStockObject(Gdi32.NULL_PEN));
         int radius = (int)Math.Round(14 * dpi);
+        nint symbolFont = Gdi32.CreateFontW(-(int)Math.Round(16 * dpi), 0, 0, 0, Gdi32.FW_SEMIBOLD, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
         const uint Flags = User32.DT_CENTER | User32.DT_VCENTER | User32.DT_SINGLELINE | User32.DT_END_ELLIPSIS | User32.DT_NOPREFIX;
         for (int i = 0; i < g.Count; i++)
         {
@@ -343,8 +344,10 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                         Gdi32.RoundRect(hdc, x.Left, x.Top, x.Right + 1, x.Bottom + 1, x.Right - x.Left, x.Bottom - x.Top);
                         Gdi32.SelectObject(hdc, old);
                     }
-                    Gdi32.SetTextColor(hdc, _barHovered.Part == DesktopBarPart.Remove ? Gdi32.Rgb(255, 255, 255) : Gdi32.Rgb(200, 200, 208));
+                    Gdi32.SetTextColor(hdc, _barHovered.Part == DesktopBarPart.Remove ? Gdi32.Rgb(255, 255, 255) : Gdi32.Rgb(225, 225, 232));
+                    Gdi32.SelectObject(hdc, symbolFont); // 正文字号的「×」画在半透明壁纸下太小太淡
                     User32.DrawTextW(hdc, "×", -1, &x, Flags);
+                    Gdi32.SelectObject(hdc, font);
                 }
             }
         }
@@ -365,6 +368,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         Gdi32.SelectObject(hdc, font);
         Gdi32.DeleteObject(plusFont);
         Gdi32.SelectObject(hdc, oldPen);
+        Gdi32.DeleteObject(symbolFont);
         Gdi32.DeleteObject(pill);
         Gdi32.DeleteObject(hoverPill);
         Gdi32.DeleteObject(current);

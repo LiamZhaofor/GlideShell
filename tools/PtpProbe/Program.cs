@@ -38,6 +38,7 @@ return command switch
     "thumbnails" when args.Contains("--shadow") => ShadowCompare(Option(args, "--size"), Option(args, "--dump"), Option(args, "--monitor")),
     "thumbnails" => Thumbnails(!args.Contains("--classic"), args.Contains("--fade")),
     "testwindow" when args.Length >= 6 => TestWindow(args),
+    "bar" when args.Length >= 2 => BarGeometry(int.Parse(args[1])),
     "scenarios" => ListScenarios(),
     "selftest" => SelfTest(),
     _ => Usage(),
@@ -332,6 +333,20 @@ static int ShadowCompare(string? size, string? dump, string? monitor)
         monitor is null ? null : int.Parse(monitor));
     Console.WriteLine($"阴影对照：{(ok ? "一致" : "有差异")}");
     return ok ? 0 : 1;
+}
+
+/// 主屏上 n 个桌面时总览桌面条的几何（物理像素，实测脚本用来算点哪里）：每行「名称 中心x 中心y」
+static int BarGeometry(int count)
+{
+    var m = GlideShell.Platform.Shell.Monitors.Enumerate().First(x => x.IsPrimary);
+    var g = GlideShell.Core.Overview.DesktopBarGeometry.Compute(m.WorkArea, count, m.DpiScale);
+    for (int i = 0; i < count; i++)
+    {
+        Console.WriteLine($"thumb{i} {g.Thumbs[i].CenterX:F0} {g.Thumbs[i].CenterY:F0}");
+        Console.WriteLine($"remove{i} {g.RemoveButton(i).CenterX:F0} {g.RemoveButton(i).CenterY:F0}");
+    }
+    Console.WriteLine($"add {g.AddTile.CenterX:F0} {g.AddTile.CenterY:F0}");
+    return 0;
 }
 
 static int TestWindow(string[] args)
