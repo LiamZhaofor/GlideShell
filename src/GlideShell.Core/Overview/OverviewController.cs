@@ -197,6 +197,15 @@ public sealed class OverviewController : IGestureTarget
     /// <summary>当前页（= 当前桌面下标，-1 = 没有多页）。</summary>
     public int Page => _page;
 
+    /// <summary>已经展开并停在展开态（没有手势在跟、没有在收起或放大进入别的桌面）。</summary>
+    public bool IsSettledOpen
+    {
+        get
+        {
+            lock (_gate) return _visible && !_tracking && !_pagerTracking && _zoomDesktop < 0 && _transition.Target >= 1 - SettleEpsilon;
+        }
+    }
+
     /// <summary>本次（或上一次）展开的形态；只在收起态下随新的展开改变。</summary>
     public OverviewMode Mode => _mode;
 

@@ -73,6 +73,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
     // 显示桌面
     private volatile nint[] _desktopHidden = []; // 上次显示桌面最小化的窗口（Z 序，最上层在前）
+    private Dictionary<nint, RectD> _desktopHiddenRects = []; // UI 线程：它们最小化前的真实位置（拉回时飞回这里）
     private bool _desktopPullBack; // UI 线程：本次会话是把窗口拉回来（从进度 1 开始）
     private nint[] _desktopRestoring = []; // UI 线程：收起时正在还原的窗口
 
@@ -281,6 +282,33 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         ReleaseScene();
     }
 
+    private static readonly HashSet<string> ShellPopupClasses =
+    [
+        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland",
+        "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "ControlCenterWindow",
+    ];
+
+    /// <summary>
+    /// 前台变了（UI 线程，前台监视器回调）。覆盖层盖在工作区上（UIAccess 版还排在系统弹出层之上），
+    /// 任务栏露在外面：总览展开时用户点了任务栏——托盘溢出区、开始菜单、通知中心这些外壳弹出层成了前台，
+    /// 或者指针在覆盖层外（任务栏上）时别的窗口成了前台（点了任务栏按钮）——就收起总览，让它们露出来
+    /// （点的是总览里的窗口就收起到它）。翻页切桌面引起的前台变化指针在覆盖层上，不受影响。
+    /// </summary>
+    public unsafe void OnForegroundChanged(nint hwnd)
+    {
+        if (!_shown || Controller.Mode == OverviewMode.Desktop || _switchTarget is not null || !Controller.IsSettledOpen) return;
+        if (_overlays.Any(o => o.Handle == hwnd)) return;
+        bool shell = ShellPopupClasses.Contains(WindowCatalog.ClassName(hwnd));
+        User32.POINT p;
+        bool got = User32.GetCursorPos(&p);
+        double px = p.X, py = p.Y;
+        bool outside = got && !_overlays.Any(o => o.Monitor.WorkArea.Contains(px, py));
+        if (!shell && !outside) return;
+        long? focus = !shell && Controller.Scene.IndexOf(hwnd) >= 0 ? hwnd : null;
+        Log.Info($"总览：任务栏上的操作让 {WindowCatalog.ClassName(hwnd)} 成了前台，收起");
+        Controller.Close(focus, HostClock.NowUs());
+    }
+
     /// <summary>总览展开时的三指横滑（任意线程）：按阅读顺序移动选中项。</summary>
     public void MoveSelection(int steps) => _ui.Post(() =>
     {
@@ -440,7 +468,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _desktopPullBack = Controller.ProgressAt(HostClock.NowUs()) > 0.5;
         var hidden = _desktopPullBack ? _desktopHidden.Select(h => (long)h).ToHashSet() : [];
         var scene = Controller.Scene;
-        var windows = scene.Windows.Select(w => hidden.Contains(w.Id) ? w with { IsMinimized = false } : w).ToList();
+        // 最小化窗口的「原位」是它的还原位置；最大化过的窗口还原后是最大化的，所以用最小化前记下的真实位置
+        var windows = scene.Windows.Select(w => hidden.Contains(w.Id)
+            ? w with { IsMinimized = false, Source = _desktopHiddenRects.GetValueOrDefault((nint)w.Id, w.Source) }
+            : w).ToList();
         var cfg = _config();
         var monitors = _overlays.Select(o => o.Monitor).ToList();
         int primary = Math.Max(0, monitors.FindIndex(m => m.IsPrimary));
@@ -471,6 +502,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         {
             var scene = Controller.Scene;
             var hide = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).Select(i => (nint)scene.Windows[i].Id).ToArray();
+            _desktopHiddenRects = Enumerable.Range(0, scene.Count).Where(scene.IsPresent).ToDictionary(i => (nint)scene.Windows[i].Id, i => scene.Windows[i].Source);
             foreach (var h in hide) WindowActivator.MinimizeQuietly(h);
             long until = Environment.TickCount64 + 600;
             while (Environment.TickCount64 < until && hide.Any(h => User32.IsWindow(h) && !User32.IsIconic(h))) Dwmapi.DwmFlush();

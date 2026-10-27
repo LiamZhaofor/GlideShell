@@ -31,6 +31,9 @@ public sealed unsafe class ForegroundMonitor : IDisposable
 
     public event Action<ForegroundState>? Changed;
 
+    /// <summary>任何前台变化（包括任务栏、托盘溢出区、开始菜单这些外壳窗口；不含本进程），在创建线程上回调。</summary>
+    public event Action<nint>? RawChanged;
+
     /// <summary>
     /// 当前是否处于全屏应用中（任意线程可调用，开销约十几微秒，所以只在手指落下时问一次）：
     /// 外壳的「免打扰」状态（全屏 / D3D 独占 / 演示模式），或前台窗口铺满所在显示器。
@@ -67,6 +70,7 @@ public sealed unsafe class ForegroundMonitor : IDisposable
     private void Update(nint hwnd)
     {
         if (hwnd == 0) return;
+        RawChanged?.Invoke(hwnd);
         // 点托盘图标、开始菜单时任务栏会成为前台：不算用户「在用的程序」
         if (WindowCatalog.ClassName(hwnd) is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "NotifyIconOverflowWindow"
             or "TopLevelWindowForOverflowXamlIsland" or "Windows.UI.Core.CoreWindow") return;
