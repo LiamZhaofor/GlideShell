@@ -46,6 +46,8 @@ internal sealed class AppHost
     private ForegroundMonitor? _foreground;
     private PtpInputThread? _input;
     private GestureRouter _router = null!;
+    private GestureRouter _mouseRouter = null!;
+    private MouseButtonGestures? _mouseGestures;
     private OverviewPresenter _presenter = null!;
     private OverviewController _overview = null!;
     private SwitcherPresenter _switcherPresenter = null!;
@@ -81,7 +83,7 @@ internal sealed class AppHost
         _overview.DesktopShown = _presenter.DesktopShownNow;
         _foreground.RawChanged += _presenter.OnForegroundChanged;
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
-        _switcherPresenter = new SwitcherPresenter(_ui, _sharedThumbnails);
+        _switcherPresenter = new SwitcherPresenter(_ui, _sharedThumbnails, () => _config.Overview.CornerRadius);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
         _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops, _sharedThumbnails);
@@ -90,6 +92,8 @@ internal sealed class AppHost
         _drag = new DragController(new MouseInjector(), () => _config.Drag);
         _activeMap = ActiveMap(_config);
         _router = new GestureRouter(() => _activeMap, Target, Suppressed);
+        // 鼠标按键手势：按住拖动左右 = 切桌面、上下 = 总览（下拉在收起态是应用窗口视图），与触摸板共用控制器
+        _mouseRouter = new GestureRouter(() => MouseMap, Target, Suppressed);
         _recognizer = new GestureRecognizer(_config.Recognition, _router.OnGesture);
 
         string? inputProblem = _simulate is null ? StartInput() : null;
@@ -118,6 +122,7 @@ internal sealed class AppHost
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
+        if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, Suppressed, _mouseRouter.OnGesture);
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
         WatchConfig();
         _presenter.WarmUp();
@@ -131,6 +136,13 @@ internal sealed class AppHost
     }
 
     // ---------- 手势 ----------
+
+    /// <summary>鼠标按键手势的映射（「指数」为 <see cref="MouseDragRecognizer.Fingers"/>）。</summary>
+    private static readonly GestureMap MouseMap = new(
+    [
+        new(MouseDragRecognizer.Fingers, GestureAxis.Vertical, GestureAction.Overview),
+        new(MouseDragRecognizer.Fingers, GestureAxis.Horizontal, GestureAction.SwitchDesktops),
+    ]);
 
     private IGestureTarget? Target(GestureAction action) => action switch
     {
@@ -619,6 +631,7 @@ internal sealed class AppHost
         Log.Info("正在退出");
         _configWatcher?.Dispose();
         _desktopKeys?.Dispose();
+        _mouseGestures?.Dispose();
         _hotCorners?.Dispose();
         _input?.Dispose();
         _presenter.Dispose();

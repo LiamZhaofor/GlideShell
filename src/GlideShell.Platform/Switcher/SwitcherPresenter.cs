@@ -19,6 +19,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 {
     private readonly UiThread _ui;
     private readonly SharedThumbnailSource? _shared;
+    private readonly Func<double> _cornerRadius;
+    private volatile float _radiusPx;
     private readonly RenderLoop _render;
     private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
     private OverlayComposition? _content, _decorRoot;
@@ -34,10 +36,12 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private bool _prepared;
     private volatile int _labelFor = -1;
 
-    public SwitcherPresenter(UiThread ui, SharedThumbnailSource? shared = null)
+    /// <param name="cornerRadius">缩略图卡片的圆角（DIP，与总览同一个配置）。</param>
+    public SwitcherPresenter(UiThread ui, SharedThumbnailSource? shared = null, Func<double>? cornerRadius = null)
     {
         _ui = ui;
         _shared = shared;
+        _cornerRadius = cornerRadius ?? (() => 0);
         _render = new RenderLoop(RenderFrame, stats => Log.Info($"切换条渲染：{stats}，刷新周期 {_render?.RefreshPeriodMs:F2}ms"));
     }
 
@@ -161,7 +165,14 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             DisposeComposition();
             return false;
         }
-        _decor ??= new SwitcherDecor(res, _decorRoot!, monitor, bandRect);
+        double radiusDip = _cornerRadius();
+        _radiusPx = (float)(radiusDip * monitor.DpiScale);
+        if (_decor is not null && _decor.CardRadiusDip != radiusDip)
+        {
+            _decor.Dispose();
+            _decor = null;
+        }
+        _decor ??= new SwitcherDecor(res, _decorRoot!, monitor, bandRect, radiusDip);
         _decor.Prepare(scene);
         if (_rects.Length < scene.Count)
         {
@@ -197,7 +208,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
                     _opacity[i] = frame.Appear;
                     _active[i] = Math.Clamp(1 - Math.Abs(i - frame.Position), 0, 1); // 居中的那个用活动阴影
                 }
-                layer.Apply(_rects.AsSpan(0, n), _opacity.AsSpan(0, n), _active.AsSpan(0, n), 0, commit: false);
+                layer.Apply(_rects.AsSpan(0, n), _opacity.AsSpan(0, n), _active.AsSpan(0, n), 0, commit: false, corner: 1, cardRadiusPx: _radiusPx);
                 _decor?.Apply(frame);
                 backend.Commit();
             }

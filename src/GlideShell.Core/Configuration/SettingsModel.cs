@@ -62,6 +62,20 @@ public sealed record SettingsModel
     public bool AppWindows { get; init; }
     public bool TakeOverDesktopHotkeys { get; init; }
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
+    public double CornerRadius { get; init; }
+    public MouseDragButton MouseButton { get; init; }
+    public double MouseMmPerDip { get; init; }
+
+    public static IReadOnlyList<MouseDragButton> MouseButtonChoices { get; } =
+        [MouseDragButton.None, MouseDragButton.Back, MouseDragButton.Forward, MouseDragButton.Middle];
+
+    public static string MouseButtonLabel(MouseDragButton b) => b switch
+    {
+        MouseDragButton.Back => "侧键：后退",
+        MouseDragButton.Forward => "侧键：前进",
+        MouseDragButton.Middle => "中键（按下滚轮）",
+        _ => "不使用",
+    };
 
     /// <summary>开机启动不在配置文件里（是注册表 Run 项），由宿主读写。</summary>
     public bool Autostart { get; init; }
@@ -129,6 +143,9 @@ public sealed record SettingsModel
             AppWindows = c.Overview.AppWindows,
             TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
+            CornerRadius = c.Overview.CornerRadius,
+            MouseButton = c.Mouse.Button,
+            MouseMmPerDip = c.Mouse.MmPerDip,
         };
     }
 
@@ -202,7 +219,9 @@ public sealed record SettingsModel
             Overview = c.Overview with
             {
                 TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails, GroupByApp = GroupByApp, AppWindows = AppWindows,
+                CornerRadius = CornerRadius,
             },
+            Mouse = c.Mouse with { Button = MouseButton, MmPerDip = MouseMmPerDip },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow },
             // 界面用「系统默认」表达不接管切桌面，旧的 Enabled 开关统一置为 true，免得两处说法不一致
             Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true, TakeOverHotkeys = TakeOverDesktopHotkeys },

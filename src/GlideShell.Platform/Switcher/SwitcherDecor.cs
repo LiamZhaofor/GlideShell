@@ -16,7 +16,7 @@ namespace GlideShell.Platform.Switcher;
 internal sealed unsafe class SwitcherDecor
 {
     private const double IconDip = 20, IconGapDip = 8, TextDip = 15, SlideDip = 48;
-    private const double RingGapDip = 4, RingStrokeDip = 3, RingRadiusDip = 10;
+    private const double RingGapDip = 4, RingStrokeDip = 3;
     private static readonly D2D.ColorF TextColor = new(0.95f, 0.95f, 0.97f, 1);
     private static readonly D2D.ColorF RingColor = new(0.42f, 0.67f, 1f, 1);
 
@@ -43,17 +43,22 @@ internal sealed unsafe class SwitcherDecor
     private bool _renderPosted;
 
     /// <param name="origin">横带在屏幕上的位置（视觉坐标相对它）。</param>
-    public SwitcherDecor(DecorResources res, OverlayComposition branch, MonitorInfo monitor, RectD origin)
+    /// <param name="cardRadiusDip">缩略图卡片的圆角（DIP）：选中框与它同心。</param>
+    public SwitcherDecor(DecorResources res, OverlayComposition branch, MonitorInfo monitor, RectD origin, double cardRadiusDip)
     {
         _res = res;
         _branch = branch;
         _monitor = monitor;
         _origin = origin;
-        if (res.Shape(RingRadiusDip * monitor.DpiScale, RingStrokeDip * monitor.DpiScale, RingColor) is { } shape)
+        CardRadiusDip = cardRadiusDip;
+        double ring = cardRadiusDip + RingGapDip + RingStrokeDip;
+        if (res.Shape(ring * monitor.DpiScale, RingStrokeDip * monitor.DpiScale, RingColor) is { } shape)
             _ring = NineSlice.Create(res.Backend, branch.Root, shape);
     }
 
     private double Dpi => _monitor.DpiScale;
+
+    public double CardRadiusDip { get; }
 
     /// <summary>UI 线程：本次会话的窗口。文字与图标在之后的 UI 消息里画（不拖慢第一帧）。</summary>
     public void Prepare(SwitcherScene scene)

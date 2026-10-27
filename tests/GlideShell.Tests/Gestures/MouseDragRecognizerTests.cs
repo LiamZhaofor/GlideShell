@@ -1,0 +1,71 @@
+using GlideShell.Core.Configuration;
+using GlideShell.Core.Gestures;
+
+namespace GlideShell.Tests.Gestures;
+
+/// <summary>鼠标按键手势：拖开才算手势、锁定方向、位移换算成毫米；没拖开是普通点击。</summary>
+public class MouseDragRecognizerTests
+{
+    private static (MouseDragRecognizer R, List<GestureEvent> Events) Create(double mmPerDip = 0.2)
+    {
+        var events = new List<GestureEvent>();
+        var r = new MouseDragRecognizer(() => new MouseGesturesConfig { MmPerDip = mmPerDip }, events.Add);
+        return (r, events);
+    }
+
+    [Fact]
+    public void A_click_without_dragging_is_not_a_gesture()
+    {
+        var (r, events) = Create();
+        r.Press(0);
+        r.Move(2, 1, 10_000);
+        Assert.False(r.Release(20_000));
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void A_small_wobble_prepares_then_fails()
+    {
+        var (r, events) = Create();
+        r.Press(0);
+        r.Move(4, 0, 10_000);
+        Assert.False(r.Release(20_000));
+        Assert.Equal([GesturePhase.Possible, GesturePhase.Failed], events.Select(e => e.Phase));
+        Assert.All(events, e => Assert.Equal(MouseDragRecognizer.Fingers, e.Fingers));
+    }
+
+    [Fact]
+    public void Dragging_up_locks_the_vertical_axis_and_reports_millimetres_from_the_lock()
+    {
+        var (r, events) = Create(0.2);
+        r.Press(0);
+        for (int i = 1; i <= 20; i++) r.Move(0.5, -10, i * 8_000); // 向上拖，略带横向
+        Assert.True(r.IsDragging);
+        Assert.True(r.Release(170_000));
+
+        var began = events.Single(e => e.Phase == GesturePhase.Began);
+        Assert.Equal(GestureAxis.Vertical, began.Axis);
+        Assert.Equal(GestureDirection.Up, began.Direction);
+        Assert.Equal(0, began.DyMm);
+        var last = events.Last(e => e.Phase == GesturePhase.Changed);
+        Assert.Equal(-19 * 10 * 0.2, last.DyMm, 6); // 第 1 次移动锁定方向，之后 19 次各 10 DIP
+        Assert.True(last.AlongMm > 0);
+        var end = events.Last();
+        Assert.Equal(GesturePhase.Ended, end.Phase);
+        Assert.True(end.VyMmS < -200); // 1250 DIP/s × 0.2 = 250 mm/s 向上
+    }
+
+    [Fact]
+    public void Dragging_sideways_is_horizontal_and_cancel_ends_the_gesture()
+    {
+        var (r, events) = Create();
+        r.Press(0);
+        r.Move(-12, 3, 8_000);
+        r.Move(-30, 0, 16_000);
+        Assert.Equal(GestureAxis.Horizontal, events.Single(e => e.Phase == GesturePhase.Began).Axis);
+        Assert.Equal(GestureDirection.Left, events.Single(e => e.Phase == GesturePhase.Began).Direction);
+        r.Cancel(20_000);
+        Assert.Equal(GesturePhase.Cancelled, events.Last().Phase);
+        Assert.False(r.IsPressed);
+    }
+}

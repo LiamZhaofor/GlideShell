@@ -16,7 +16,7 @@ namespace GlideShell.Platform.Overview;
 internal sealed unsafe class WindowDecor
 {
     private const double IconDip = 18, IconGapDip = 6, TextDip = 13.5, LabelTopDip = 4, LabelBoxDip = 32;
-    private const double RingGapDip = 3, RingStrokeDip = 3, RingRadiusDip = 9, CardRadiusDip = 8, CardIconDip = 48;
+    private const double RingGapDip = 3, RingStrokeDip = 3, CardIconDip = 48;
     private static readonly D2D.ColorF TextColor = new(0.89f, 0.89f, 0.91f, 1);
     private static readonly D2D.ColorF RingColor = new(0.42f, 0.67f, 1f, 1);
     private static readonly D2D.ColorF CardColor = new(0.16f, 0.16f, 0.18f, 1);
@@ -30,6 +30,7 @@ internal sealed unsafe class WindowDecor
         public int WantTextMax;
         public nint Text, Icon, Close;
         public NineSlice? Ring, Card;
+        public double RingRadius, CardRadius; // 建的时候用的圆角（配置改了要重建）
         public nint CardIcon;
         public bool WantsCard;
         public volatile bool HasIcon, HasCardIcon;
@@ -58,6 +59,11 @@ internal sealed unsafe class WindowDecor
     }
 
     private double Dpi => _monitor.DpiScale;
+
+    /// <summary>UI 线程：窗口卡片的圆角半径（DIP）。悬停框与它同心，占位卡片用同样的圆角。</summary>
+    public double CardRadiusDip { get; set; } = 12;
+
+    private double RingRadiusDip => CardRadiusDip + RingGapDip + RingStrokeDip;
 
     /// <summary>
     /// UI 线程：本次会话的各页（没有多页时只有一页）。<paramref name="members"/>[k] 是第 k 页里画在本屏的窗口，
@@ -140,8 +146,16 @@ internal sealed unsafe class WindowDecor
         {
             // 悬停框与关闭按钮第一次用到时才建
             var backend = _res.Backend;
+            if (e.Ring is not null && e.RingRadius != RingRadiusDip)
+            {
+                lock (backend.Gate) e.Ring.Remove(_branch.Root);
+                e.Ring = null;
+            }
             if (e.Ring is null && _res.Shape(RingRadiusDip * Dpi, RingStrokeDip * Dpi, RingColor) is { } ring)
+            {
                 e.Ring = NineSlice.Create(backend, _branch.Root, ring);
+                e.RingRadius = RingRadiusDip;
+            }
             if (e.Close == 0)
             {
                 nint surface = _res.CloseButtonSurface((int)Math.Round(CloseButton.DiameterDip * Dpi));
@@ -272,10 +286,16 @@ internal sealed unsafe class WindowDecor
         e.WantTextMax = Math.Max(24, (int)Math.Round(tile - (IconDip + IconGapDip) * Dpi));
         if (e.Title != w.Title) e.TextMax = 0; // 标题变了：重画
         e.Title = w.Title;
-        if (wantsCard && e.Card is null && _res.Shape(CardRadiusDip * Dpi, 0, CardColor) is { } shape)
+        if (e.Card is not null && e.CardRadius != CardRadiusDip)
+        {
+            lock (_res.Backend.Gate) e.Card.Remove(_branch.Root);
+            e.Card = null;
+        }
+        if (wantsCard && e.Card is null && _res.Shape(Math.Max(1, CardRadiusDip) * Dpi, 0, CardColor) is { } shape)
         {
             e.Card = NineSlice.Create(_res.Backend, _branch.Root, shape);
-            if (_res.Backend.CreateDecorVisual(_branch.Root, 0, out nint icon) >= 0) e.CardIcon = icon;
+            e.CardRadius = CardRadiusDip;
+            if (e.CardIcon == 0 && _res.Backend.CreateDecorVisual(_branch.Root, 0, out nint icon) >= 0) e.CardIcon = icon;
         }
         e.WantsCard = wantsCard;
         if (!wantsCard && e.Card is not null) lock (_res.Backend.Gate) e.Card.Hide();

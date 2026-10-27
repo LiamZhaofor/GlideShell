@@ -36,6 +36,10 @@ internal sealed class DesktopBarView : IDisposable
     private volatile Slot[] _slots = [];
     private volatile DesktopBarGeometry? _geometry;
     private bool _hiddenApplied;
+    private double _radiusPx; // 桌面缩略图在屏幕上的圆角（物理像素）
+
+    /// <summary>桌面缩略图的圆角相对窗口卡片圆角的比例（缩略图小得多）。</summary>
+    public const double RadiusRatio = 0.6;
 
     /// <summary>本次会话的桌面条几何（没有桌面条时为 null）。</summary>
     public DesktopBarGeometry? Geometry => _geometry;
@@ -47,10 +51,12 @@ internal sealed class DesktopBarView : IDisposable
     /// UI 线程：为每个桌面注册缩略图（不可见）。<paramref name="windows"/> 是各桌面在本屏的窗口（Z 序，最上层在前）。
     /// <paramref name="backend"/> 或 <paramref name="root"/> 为空时只保留几何（只画桌面名）。失败返回 HRESULT（0 = 正常）。
     /// </summary>
+    /// <param name="cardRadiusDip">总览窗口卡片的圆角（DIP）：桌面缩略图按 <see cref="RadiusRatio"/> 取圆角。</param>
     public int Prepare(SharedThumbnailBackend? backend, OverlayComposition? root, nint overlay, MonitorInfo monitor, DesktopBarGeometry? geometry,
-        DesktopState state, IReadOnlyList<OverviewWindow> windows, nint foreground)
+        DesktopState state, IReadOnlyList<OverviewWindow> windows, nint foreground, double cardRadiusDip = 0)
     {
         _geometry = geometry;
+        _radiusPx = cardRadiusDip * RadiusRatio * monitor.DpiScale;
         if (geometry is null || backend is null || root is null)
         {
             _slots = [];
@@ -73,7 +79,7 @@ internal sealed class DesktopBarView : IDisposable
             {
                 var branch = root.CreateBranch(out int created);
                 if (branch is null) return created;
-                branch.SetClip(monitor.WorkArea.Width, monitor.WorkArea.Height); // 越出工作区的窗口不能画到别的桌面缩略图上
+                branch.SetRoundedClip(monitor.WorkArea.Width, monitor.WorkArea.Height, 0); // 越出工作区的窗口不能画到别的桌面缩略图上
                 _cache[id] = desktop = new Desktop(branch);
             }
             var mine = windows.Where(w => w.DesktopId == id).ToList();
@@ -117,7 +123,10 @@ internal sealed class DesktopBarView : IDisposable
             var r = chosen ? g.ZoomRect(i, e, z) : g.ThumbRect(i, e);
             // 选中的那个点下去就不透明（可能还没完全展开就点了）；其余随放大淡出
             double alpha = chosen ? Math.Max(e, OverviewVisuals.SmoothStep(0, 0.15, z)) : e * (1 - z);
-            s.Desktop.Branch.SetTransform(r.Width / g.Area.Width, r.Left - g.Area.Left, r.Top - g.Area.Top);
+            double scale = r.Width / g.Area.Width;
+            s.Desktop.Branch.SetTransform(scale, r.Left - g.Area.Left, r.Top - g.Area.Top);
+            // 圆角在屏幕上保持不变（分支整体缩放，半径要除回去）；放大进入时随进度收成直角，落定时与真实桌面一致
+            s.Desktop.Branch.SetRoundedClip(g.Area.Width, g.Area.Height, _radiusPx * (chosen ? 1 - z : 1) / Math.Max(1e-3, scale));
             for (int k = 0; k < s.Opacity.Length; k++)
             {
                 s.Opacity[k] = alpha;

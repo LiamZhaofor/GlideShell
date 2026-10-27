@@ -393,6 +393,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index ||
                             scene.Windows[i].Overlaps(o.Monitor.WorkArea))
                 .ToList();
+            o.CornerRadiusDip = cfg.CornerRadius;
             int failure = o.Prepare(scene, members, shared, decor);
             if (failure != 0) _shared.Disable(failure, "总览");
         }
@@ -1243,12 +1244,13 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
         double wallpaper = (1 - BackdropDim * Math.Clamp(frame.Progress, 0, 1)) * (1 - Math.Clamp(frame.Zoom, 0, 1));
         double labelOpacity = controller.Mode == OverviewMode.Desktop ? 0 : frame.LabelOpacity;
+        double corner = controller.Mode == OverviewMode.Desktop ? -1 : frame.Progress; // 显示桌面：窗口原样滑出屏幕
         foreach (var o in _renderOverlays)
         {
             if (!o.IsShown) continue;
             int hr = paged
-                ? o.Render(nowUs, rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame, labelOpacity, buffers!.Rects, buffers.Opacity, buffers.Active)
-                : o.Render(nowUs, rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame, labelOpacity);
+                ? o.Render(nowUs, rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame, labelOpacity, corner, buffers!.Rects, buffers.Opacity, buffers.Active)
+                : o.Render(nowUs, rects.AsSpan(0, count), opacity.AsSpan(0, count), active.AsSpan(0, count), wallpaper, frame, labelOpacity, corner);
             if (hr != 0 && !_applyErrorLogged)
             {
                 _applyErrorLogged = true; // 每次会话只记一次

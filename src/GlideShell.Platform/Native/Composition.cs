@@ -79,6 +79,31 @@ internal static unsafe partial class Dcomp
     public static int RemoveVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(parent)[17])(parent, visual);
     public static int SetOpacity(void* visual3, float opacity) => ((delegate* unmanaged[Stdcall]<void*, float, int>)Vtbl(visual3)[30])(visual3, opacity);
 
+    // ---- 圆角裁剪：IDCompositionDevice2::CreateRectangleClip = 22；IDCompositionRectangleClip 的各属性同样是「动画版在前、数值版在后」，
+    // 数值版依次是 SetLeft 4、SetTop 6、SetRight 8、SetBottom 10、左上 X/Y 12/14、右上 16/18、左下 20/22、右下 24/26 ----
+    public static int CreateRectangleClip(void* device, void** clip) => ((delegate* unmanaged[Stdcall]<void*, void**, int>)Vtbl(device)[22])(device, clip);
+
+    /// <summary>视觉用裁剪对象（SetClip 的对象版在 13）；null 取消裁剪。</summary>
+    public static int SetClipObject(void* visual, void* clip) => ((delegate* unmanaged[Stdcall]<void*, void*, int>)Vtbl(visual)[13])(visual, clip);
+
+    /// <summary>裁剪矩形（裁剪对象自己的坐标系 = 所在视觉的坐标系）。</summary>
+    public static void SetClipRect(void* clip, float left, float top, float right, float bottom)
+    {
+        var v = Vtbl(clip);
+        ((delegate* unmanaged[Stdcall]<void*, float, int>)v[4])(clip, left);
+        ((delegate* unmanaged[Stdcall]<void*, float, int>)v[6])(clip, top);
+        ((delegate* unmanaged[Stdcall]<void*, float, int>)v[8])(clip, right);
+        ((delegate* unmanaged[Stdcall]<void*, float, int>)v[10])(clip, bottom);
+    }
+
+    /// <summary>四个角同样的椭圆圆角（横向半径 <paramref name="rx"/>、纵向 <paramref name="ry"/>）。</summary>
+    public static void SetClipRadius(void* clip, float rx, float ry)
+    {
+        var v = Vtbl(clip);
+        for (int slot = 12; slot <= 26; slot += 2)
+            ((delegate* unmanaged[Stdcall]<void*, float, int>)v[slot])(clip, (slot / 2) % 2 == 0 ? rx : ry);
+    }
+
     /// <summary>任意视觉 QI 成 IDCompositionVisual3（成功时释放原指针）。</summary>
     public static int ToVisual3(void* visual, void** visual3)
     {

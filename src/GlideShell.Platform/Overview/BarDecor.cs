@@ -51,6 +51,7 @@ internal sealed unsafe class BarDecor
     private double _addHover;
     private bool _plusSmallHidden = true, _plusBigHidden = true;
     private bool _first = true;
+    private double _thumbRadiusDip = -1;
     private long _lastUs;
     private bool _renderPosted;
 
@@ -63,9 +64,15 @@ internal sealed unsafe class BarDecor
 
     private double Dpi => _monitor.DpiScale;
 
-    /// <summary>UI 线程：本次会话的桌面条（null = 没有桌面条）。</summary>
-    public void Prepare(DesktopBarGeometry? geometry, DesktopState state)
+    /// <summary>UI 线程：本次会话的桌面条（null = 没有桌面条）。<paramref name="thumbRadiusDip"/> 是桌面缩略图的圆角，高亮框与它同心。</summary>
+    public void Prepare(DesktopBarGeometry? geometry, DesktopState state, double thumbRadiusDip = 0)
     {
+        if (thumbRadiusDip != _thumbRadiusDip)
+        {
+            // 圆角变了：高亮框重建
+            Dispose();
+            _thumbRadiusDip = thumbRadiusDip;
+        }
         HideAll();
         if (geometry is null || geometry.Count != state.Count)
         {
@@ -84,8 +91,8 @@ internal sealed unsafe class BarDecor
             d.CurrentPill = Make(_res.Shape(pillR, 0, PillColor));
             d.HoverPill = Make(_res.Shape(pillR, 0, HoverPillColor));
             backend.CreateDecorVisual(root, 0, out d.Text);
-            d.CurrentRing = Make(_res.Shape(5 * dpi, 2 * dpi, CurrentRingColor));
-            d.HoverRing = Make(_res.Shape(6 * dpi, 3 * dpi, HoverRingColor));
+            d.CurrentRing = Make(_res.Shape((thumbRadiusDip + 2) * dpi, 2 * dpi, CurrentRingColor));
+            d.HoverRing = Make(_res.Shape((thumbRadiusDip + 3) * dpi, 3 * dpi, HoverRingColor));
             d.RemoveDisc = Make(_res.Shape(removeR, 0, PillColor));
             var glyph = _res.Image($"bar-x/{dpi:F2}", c => Glyph(c, "×", (int)Math.Round(geometry.RemoveButton(0).Width)));
             if (glyph.Surface != 0) backend.CreateDecorVisual(root, glyph.Surface, out d.RemoveGlyph);

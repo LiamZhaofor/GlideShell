@@ -38,6 +38,11 @@ public sealed record OverviewConfig
 
     /// <summary>总览里同一个程序的窗口排在一起（默认按窗口原来的位置就近排）。</summary>
     public bool GroupByApp { get; set; }
+
+    /// <summary>
+    /// 总览里窗口卡片的圆角半径（DIP，0–24）：窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8）过渡到这个值。0 = 保持窗口原样。
+    /// </summary>
+    public double CornerRadius { get; set; } = 12;
 }
 
 public sealed record SwitcherConfig
@@ -97,6 +102,33 @@ public sealed record DragConfig
     public double Acceleration { get; set; } = 0.6;
 }
 
+/// <summary>按住拖动的鼠标键。</summary>
+public enum MouseDragButton
+{
+    None,
+
+    /// <summary>侧键「后退」（XButton1）。</summary>
+    Back,
+
+    /// <summary>侧键「前进」（XButton2）。</summary>
+    Forward,
+
+    /// <summary>中键（按下滚轮）。</summary>
+    Middle,
+}
+
+/// <summary>
+/// 鼠标按键手势（Mac Mouse Fix 的「按住拖动 → 调度中心与空间」）：按住 <see cref="Button"/> 拖动，左右切换桌面、上拉总览、下拉应用窗口视图。
+/// 只点一下（没拖开）照常是这个键原来的功能。
+/// </summary>
+public sealed record MouseGesturesConfig
+{
+    public MouseDragButton Button { get; set; } = MouseDragButton.Back;
+
+    /// <summary>指针每移动 1 DIP 算触摸板上多少毫米（越大越灵敏；0.2 时拖 150 DIP 完全展开总览）。</summary>
+    public double MmPerDip { get; set; } = 0.2;
+}
+
 // 配置记录的属性用 set 而不是 init：System.Text.Json 源生成对 init 属性用对象初始化器一次性赋值，
 // JSON 里缺失的字段会被设成 null / 0，覆盖掉默认值；set 属性则是构造后逐个赋值，缺失字段保留默认值。
 
@@ -125,6 +157,9 @@ public sealed record GlideShellConfig
     public DesktopConfig Desktops { get; set; } = new();
 
     public DragConfig Drag { get; set; } = new();
+
+    /// <summary>鼠标按键手势。</summary>
+    public MouseGesturesConfig Mouse { get; set; } = new();
 
     /// <summary>前台是这些进程时不接管手势（进程名，不含 .exe，不区分大小写）。</summary>
     public List<string> ExcludedProcesses { get; set; } = [];
@@ -192,6 +227,7 @@ public sealed record GlideShellConfig
             {
                 TravelMm = Clamp(Overview.TravelMm, 5, 100, "Overview.TravelMm"),
                 BackdropDim = Clamp(Overview.BackdropDim, 0, 1, "Overview.BackdropDim"),
+                CornerRadius = Clamp(Overview.CornerRadius, 0, 24, "Overview.CornerRadius"),
                 Spring = FixSpring(Overview.Spring, "Overview.Spring"),
             },
             Switcher = Switcher with
@@ -204,6 +240,7 @@ public sealed record GlideShellConfig
                 PixelsPerMm = Clamp(Drag.PixelsPerMm, 1, 80, "Drag.PixelsPerMm"),
                 Acceleration = Clamp(Drag.Acceleration, 0, 4, "Drag.Acceleration"),
             },
+            Mouse = Mouse with { MmPerDip = Clamp(Mouse.MmPerDip, 0.05, 1, "Mouse.MmPerDip") },
             Desktops = Desktops with
             {
                 TravelMm = Clamp(Desktops.TravelMm, 10, 150, "Desktops.TravelMm"),

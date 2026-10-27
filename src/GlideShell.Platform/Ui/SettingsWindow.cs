@@ -22,12 +22,12 @@ public sealed record SettingsEnvironment(
 /// </summary>
 public sealed unsafe partial class SettingsWindow : NativeWindow
 {
-    private const int ClientWidth = 760, ClientHeight = 700;
+    private const int ClientWidth = 760, ClientHeight = 830;
     private const uint Style = User32.WS_OVERLAPPED | User32.WS_CAPTION | User32.WS_SYSMENU | User32.WS_MINIMIZEBOX;
     private const int IdOk = 1, IdCancel = 2; // IsDialogMessage 把 Enter / Esc 翻译成这两个命令
     private const int IdGestureBase = 100, IdDrag = 110, IdFullscreen = 111, IdAutostart = 112, IdShared = 113;
     private const int IdPresetBase = 120, IdRemove = 130, IdAdd = 131, IdDefaults = 140, IdOpenConfig = 141;
-    private const int IdAppWindows = 114, IdGroupByApp = 115, IdDesktopKeys = 116, IdCornerBase = 150;
+    private const int IdAppWindows = 114, IdGroupByApp = 115, IdDesktopKeys = 116, IdMouseButton = 117, IdCornerBase = 150;
 
     private static SettingsWindow? s_current;
     private static bool s_commonControls;
@@ -43,7 +43,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
     private nint _font;
     private uint _dpi = 96;
     private nint _drag, _fullscreen, _autostart, _shared, _presetLabel, _desktopNote, _excludedList, _addCombo;
-    private nint _appWindows, _groupByApp, _desktopKeys;
+    private nint _appWindows, _groupByApp, _desktopKeys, _mouseButton;
     private readonly nint[] _cornerCombos = new nint[4];
     private IReadOnlyList<string> _runningApps = [];
 
@@ -169,16 +169,17 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         AddSlider(new Slider("切换一个窗口", 10, 50, 1, v => $"{v:0} mm", m => m.MmPerWindow, (m, v) => m with { MmPerWindow = v }), 140);
         AddSlider(new Slider("切换桌面：滑满", 20, 100, 1, v => $"{v:0} mm", m => m.DesktopTravelMm, (m, v) => m with { DesktopTravelMm = v }), 174);
 
-        Group("外观", 392, 224, 352, 88);
+        Group("外观", 392, 224, 352, 122);
         AddSlider(new Slider("总览背景变暗", 0, 1, 0.05, v => $"{v * 100:0}%", m => m.BackdropDim, (m, v) => m with { BackdropDim = v }), 250);
-        _shared = Child("BUTTON", "共享缩略图（实验，高刷新率下更流畅）", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdShared, 408, 282, 320, 22);
+        AddSlider(new Slider("窗口卡片圆角", 0, 24, 1, v => v == 0 ? "原样" : $"{v:0}", m => m.CornerRadius, (m, v) => m with { CornerRadius = v }), 284);
+        _shared = Child("BUTTON", "共享缩略图（实验，高刷新率下更流畅）", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdShared, 408, 316, 320, 22);
 
-        Group("三指拖移", 392, 322, 352, 96);
-        AddSlider(new Slider("指针速度", 4, 40, 1, v => $"{v:0} px/mm", m => m.DragPixelsPerMm, (m, v) => m with { DragPixelsPerMm = v }), 348);
-        AddSlider(new Slider("加速", 0, 2, 0.1, v => $"{v:0.0}", m => m.DragAcceleration, (m, v) => m with { DragAcceleration = v }), 382);
+        Group("三指拖移", 392, 356, 352, 96);
+        AddSlider(new Slider("指针速度", 4, 40, 1, v => $"{v:0} px/mm", m => m.DragPixelsPerMm, (m, v) => m with { DragPixelsPerMm = v }), 382);
+        AddSlider(new Slider("加速", 0, 2, 0.1, v => $"{v:0.0}", m => m.DragAcceleration, (m, v) => m with { DragAcceleration = v }), 416);
 
-        Group("启动", 392, 428, 352, 56);
-        _autostart = Child("BUTTON", "登录 Windows 时自动启动 GlideShell", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAutostart, 408, 452, 320, 22);
+        Group("启动", 392, 462, 352, 56);
+        _autostart = Child("BUTTON", "登录 Windows 时自动启动 GlideShell", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAutostart, 408, 486, 320, 22);
 
         // 左栏：触发角
         Group("触发角（指针停在屏幕角上）", 16, 516, 360, 124);
@@ -190,25 +191,33 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         }
         Note("暂停、全屏、排除的程序在前台时不触发。", 32, 612, 330, 20);
 
+        // 左栏：鼠标按键手势
+        Group("鼠标按键手势（按住拖动）", 16, 650, 360, 132);
+        Label("按住的键", 32, 680, 100, 20);
+        _mouseButton = Child("COMBOBOX", null, User32.CBS_DROPDOWNLIST | User32.WS_VSCROLL | User32.WS_TABSTOP, IdMouseButton, 134, 676, 226, 200);
+        AddSlider(new Slider("灵敏度", 0.05, 0.6, 0.05, v => $"{v / 0.2:0.00}×", m => m.MouseMmPerDip, (m, v) => m with { MouseMmPerDip = v }), 710, 32);
+        Note("按住拖动：左右切换桌面，上拉总览，下拉应用窗口。只点一下仍是这个键原来的功能。", 32, 742, 330, 36);
+
         // 右栏：总览与切桌面
-        Group("总览与切桌面", 392, 494, 352, 146);
-        _appWindows = Child("BUTTON", "收起时三指下滑：应用窗口视图", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAppWindows, 408, 518, 320, 22);
-        _groupByApp = Child("BUTTON", "总览里同一程序的窗口排在一起", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdGroupByApp, 408, 544, 320, 22);
-        _desktopKeys = Child("BUTTON", "Ctrl+Win+←/→ 也用跟手切换动画", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdDesktopKeys, 408, 570, 320, 22);
-        Note("四指下滑显示桌面、再上滑拉回；桌面没显示时四指上滑打开总览。", 408, 598, 330, 36);
+        Group("总览与切桌面", 392, 528, 352, 146);
+        _appWindows = Child("BUTTON", "收起时三指下滑：应用窗口视图", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdAppWindows, 408, 552, 320, 22);
+        _groupByApp = Child("BUTTON", "总览里同一程序的窗口排在一起", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdGroupByApp, 408, 578, 320, 22);
+        _desktopKeys = Child("BUTTON", "Ctrl+Win+←/→ 也用跟手切换动画", User32.BS_AUTOCHECKBOX | User32.WS_TABSTOP, IdDesktopKeys, 408, 604, 320, 22);
+        Note("四指下滑显示桌面、再上滑拉回；桌面没显示时四指上滑打开总览。", 408, 632, 330, 36);
 
         // 底部按钮
-        Child("BUTTON", "恢复默认", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdDefaults, 16, 656, 96, 28);
-        Child("BUTTON", "打开配置文件…", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdOpenConfig, 120, 656, 124, 28);
-        Child("BUTTON", "取消", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdCancel, 560, 656, 88, 28);
-        Child("BUTTON", "保存", User32.BS_DEFPUSHBUTTON | User32.WS_TABSTOP, IdOk, 656, 656, 88, 28);
+        Child("BUTTON", "恢复默认", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdDefaults, 16, 790, 96, 28);
+        Child("BUTTON", "打开配置文件…", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdOpenConfig, 120, 790, 124, 28);
+        Child("BUTTON", "取消", User32.BS_PUSHBUTTON | User32.WS_TABSTOP, IdCancel, 560, 790, 88, 28);
+        Child("BUTTON", "保存", User32.BS_DEFPUSHBUTTON | User32.WS_TABSTOP, IdOk, 656, 790, 88, 28);
     }
 
-    private void AddSlider(Slider s, int y)
+    /// <param name="x">标签左边（默认右栏）。</param>
+    private void AddSlider(Slider s, int y, int x = 408)
     {
-        Label(s.Label, 408, y + 4, 100, 20);
-        s.Track = Child("msctls_trackbar32", null, User32.TBS_HORZ | User32.TBS_NOTICKS | User32.WS_TABSTOP, 0, 510, y, 160, 26);
-        s.Value = Label("", 674, y + 4, 64, 20);
+        Label(s.Label, x, y + 4, 100, 20);
+        s.Track = Child("msctls_trackbar32", null, User32.TBS_HORZ | User32.TBS_NOTICKS | User32.WS_TABSTOP, 0, x + 102, y, 160, 26);
+        s.Value = Label("", x + 266, y + 4, 64, 20);
         User32.SendMessageW(s.Track, User32.TBM_SETRANGE, 1, s.Steps << 16);
         _sliders.Add(s);
     }
@@ -248,6 +257,9 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         Check(_appWindows, _model.AppWindows);
         Check(_groupByApp, _model.GroupByApp);
         Check(_desktopKeys, _model.TakeOverDesktopHotkeys);
+        User32.SendMessageW(_mouseButton, User32.CB_RESETCONTENT, 0, 0);
+        foreach (var b in SettingsModel.MouseButtonChoices) AddString(_mouseButton, User32.CB_ADDSTRING, SettingsModel.MouseButtonLabel(b));
+        User32.SendMessageW(_mouseButton, User32.CB_SETCURSEL, Math.Max(0, IndexOf(SettingsModel.MouseButtonChoices, _model.MouseButton)), 0);
         for (int c = 0; c < 4; c++)
         {
             nint combo = _cornerCombos[c];
@@ -384,6 +396,13 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
             if (code != User32.CBN_SELCHANGE) return;
             int sel = (int)User32.SendMessageW(_cornerCombos[id - IdCornerBase], User32.CB_GETCURSEL, 0, 0);
             if (sel >= 0 && sel < SettingsModel.HotCornerChoices.Count) _model = _model.WithHotCorner(id - IdCornerBase, SettingsModel.HotCornerChoices[sel]);
+            return;
+        }
+        if (id == IdMouseButton)
+        {
+            if (code != User32.CBN_SELCHANGE) return;
+            int sel = (int)User32.SendMessageW(_mouseButton, User32.CB_GETCURSEL, 0, 0);
+            if (sel >= 0 && sel < SettingsModel.MouseButtonChoices.Count) _model = _model with { MouseButton = SettingsModel.MouseButtonChoices[sel] };
             return;
         }
         if (id >= IdPresetBase && id < IdPresetBase + SensitivityPreset.All.Count)

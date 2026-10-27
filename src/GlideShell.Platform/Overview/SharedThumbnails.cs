@@ -333,6 +333,7 @@ internal sealed unsafe class OverlayComposition : IDisposable
     private void* _target; // 顶层才有
     private void* _parent; // 分支才有
     private void* _root;
+    private void* _roundClip; // 圆角裁剪（SetRoundedClip 第一次调用时建）
 
     private OverlayComposition(SharedThumbnailBackend backend, void* target, void* parent, void* root)
     {
@@ -399,6 +400,27 @@ internal sealed unsafe class OverlayComposition : IDisposable
         }
     }
 
+    /// <summary>
+    /// 渲染线程：圆角裁剪到自己坐标系里的 (0,0)–(width,height)，圆角半径 <paramref name="radius"/> 也在自己的坐标系里
+    /// （分支整体缩放时调用方按缩放换算，屏幕上的圆角才不变）。不提交。
+    /// </summary>
+    public void SetRoundedClip(double width, double height, double radius)
+    {
+        lock (_backend.Gate)
+        {
+            if (_root == null || _backend.Device == null) return;
+            if (_roundClip == null)
+            {
+                void* c;
+                if (Dcomp.CreateRectangleClip(_backend.Device, &c) < 0) return;
+                Dcomp.SetClipRect(c, 0, 0, (float)width, (float)height);
+                Dcomp.SetClipObject(_root, c);
+                _roundClip = c;
+            }
+            Dcomp.SetClipRadius(_roundClip, (float)radius, (float)radius);
+        }
+    }
+
     /// <summary>分支：挪到兄弟的最上层（不提交）。</summary>
     public void BringToFront()
     {
@@ -417,6 +439,12 @@ internal sealed unsafe class OverlayComposition : IDisposable
             if (_root == null) return;
             if (_target != null) Dcomp.SetRoot(_target, null);
             if (_parent != null) Dcomp.RemoveVisual(_parent, _root);
+            if (_roundClip != null)
+            {
+                Dcomp.SetClipObject(_root, null);
+                Dcomp.Release(_roundClip);
+                _roundClip = null;
+            }
             if (_backend.Device != null) Dcomp.Commit(_backend.Device);
             Dcomp.Release(_root);
             if (_target != null) Dcomp.Release(_target);
@@ -451,8 +479,14 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     private readonly record struct Shadow(nint Visual, nint Surface, int Downscale, double MarginPx);
 
     /// <param name="Group">挂在根视觉下的那个（壁纸就是缩略图视觉本身）。</param>
+    /// <param name="RealRadius">窗口自己的圆角（物理像素）：Windows 11 有标题栏 / 可调边框、没最大化的窗口是 8 DIP，其余为 0。</param>
     private readonly record struct Entry(nint Group, nint Visual, nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent,
-        Shadow Inactive, Shadow Active);
+        Shadow Inactive, Shadow Active, double RealRadius = 0);
+
+    /// <summary>Windows 11 窗口的圆角半径（DIP）。</summary>
+    public const double WindowCornerDip = 8;
+
+    private readonly Dictionary<nint, nint> _clips = []; // 缩略图视觉 → 圆角裁剪（锁内，第一次需要时建）
 
     private readonly SharedThumbnailBackend _backend;
     private readonly OverlayComposition _composition;
@@ -541,21 +575,29 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
                 entries.Add(entry with { SceneIndex = index });
             }
 
-            // 成功：撤掉上一层里不再复用的部分，复用的部分转交给新层
+            // 成功：撤掉上一层里不再复用的部分，复用的部分（连同圆角裁剪）转交给新层
+            var layer = new SharedThumbnailLayer(backend, composition, wallpaper, [.. entries], workArea);
             if (previous is not null)
             {
                 if (!wallpaperKept) Remove(backend, root, previous._wallpaper);
-                for (int i = keep; i < old.Length; i++) Remove(backend, root, old[i]);
+                for (int i = keep; i < old.Length; i++)
+                {
+                    ReleaseClip(previous._clips, old[i].Visual);
+                    Remove(backend, root, old[i]);
+                }
+                foreach (var (visual, clip) in previous._clips) layer._clips[visual] = clip;
+                previous._clips.Clear();
                 previous._released = true;
             }
             hr = Dcomp.Commit(backend.Device);
-            return new SharedThumbnailLayer(backend, composition, wallpaper, [.. entries], workArea);
+            return layer;
 
             SharedThumbnailLayer? Fail()
             {
                 foreach (var e in created) Remove(backend, root, e);
                 if (previous is not null && !previous._released)
                 {
+                    foreach (var visual in previous._clips.Keys.ToList()) ReleaseClip(previous._clips, visual);
                     Remove(backend, root, previous._wallpaper);
                     foreach (var e in old) Remove(backend, root, e);
                     previous._released = true;
@@ -579,7 +621,12 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         => Apply(sceneRects, sceneOpacity, sceneActive, wallpaperOpacity, commit: true);
 
     /// <param name="commit">false：不提交，由调用方把几层的修改一起 Commit（切桌面的三个桌面要同一帧生效）。</param>
-    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity, bool commit)
+    /// <param name="corner">
+    /// 圆角卡片的程度（0 = 窗口自己的圆角，1 = <paramref name="cardRadiusPx"/>，屏幕上的半径按它插值）；负数 = 不裁剪（切桌面、桌面条里的窗口）。
+    /// 总览里传展开进度：窗口在原位时与真实窗口一致，到平铺位时是 macOS 那样的圆角卡片（最大化的窗口也是）。
+    /// </param>
+    public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity, bool commit,
+        double corner = -1, double cardRadiusPx = 0)
     {
         lock (_backend.Gate)
         {
@@ -609,6 +656,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
                 Check(Dcomp.SetTransform(v, &m));
                 double opacity = Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1);
                 Check(Dcomp.SetOpacity(v, (float)opacity));
+                if (corner >= 0 && opacity > 0) Round(e, sx, sy, e.RealRadius + (cardRadiusPx - e.RealRadius) * Math.Clamp(corner, 0, 1));
 
                 // 阴影图覆盖窗口四周 MarginPx，按 Downscale 缩小存储：缩放 = 窗口缩放 × Downscale，左上角再往外挪 MarginPx
                 double active = e.SceneIndex < sceneActive.Length ? Math.Clamp(sceneActive[e.SceneIndex], 0, 1) : 0;
@@ -627,6 +675,29 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             if (commit) Check(Dcomp.Commit(_backend.Device));
             return firstError;
         }
+    }
+
+    /// <summary>锁内：缩略图按屏幕上半径 <paramref name="radiusPx"/> 的圆角裁剪（缩略图视觉按源尺寸 1:1 建、整体缩放，半径要除回去）。</summary>
+    private void Round(in Entry e, double sx, double sy, double radiusPx)
+    {
+        if (!_clips.TryGetValue(e.Visual, out nint clip))
+        {
+            if (radiusPx < 0.5) return; // 还没裁剪过、也不需要：保持不裁
+            void* c;
+            if (Dcomp.CreateRectangleClip(_backend.Device, &c) < 0) return;
+            Dcomp.SetClipRect(c, 0, 0, e.Source.Width, e.Source.Height);
+            Dcomp.SetClipObject((void*)e.Visual, c);
+            _clips[e.Visual] = clip = (nint)c;
+        }
+        Dcomp.SetClipRadius((void*)clip, (float)(radiusPx / Math.Max(1e-3, sx)), (float)(radiusPx / Math.Max(1e-3, sy)));
+    }
+
+    /// <summary>锁内：释放某个缩略图视觉的圆角裁剪。</summary>
+    private static void ReleaseClip(Dictionary<nint, nint> clips, nint visual)
+    {
+        if (!clips.Remove(visual, out nint clip)) return;
+        Dcomp.SetClipObject((void*)visual, null);
+        Dcomp.Release((void*)clip);
     }
 
     /// <summary>
@@ -689,7 +760,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             }
             hr = 0;
             _released = true; // 视觉转交给新层
-            return new SharedThumbnailLayer(_backend, _composition, _wallpaper, [.. _windows, entry], _origin);
+            return Successor([.. _windows, entry]);
         }
     }
 
@@ -705,7 +776,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             Dcomp.AddVisual(root, g); // 加回去就在兄弟的最上层（连同它的阴影）
             var entries = _windows.Where((_, i) => i != idx).Append(_windows[idx]).ToArray();
             _released = true; // 视觉转交给新层
-            return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
+            return Successor(entries);
         }
     }
 
@@ -723,7 +794,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
                 if (e.Group != 0) Dcomp.AddVisual(root, (void*)e.Group); // 依次加到最上层 = 从下往上
             Dcomp.Commit(_backend.Device);
             _released = true; // 视觉转交给新层
-            return new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
+            return Successor(entries);
         }
     }
 
@@ -743,6 +814,15 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         }
     }
 
+    /// <summary>锁内：接管本层全部视觉的新层（圆角裁剪一起转交）。</summary>
+    private SharedThumbnailLayer Successor(Entry[] entries)
+    {
+        var next = new SharedThumbnailLayer(_backend, _composition, _wallpaper, entries, _origin);
+        foreach (var (visual, clip) in _clips) next._clips[visual] = clip;
+        _clips.Clear();
+        return next;
+    }
+
     public void Unregister()
     {
         lock (_backend.Gate)
@@ -750,6 +830,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             if (_released) return;
             _released = true;
             if (_backend.Device == null) return;
+            foreach (var visual in _clips.Keys.ToList()) ReleaseClip(_clips, visual);
             void* root = _composition.Root;
             Remove(_backend, root, _wallpaper);
             foreach (var e in _windows) Remove(_backend, root, e);
@@ -798,7 +879,8 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
         hr = CreateThumbnail(backend, overlay, hwnd, source, out nint visual, out nint thumb);
         if (hr >= 0) hr = Dcomp.AddVisual((void*)group, (void*)visual);
         if (hr >= 0) hr = Dcomp.AddVisual(root, (void*)group);
-        entry = new Entry(group, visual, thumb, hwnd, -1, source, true, inactive, active);
+        entry = new Entry(group, visual, thumb, hwnd, -1, source, true, inactive, active,
+            CastsShadow(hwnd) ? WindowCornerDip * dpiScale : 0); // 有系统阴影的窗口才有系统圆角
         if (hr < 0)
         {
             Remove(backend, null, entry);

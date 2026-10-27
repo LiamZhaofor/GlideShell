@@ -8,6 +8,29 @@ public class SettingsModelTests
     private static GestureSlot Slot(int fingers, GestureAxis axis) => SettingsModel.Slots.Single(s => s.Fingers == fingers && s.Axis == axis);
 
     [Fact]
+    public void Corner_radius_and_mouse_gestures_round_trip_and_are_clamped()
+    {
+        var config = new GlideShellConfig();
+        var model = SettingsModel.FromConfig(config);
+        Assert.Equal(12, model.CornerRadius);
+        Assert.Equal(MouseDragButton.Back, model.MouseButton);
+
+        var (saved, problems) = (model with { CornerRadius = 6, MouseButton = MouseDragButton.Middle, MouseMmPerDip = 0.3 }).ApplyTo(config);
+        Assert.Empty(problems);
+        Assert.Equal(6, saved.Overview.CornerRadius);
+        Assert.Equal(MouseDragButton.Middle, saved.Mouse.Button);
+        Assert.Equal(0.3, saved.Mouse.MmPerDip);
+
+        var json = ConfigStore.Serialize(saved);
+        Assert.Contains("\"Middle\"", json); // 枚举按名字存，配置文件里看得懂
+
+        var (clamped, clampProblems) = (config with { Overview = config.Overview with { CornerRadius = 99 }, Mouse = new MouseGesturesConfig { MmPerDip = 5 } }).Sanitize();
+        Assert.Equal(24, clamped.Overview.CornerRadius);
+        Assert.Equal(1, clamped.Mouse.MmPerDip);
+        Assert.Equal(2, clampProblems.Count);
+    }
+
+    [Fact]
     public void Default_config_round_trips_without_writing_a_custom_map()
     {
         var config = new GlideShellConfig();

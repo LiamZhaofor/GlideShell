@@ -70,6 +70,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     public MonitorInfo Monitor { get; }
 
+    /// <summary>总览里窗口卡片的圆角半径（DIP，配置 overview.cornerRadius）；悬停框、占位卡片跟着它。</summary>
+    public double CornerRadiusDip { get; set; } = 12;
+
     /// <summary>指针在某个窗口的标题行上（点它切换总览 / 应用窗口视图）：显示手形指针。</summary>
     public bool LabelHovered { get; set; }
 
@@ -142,6 +145,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private void PrepareDecor()
     {
         if (!DecorActive) return;
+        _decor!.CardRadiusDip = CornerRadiusDip;
         if (_pages is { } pages)
             _decor!.Prepare(pages.Scenes, pages.Members, (k, i) => (k == pages.Home ? _layer : pages.Layers[k])?.ShowsContent(i) ?? false);
         else
@@ -340,10 +344,10 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         bool shared = _layer is SharedThumbnailLayer && _shared is not null && _barRoot is not null;
         if (_barDecor is not null)
         {
-            if (shared) _barDecor.Prepare(geometry, desktops);
+            if (shared) _barDecor.Prepare(geometry, desktops, CornerRadiusDip * DesktopBarView.RadiusRatio);
             else _barDecor.HideAll();
         }
-        return _bar.Prepare(shared ? _shared : null, shared ? _barRoot : null, Handle, Monitor, geometry, desktops, windows, foreground);
+        return _bar.Prepare(shared ? _shared : null, shared ? _barRoot : null, Handle, Monitor, geometry, desktops, windows, foreground, CornerRadiusDip);
     }
 
     /// <summary>UI 线程：点了第 <paramref name="index"/> 个桌面，它要放大进入，挪到其余桌面上面。</summary>
@@ -355,9 +359,11 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// 每页按翻页位置整体横向平移。
     /// </summary>
     /// <param name="labels">窗口标题的整体不透明度（随展开进度淡入；显示桌面时为 0）。</param>
+    /// <param name="corner">当前页窗口变成圆角卡片的程度（展开进度；负数 = 不裁圆角，例如显示桌面）。其余各页已在平铺位，按 1。</param>
     public int Render(long nowUs, ReadOnlySpan<RectD> rects, ReadOnlySpan<double> opacity, ReadOnlySpan<double> active, double wallpaper, in OverviewFrame frame,
-        double labels, RectD[][]? pageRects = null, double[][]? pageOpacity = null, double[][]? pageActive = null)
+        double labels, double corner, RectD[][]? pageRects = null, double[][]? pageOpacity = null, double[][]? pageActive = null)
     {
+        double radius = CornerRadiusDip * Monitor.DpiScale;
         var decor = DecorActive ? _decor : null;
         if (_layer is SharedThumbnailLayer home && _shared is { } backend && (_bar.HasThumbnails || _pages is not null || decor is not null))
         {
@@ -377,14 +383,15 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                     double dx = OverviewController.PageOffset(k, frame.PagePosition, width, gap);
                     for (int i = 0; i < n; i++) dst[i] = src[i].Offset(dx, 0);
                     var layer = k == pages.Home ? home : pages.Layers[k] as SharedThumbnailLayer;
-                    int r = layer?.Apply(dst.AsSpan(0, n), op[..n], ac[..n], k == pages.Home ? wallpaper : 0, commit: false) ?? 0;
+                    int r = layer?.Apply(dst.AsSpan(0, n), op[..n], ac[..n], k == pages.Home ? wallpaper : 0, commit: false,
+                        current ? corner : corner >= 0 ? 1 : -1, radius) ?? 0;
                     if (hr == 0) hr = r;
                     decor?.Apply(k, pages.Scenes[k], dst.AsSpan(0, n), op[..n], labels, current ? frame.DragIndex : -1);
                 }
             }
             else
             {
-                hr = home.Apply(rects, opacity, active, wallpaper, commit: false);
+                hr = home.Apply(rects, opacity, active, wallpaper, commit: false, corner, radius);
                 decor?.Apply(0, _scene, rects, opacity, labels, frame.DragIndex);
             }
             _bar.Apply(frame);
