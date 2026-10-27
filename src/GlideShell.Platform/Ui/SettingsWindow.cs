@@ -331,6 +331,11 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         }
         switch (msg)
         {
+            case 0x0006 /* WM_ACTIVATE */ when (wParam & 0xFFFF) != 0:
+                // UIAccess 版：任务栏（普通权限）能激活这个窗口，但把它提到最上层的那一步被消息隔离拦掉了——
+                // 窗口成了前台却压在别的窗口下面，再点任务栏按钮就被当成「最小化活动窗口」。自己提到最上层
+                User32.SetWindowPos(Handle, 0 /* HWND_TOP */, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 /* NOSIZE | NOMOVE | NOACTIVATE */);
+                return null;
             case User32.WM_COMMAND:
                 OnCommand((int)(wParam & 0xFFFF), (int)((wParam >> 16) & 0xFFFF));
                 return 0;
