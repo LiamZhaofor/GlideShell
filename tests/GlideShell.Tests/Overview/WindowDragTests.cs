@@ -308,6 +308,58 @@ public class WindowDragTests
     }
 
     [Fact]
+    public void App_view_puts_minimized_windows_on_a_shelf_at_the_bottom()
+    {
+        var full = ThreeWindows();
+        var windows = full.Windows.Select((w, i) => w with { IsMinimized = i == 2 }).ToList(); // 窗口 3 最小化
+        var scene = OverviewScene.Build(windows, [new OverviewArea(Area, 1.5)]);
+        var areas = new[] { new OverviewArea(Area, 1.5) };
+        var app = scene.Focus(_ => true, areas, minimizedShelf: true);
+        double shelfTop = Area.Bottom - Area.Height * OverviewScene.ShelfFraction - 20 * 1.5;
+        Assert.True(app.Slots[2].Tile.Top >= shelfTop); // 最小化的在底部那一排
+        foreach (int i in new[] { 0, 1 }) Assert.True(app.Slots[i].Label.Bottom <= Area.Bottom - Area.Height * OverviewScene.ShelfFraction);
+        Assert.True(app.Slots[2].Tile.Height < app.Slots[0].Tile.Height); // 缩得更小
+
+        // 补位后还是这个规则
+        var after = app.Without(0);
+        Assert.True(after.Slots[2].Tile.Top >= shelfTop);
+
+        // 全是最小化（或全没有）时不分排
+        var all = OverviewScene.Build(full.Windows.Select(w => w with { IsMinimized = true }).ToList(), areas).Focus(_ => true, areas, minimizedShelf: true);
+        var plain = OverviewScene.Build(full.Windows.Select(w => w with { IsMinimized = true }).ToList(), areas);
+        Assert.Equal(plain.Slots[0].Tile, all.Slots[0].Tile);
+    }
+
+    [Fact]
+    public void Switching_an_open_overview_to_app_view_relayouts_from_the_current_tiles()
+    {
+        var full = ThreeWindows();
+        var mixed = OverviewScene.Build(full.Windows.Select((w, i) => w with { ProcessName = i == 0 ? "a" : "b" }).ToList(), [new OverviewArea(Area, 1.5, Bar)]);
+        var (c, _, t) = Opened(mixed);
+        Assert.Equal(1, mixed.LabelHitTest(mixed.Slots[1].Label.CenterX, mixed.Slots[1].Label.CenterY));
+        Assert.Equal(-1, mixed.LabelHitTest(mixed.Slots[1].Tile.CenterX, mixed.Slots[1].Tile.CenterY));
+
+        var app = mixed.Focus(w => w.ProcessName == "b", [new OverviewArea(Area, 1.5)], animate: true);
+        Assert.True(c.FocusApp(app, t));
+        Assert.Equal(OverviewMode.App, c.Mode);
+        Assert.Equal(0, c.Desktops.Count); // 桌面条撤掉
+        Assert.False(c.FocusApp(app, t)); // 已经是应用窗口视图
+
+        var start = Rect(c, t, 1, out double op1);
+        Assert.Equal(mixed.Tile(1, 0), start); // 从原来的平铺位开始
+        Assert.Equal(1, op1, 6);
+        var other = Rect(c, t, 0, out double op0);
+        Assert.Equal(mixed.Tile(0, 0).Left, other.Left, 6); // 其他程序的窗口在原平铺位淡出
+        Assert.Equal(mixed.Tile(0, 0).Width, other.Width, 6);
+        Assert.Equal(1, op0, 6);
+
+        var end = Rect(c, t + 3_000_000, 1, out _);
+        Assert.Equal(app.Slots[1].Tile, end);
+        Rect(c, t + 3_000_000, 0, out double gone);
+        Assert.Equal(0, gone, 6);
+    }
+
+    [Fact]
     public void In_thumb_maps_screen_rects_proportionally()
     {
         var r = Bar.InThumb(0, Area);

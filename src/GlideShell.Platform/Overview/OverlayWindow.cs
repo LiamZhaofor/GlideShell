@@ -28,7 +28,11 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private volatile IThumbnailLayer _layer;
     private OverlayComposition? _composition; // 共享缩略图视觉模式下才创建
     private OverlayComposition? _content; // 其下：窗口缩略图
+    private OverlayComposition? _decorRoot; // 窗口上面：标题、图标、悬停框、关闭按钮（合成层里画，可逐帧动画）
+    private WindowDecor? _decor; // 有 Direct2D 与 D3D11 时才有；否则标题等用 GDI 画
     private OverlayComposition? _barRoot; // 其下：桌面条（在窗口上面）
+    private OverlayComposition? _barDecorRoot; // 桌面条上面：桌面名、高亮、「×」「+」
+    private BarDecor? _barDecor;
     private SharedThumbnailBackend? _shared;
     private readonly DesktopBarView _bar = new();
     private DesktopState _desktops = DesktopState.Empty;
@@ -74,7 +78,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// UI 线程：为本屏的窗口注册缩略图（不可见），尽量复用上一次的注册。
     /// <paramref name="shared"/> 非空时用共享缩略图视觉；那条路失败就退回经典缩略图并返回失败的 HRESULT（0 = 正常）。
     /// </summary>
-    public int Prepare(OverviewScene scene, IReadOnlyList<int> members, SharedThumbnailBackend? shared)
+    public int Prepare(OverviewScene scene, IReadOnlyList<int> members, SharedThumbnailBackend? shared, DecorResources? decor = null)
     {
         Unlift();
         _scene = scene;
@@ -94,8 +98,10 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             _composition ??= OverlayComposition.Create(shared, Handle, out sharedFailure);
             // 先建的分支在下面：窗口一支、桌面条一支
             if (_composition is not null) _content ??= _composition.CreateBranch(out sharedFailure);
-            if (_content is not null) _barRoot ??= _composition!.CreateBranch(out sharedFailure);
-            if (_barRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_decorRoot is not null) _barRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_barRoot is not null) _barDecorRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_barDecorRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_dragRoot is not null)
                 next = SharedThumbnailLayer.Register(shared, _content!, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, _layer as SharedThumbnailLayer, out sharedFailure);
             _shared = shared;
@@ -111,9 +117,39 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             next = ThumbnailLayer.Register(Handle, Monitor.WorkArea, windows, _layer as ThumbnailLayer);
         }
         _layer = next;
+        if (decor is not null && _decorRoot is not null && _layer is SharedThumbnailLayer) _decor ??= new WindowDecor(decor, _decorRoot, Monitor);
+        if (decor is not null && _barDecorRoot is not null && _layer is SharedThumbnailLayer) _barDecor ??= new BarDecor(decor, _barDecorRoot, Monitor);
+        if (_layer is not SharedThumbnailLayer)
+        {
+            _decor?.HideAll();
+            _barDecor?.HideAll();
+        }
+        PrepareDecor();
         User32.InvalidateRect(Handle, null, 1);
         return sharedFailure;
     }
+
+    /// <summary>合成层装饰在用（共享缩略图模式下）：GDI 不再画标题、悬停框与占位卡片。</summary>
+    private bool DecorActive => _decor is not null && _layer is SharedThumbnailLayer;
+
+    /// <summary>桌面条的文字与装饰在合成层里画（共享缩略图模式下）。</summary>
+    private bool BarDecorActive => _barDecor is not null && _layer is SharedThumbnailLayer && _bar.HasThumbnails;
+
+    /// <summary>按本次会话的各页（没有多页时只有当前一页）准备合成层装饰。</summary>
+    private void PrepareDecor()
+    {
+        if (!DecorActive) return;
+        if (_pages is { } pages)
+            _decor!.Prepare(pages.Scenes, pages.Members, (k, i) => (k == pages.Home ? _layer : pages.Layers[k])?.ShowsContent(i) ?? false);
+        else
+            _decor!.Prepare([_scene], [_members], (_, i) => _layer.ShowsContent(i));
+    }
+
+    /// <summary>装饰里的页号：没有多页时只有第 0 页。</summary>
+    private int DecorPage(int page) => _pages is null ? 0 : page;
+
+    /// <summary>当前显示的是打开总览时所在桌面那一页（或者不分页）。</summary>
+    public bool OnHomePage => _pages is not { } p || p.Current == p.Home;
 
     /// <summary>本次会话有没有多页（共享缩略图模式下才有）。</summary>
     public bool HasPages => _pages is not null;
@@ -150,6 +186,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             layers[k] = layer;
         }
         _pages = new Pages(home, layers, [.. scenes], [.. members], scratch);
+        PrepareDecor();
         return 0;
     }
 
@@ -168,6 +205,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public void SetBarCurrent(int index)
     {
         _desktops = _desktops with { CurrentIndex = index };
+        _barDecor?.SetState(index, _barHovered);
         User32.InvalidateRect(Handle, null, 1);
     }
 
@@ -176,7 +214,9 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     {
         Unlift();
         HidePages();
+        bool had = _pages is not null;
         _pages = null;
+        if (had) PrepareDecor();
     }
 
     /// <summary>UI 线程：第 <paramref name="page"/> 页（没有多页时为 -1）的场景换了（窗口移走后补位，下标不变）。</summary>
@@ -188,6 +228,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             if (page == pages.Current) _scene = scene;
         }
         else if (page < 0) _scene = scene;
+        if (DecorActive) _decor!.ReplaceScene(DecorPage(page), scene);
         User32.InvalidateRect(Handle, null, 1);
     }
 
@@ -213,6 +254,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             foreach (var (id, cached) in _pageCache.ToList())
                 if (ReferenceEquals(cached, layer)) _pageCache[id] = next;
         }
+        if (DecorActive) _decor!.AddWindow(page, scene, next.ShowsContent(index));
         return 0;
     }
 
@@ -228,7 +270,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         var button = tile is { } t ? CloseButton.Rect(t, Monitor.DpiScale) : (RectD?)null;
         if (button == _closeButton) return;
         _closeButton = button;
-        if (_dragRoot is not null && _shared is not null && _layer is SharedThumbnailLayer)
+        if (_dragRoot is not null && _shared is not null && _layer is SharedThumbnailLayer && !DecorActive)
         {
             if (_closeVisual == 0 && button is { } b)
             {
@@ -290,8 +332,14 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     {
         _desktops = desktops;
         _barHovered = DesktopBarHit.Nothing;
+        if (geometry is null) _bar.HideAll(); // 总览开着时换成应用窗口视图：桌面条的缩略图要藏起来
         User32.InvalidateRect(Handle, null, 1); // 桌面增删后名字要重画
         bool shared = _layer is SharedThumbnailLayer && _shared is not null && _barRoot is not null;
+        if (_barDecor is not null)
+        {
+            if (shared) _barDecor.Prepare(geometry, desktops);
+            else _barDecor.HideAll();
+        }
         return _bar.Prepare(shared ? _shared : null, shared ? _barRoot : null, Handle, Monitor, geometry, desktops, windows, foreground);
     }
 
@@ -303,12 +351,15 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// <paramref name="rects"/> 等是当前页（按进度飞行）；有多页时其余各页取 <paramref name="pageRects"/> 等（已在平铺位），
     /// 每页按翻页位置整体横向平移。
     /// </summary>
-    public int Render(ReadOnlySpan<RectD> rects, ReadOnlySpan<double> opacity, ReadOnlySpan<double> active, double wallpaper, in OverviewFrame frame,
-        RectD[][]? pageRects = null, double[][]? pageOpacity = null, double[][]? pageActive = null)
+    /// <param name="labels">窗口标题的整体不透明度（随展开进度淡入；显示桌面时为 0）。</param>
+    public int Render(long nowUs, ReadOnlySpan<RectD> rects, ReadOnlySpan<double> opacity, ReadOnlySpan<double> active, double wallpaper, in OverviewFrame frame,
+        double labels, RectD[][]? pageRects = null, double[][]? pageOpacity = null, double[][]? pageActive = null)
     {
-        if (_layer is SharedThumbnailLayer home && _shared is { } backend && (_bar.HasThumbnails || _pages is not null))
+        var decor = DecorActive ? _decor : null;
+        if (_layer is SharedThumbnailLayer home && _shared is { } backend && (_bar.HasThumbnails || _pages is not null || decor is not null))
         {
             int hr = 0;
+            decor?.BeginFrame(nowUs);
             if (_pages is { } pages && pageRects is not null && pageOpacity is not null && pageActive is not null)
             {
                 double gap = 48 * Monitor.DpiScale, width = Monitor.WorkArea.Width;
@@ -325,10 +376,16 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                     var layer = k == pages.Home ? home : pages.Layers[k] as SharedThumbnailLayer;
                     int r = layer?.Apply(dst.AsSpan(0, n), op[..n], ac[..n], k == pages.Home ? wallpaper : 0, commit: false) ?? 0;
                     if (hr == 0) hr = r;
+                    decor?.Apply(k, pages.Scenes[k], dst.AsSpan(0, n), op[..n], labels, current ? frame.DragIndex : -1);
                 }
             }
-            else hr = home.Apply(rects, opacity, active, wallpaper, commit: false);
+            else
+            {
+                hr = home.Apply(rects, opacity, active, wallpaper, commit: false);
+                decor?.Apply(0, _scene, rects, opacity, labels, frame.DragIndex);
+            }
             _bar.Apply(frame);
+            if (BarDecorActive) _barDecor!.Apply(frame, labels, nowUs);
             int committed = backend.Commit();
             return hr != 0 ? hr : committed;
         }
@@ -342,6 +399,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _barVisible = visible;
         _barExpanded = expanded;
         _barHovered = hovered;
+        _barDecor?.SetState(_desktops.CurrentIndex, hovered);
         User32.InvalidateRect(Handle, null, 1);
     }
 
@@ -363,6 +421,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public void Release()
     {
         Unlift();
+        _decor?.HideAll();
+        _barDecor?.HideAll();
         _layer.HideAll();
         HidePages();
         _pages = null;
@@ -376,6 +436,10 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public void ReleaseAll()
     {
         Unlift();
+        _decor?.Dispose();
+        _decor = null;
+        _barDecor?.Dispose();
+        _barDecor = null;
         var old = _layer;
         _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
         old.Unregister();
@@ -390,12 +454,18 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public override void Dispose()
     {
         _bar.Dispose();
+        _decor?.Dispose();
+        _decor = null;
+        _barDecor?.Dispose();
+        _barDecor = null;
         _content?.Dispose(); // 分支先于根释放
+        _decorRoot?.Dispose();
         _barRoot?.Dispose();
+        _barDecorRoot?.Dispose();
         if (_closeVisual != 0) Dcomp.Release((void*)_closeVisual);
         _closeVisual = 0;
         _dragRoot?.Dispose();
-        _content = _barRoot = _dragRoot = null;
+        _content = _decorRoot = _barRoot = _barDecorRoot = _dragRoot = null;
         _composition?.Dispose();
         _composition = null;
         base.Dispose();
@@ -415,6 +485,8 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         User32.ShowWindow(Handle, User32.SW_HIDE);
         Unlift();
         SetCloseButton(null);
+        _decor?.HideAll();
+        _barDecor?.HideAll();
         _layer.HideAll();
         HidePages();
         _bar.HideAll();
@@ -433,6 +505,12 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         if (labelsVisible == _labelsVisible && hoveredSceneIndex == _hovered) return;
         _labelsVisible = labelsVisible;
         _hovered = hoveredSceneIndex;
+        if (DecorActive)
+        {
+            // 悬停框与关闭按钮只在展开落定时出现（拖动、翻页、桌面条展开时不画）；标题由渲染线程按进度画
+            _decor!.SetHover(DecorPage(_pages?.Current ?? 0), labelsVisible && _members.Contains(hoveredSceneIndex) ? hoveredSceneIndex : -1);
+            return;
+        }
         User32.InvalidateRect(Handle, null, 1);
     }
 
@@ -486,7 +564,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             User32.FillRect(hdc, &ps.rcPaint, black);
             Gdi32.DeleteObject(black);
             PaintBar(hdc);
-            if (!_labelsVisible) return;
+            if (!_labelsVisible || DecorActive) return;
 
             var origin = Monitor.WorkArea;
             nint font = Gdi32.CreateFontW(-(int)Math.Round(14 * Monitor.DpiScale), 0, 0, 0, Gdi32.FW_NORMAL, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
@@ -552,6 +630,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     /// </summary>
     private void PaintBar(nint hdc)
     {
+        if (BarDecorActive) return;
         if (!_barVisible || _bar.Geometry is not { } g || g.Count != _desktops.Count) return;
         var origin = Monitor.WorkArea;
         double dpi = Monitor.DpiScale;

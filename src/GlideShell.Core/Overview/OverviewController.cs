@@ -354,6 +354,29 @@ public sealed class OverviewController : IGestureTarget
     }
 
     /// <summary>
+    /// 总览展开停稳时直接换成应用窗口视图（UI 线程）：<paramref name="focused"/> 是 <see cref="OverviewScene.Focus"/>（animate）的结果，
+    /// 选中程序的窗口从现在的平铺位重排过去、其余淡出；之后按应用窗口视图收起（三指上滑）。
+    /// 没有在拖动、翻页、放大进入时才换（宿主另外保证没有翻到别的桌面那一页）；返回是否换了。
+    /// </summary>
+    public bool FocusApp(OverviewScene focused, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _mode != OverviewMode.All || _drag != DragStage.None) return false;
+            _mode = OverviewMode.App;
+            _scene = focused;
+            _pages = [];
+            _page = -1;
+            _desktops = DesktopBarState.Empty;
+            _bar.SnapTo(0);
+            _hovered = null;
+            _relayout.SnapTo(0);
+            _relayout.AnimateTo(1, hostUs);
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 窗口 <paramref name="windowId"/> 已经关掉（总览里点了关闭按钮）：它在原位缩小淡出，其余窗口补位。
     /// 返回移走后的当前页场景；不在当前页、或正在拖动时返回 null（拖动中的不加动画，下次准备场景时自然没有它）。
     /// </summary>
@@ -774,8 +797,16 @@ public sealed class OverviewController : IGestureTarget
                 else (dest[i], opacity[i]) = (frame.DragRect, frame.DragOpacity);
             }
             else if (scene.IsRemoved(i)) opacity[i] = 0;
-            else if (scene.IsExcluded(i)) // 应用窗口视图里其他程序的窗口：留在原位，随进度淡出
-                (dest[i], opacity[i]) = (w.Source, w.IsMinimized ? 0 : 1 - Math.Clamp(frame.Progress, 0, 1));
+            else if (scene.IsExcluded(i))
+            {
+                // 应用窗口视图里其他程序的窗口：留在原位，随进度淡出；从总览直接换过来时在平铺位上随重排淡出、略微缩小
+                if (frame.Relayout < 1 && scene.RelayoutFrom(i) is { } from)
+                {
+                    double r = Math.Clamp(frame.Relayout, 0, 1);
+                    (dest[i], opacity[i]) = (from.ScaleAroundCenter(1 - 0.08 * r), 1 - OverviewVisuals.SmoothStep(0, 0.7, r));
+                }
+                else (dest[i], opacity[i]) = (w.Source, w.IsMinimized ? 0 : 1 - Math.Clamp(frame.Progress, 0, 1));
+            }
             opacity[i] *= fade;
         }
     }

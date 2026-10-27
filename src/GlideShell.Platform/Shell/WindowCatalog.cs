@@ -92,6 +92,9 @@ public static unsafe class WindowCatalog
             uint pid = 0;
             User32.GetWindowThreadProcessId(hwnd, &pid);
             if (!processNames.TryGetValue(pid, out string? process)) processNames[pid] = process = ProcessName(pid);
+            // 商店应用的窗口都在 ApplicationFrameHost 进程里：按应用标识区分（应用窗口视图、按程序分组才不会混成一个程序）
+            if (process.Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase) && AppIcons.AppUserModelId(hwnd) is { Length: > 0 } aumid)
+                process = aumid;
             result.Add(new OverviewWindow(hwnd, Title(hwnd), bounds, minimized, hwnd == foreground, monitor?.Index ?? 0, process, desktopId));
         }
         return result;

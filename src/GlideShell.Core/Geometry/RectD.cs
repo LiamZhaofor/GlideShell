@@ -21,6 +21,9 @@ public readonly record struct RectD(double X, double Y, double Width, double Hei
 
     public RectD Offset(double dx, double dy) => this with { X = X + dx, Y = Y + dy };
 
+    /// <summary>四周各向外扩 <paramref name="dx"/> / <paramref name="dy"/>（负数为内缩）。</summary>
+    public RectD Inflate(double dx, double dy) => new(X - dx, Y - dy, Width + 2 * dx, Height + 2 * dy);
+
     /// <summary>以中心为基准缩放。</summary>
     public RectD ScaleAroundCenter(double factor)
     {

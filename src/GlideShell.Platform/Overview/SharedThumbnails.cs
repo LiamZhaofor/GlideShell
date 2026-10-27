@@ -180,7 +180,7 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         lock (Gate)
         {
             visual = 0;
-            if (_device == null) return unchecked((int)0x80004001);
+            if (_device == null || _context == null) return unchecked((int)0x80004001);
             int hr = Upload(new ShadowImage(size, size, 1, 0, bgra), out nint surface);
             if (hr < 0) return hr;
             void* v2, v3 = null;
@@ -213,6 +213,49 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
             Dcomp.SetTransform((void*)visual, &m);
             Dcomp.SetOpacity((void*)visual, (float)opacity);
             Dcomp.Commit(_device);
+        }
+    }
+
+    /// <summary>把一张预乘 BGRA 图上传成 DComp 表面（总览的文字与装饰）。调用方 <see cref="Dcomp.Release"/>。没有 D3D11 时失败。</summary>
+    public int UploadImage(ShadowImage image, out nint surface)
+    {
+        lock (Gate)
+        {
+            surface = 0;
+            if (_device == null || _context == null) return unchecked((int)0x80004001);
+            return Upload(image, out surface);
+        }
+    }
+
+    /// <summary>
+    /// 新建一个视觉（IDCompositionVisual3），内容是 <paramref name="surface"/>（0 = 没有内容，当分组用），挂到 <paramref name="parent"/> 的最上层，
+    /// 线性插值缩放，初始不透明度 0。不提交。失败返回 HRESULT。
+    /// </summary>
+    public int CreateDecorVisual(void* parent, nint surface, out nint visual)
+    {
+        lock (Gate)
+        {
+            visual = 0;
+            if (_device == null) return unchecked((int)0x80004001);
+            void* v2, v3 = null;
+            int hr = Dcomp.CreateVisual(_device, &v2);
+            if (hr >= 0 && surface != 0) hr = Dcomp.SetContent(v2, (void*)surface);
+            if (hr >= 0)
+            {
+                Dcomp.SetBitmapInterpolationMode(v2, Dcomp.BITMAP_INTERPOLATION_MODE_LINEAR);
+                hr = Dcomp.ToVisual3(v2, &v3);
+            }
+            else if (v2 != null) Dcomp.Release(v2);
+            if (hr < 0) return hr;
+            Dcomp.SetOpacity(v3, 0);
+            hr = Dcomp.AddVisual(parent, v3);
+            if (hr < 0)
+            {
+                Dcomp.Release(v3);
+                return hr;
+            }
+            visual = (nint)v3;
+            return 0;
         }
     }
 

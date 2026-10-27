@@ -24,7 +24,7 @@ public readonly record struct OverviewArea(RectD WorkArea, double DpiScale, Desk
 /// </summary>
 public sealed class OverviewScene
 {
-    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null, false), [], null, []);
+    public static OverviewScene Empty { get; } = new([], [], [], new Context([], false, 0, null, false, false), [], null, []);
 
     private readonly DesktopBarGeometry?[] _bars; // 每个窗口平铺所在那块屏的桌面条（没有为 null）
     private readonly Context _context; // 重新排版用
@@ -32,7 +32,12 @@ public sealed class OverviewScene
     private readonly RectD?[]? _from; // 重排前的平铺位（收起时的坐标）；新加入的窗口为 null
     private readonly bool[] _excluded; // 应用窗口视图里其他程序的窗口
 
-    private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options, bool GroupByApp);
+    /// <param name="MinimizedShelf">最小化的窗口单独排在底部一排（应用窗口视图，macOS App Exposé 的样子）。</param>
+    private sealed record Context(IReadOnlyList<OverviewArea> Areas, bool PrimaryOnly, int PrimaryIndex, LayoutOptions? Options, bool GroupByApp,
+        bool MinimizedShelf = false);
+
+    /// <summary>底部最小化窗口那一排占工作区高度的比例。</summary>
+    public const double ShelfFraction = 0.2;
 
     private OverviewScene(IReadOnlyList<OverviewWindow> windows, LayoutSlot[] slots, DesktopBarGeometry?[] bars, Context context, bool[] removed, RectD?[]? from,
         bool[] excluded)
@@ -105,8 +110,11 @@ public sealed class OverviewScene
     /// <summary>
     /// 应用窗口视图：只平铺 <paramref name="include"/> 选中的窗口，排在 <paramref name="areas"/> 里（通常没有桌面条）；
     /// 其余窗口标成排除。窗口下标不变，缩略图注册可以直接沿用。前台标记交给选中窗口里最上层的非最小化窗口。
+    /// <paramref name="minimizedShelf"/>：同一块屏上既有普通窗口又有最小化窗口时，最小化的缩小排在底部一排（之后补位也按这个规则）。
+    /// <paramref name="animate"/>：总览已经展开、从当前平铺直接换成应用窗口视图——选中的窗口从现在的平铺位重排过去，
+    /// 其余窗口在现在的平铺位淡出（都按重排进度，见 <see cref="RelayoutFrom"/>）。
     /// </summary>
-    public OverviewScene Focus(Func<OverviewWindow, bool> include, IReadOnlyList<OverviewArea> areas)
+    public OverviewScene Focus(Func<OverviewWindow, bool> include, IReadOnlyList<OverviewArea> areas, bool minimizedShelf = false, bool animate = false)
     {
         var excluded = Windows.Select(w => !include(w)).ToArray();
         var windows = Windows.ToArray();
@@ -120,10 +128,11 @@ public sealed class OverviewScene
                 windows[next] = windows[next] with { IsForeground = true };
             }
         }
-        var context = _context with { Areas = areas };
+        var context = _context with { Areas = areas, MinimizedShelf = minimizedShelf };
         var hidden = _removed.Zip(excluded, (r, e) => r || e).ToArray();
+        var from = animate ? Enumerable.Range(0, Count).Select(i => IsPresent(i) ? (RectD?)Tile(i, 0) : null).ToArray() : null;
         var (slots, bars) = Arrange(windows, hidden, context, [.. Slots], new DesktopBarGeometry?[Count]);
-        return new OverviewScene(windows, slots, bars, context, (bool[])_removed.Clone(), null, excluded);
+        return new OverviewScene(windows, slots, bars, context, (bool[])_removed.Clone(), from, excluded);
     }
 
     /// <summary>第 <paramref name="index"/> 个窗口在桌面条展开 <paramref name="expansion"/> 时的平铺位（窗口区域往下缩，给桌面条让位）。</summary>
@@ -134,6 +143,19 @@ public sealed class OverviewScene
     {
         var tile = RawTile(index, relayout);
         return _bars[index] is { } bar ? bar.MapContent(tile, expansion) : tile;
+    }
+
+    /// <summary>重排前的平铺位（没有在重排、或是新加入的窗口为 null）。</summary>
+    public RectD? RelayoutFrom(int index) => _from?[index];
+
+    /// <summary>
+    /// 鼠标点在哪个窗口下方的标题行上（只算平铺在总览里的窗口；没有返回 -1）。总览里点标题行 = 只看这个程序的窗口。
+    /// </summary>
+    public int LabelHitTest(double x, double y)
+    {
+        for (int i = 0; i < Count; i++)
+            if (IsPresent(i) && Slots[i].Label.Contains(x, y)) return i;
+        return -1;
     }
 
     private RectD RawTile(int index, double relayout)
@@ -218,7 +240,25 @@ public sealed class OverviewScene
                         sources[k] = sources[k].Offset(cx - sources[k].CenterX, cy - sources[k].CenterY);
                 }
             }
-            var laid = OverviewLayout.Compute(sources, area.Bar?.ContentArea ?? area.WorkArea, opts);
+            var content = area.Bar?.ContentArea ?? area.WorkArea;
+            var shelf = members.Select(m => m.w.IsMinimized).ToArray();
+            LayoutSlot[] laid;
+            if (context.MinimizedShelf && shelf.Any(x => x) && shelf.Any(x => !x))
+            {
+                // 普通窗口排在上面，最小化的在底部一排（各自就近布局；底部那排缩得更小）
+                double shelfH = Math.Round(content.Height * ShelfFraction);
+                var top = RectD.FromEdges(content.Left, content.Top, content.Right, content.Bottom - shelfH);
+                var bottom = RectD.FromEdges(content.Left, content.Bottom - shelfH - opts.Gap, content.Right, content.Bottom);
+                laid = new LayoutSlot[members.Count];
+                foreach (bool minimized in new[] { false, true })
+                {
+                    var idx = Enumerable.Range(0, members.Count).Where(k => shelf[k] == minimized).ToList();
+                    var part = OverviewLayout.Compute(idx.Select(k => sources[k]).ToList(), minimized ? bottom : top,
+                        minimized ? opts with { MarginFraction = 0.12, MaxScale = 0.25 } : opts);
+                    for (int j = 0; j < idx.Count; j++) laid[idx[j]] = part[j];
+                }
+            }
+            else laid = OverviewLayout.Compute(sources, content, opts);
             for (int k = 0; k < members.Count; k++)
             {
                 slots[members[k].i] = laid[k];
