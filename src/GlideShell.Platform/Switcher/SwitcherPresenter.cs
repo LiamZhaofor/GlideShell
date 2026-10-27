@@ -79,8 +79,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         if (flew && activateWindowId is not null) Dwmapi.DwmFlush();
         _shown = false;
         _thumbs.HideAll();
+        _decor?.HideAll(); // 装饰只改属性不提交，接着缩略图层的 HideAll 一起提交
         _layer?.HideAll();
-        _decor?.HideAll();
         _band?.HideBand();
         Release();
     });
@@ -210,6 +210,9 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private bool RenderFrame(long nowUs)
     {
         var frame = Controller.Sample(nowUs);
+        // 只画可见的帧：落定那一帧之后控制器已复位（位置回到 0、飞回进度清零），UI 线程撤层前若再按复位后的状态画一帧，
+        // 整条切换条会重新出现一下（真机：切换之后闪一下切换条）
+        if (!frame.Visible) return false;
         var scene = Controller.Scene;
         if (_shown)
         {
