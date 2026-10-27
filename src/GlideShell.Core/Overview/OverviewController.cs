@@ -37,6 +37,9 @@ public interface IOverviewHost
     /// 落定时照常调用 <see cref="Hide"/>（focusWindowId 为 null），宿主负责把焦点交给新桌面最上层的窗口。
     /// </summary>
     void SwitchDesktop(int desktopIndex);
+
+    /// <summary>总览里四指横滑开始预览相邻桌面（还没决定切换）：宿主把那个桌面的缩略图挪到最上层，随手指放大。</summary>
+    void PreviewDesktop(int desktopIndex);
 }
 
 /// <summary>渲染线程每帧取到的总览状态。</summary>
@@ -61,6 +64,7 @@ public readonly record struct OverviewFrame(
 /// <item>手指在板上只跟随；松手才按投影落点决定展开或收起，并以松手速度驱动弹簧。动画中可随时被新手势接管。</item>
 /// <item>收起时指针下的窗口逐渐放大，松手后它成为前台（macOS 行为）。</item>
 /// <item>桌面条：指针移到顶部展开；点另一个桌面时真实桌面立刻切换，覆盖层把那个桌面的缩略图放大到全屏后撤掉（macOS 调度中心）。</item>
+/// <item>总览里四指横滑（<see cref="DesktopSwipe"/>）：相邻桌面的缩略图随手指放大、其余内容淡出；松手按投影决定切过去还是缩回。</item>
 /// </list>
 /// 线程：IGestureTarget 方法在输入线程；<see cref="Sample"/> / <see cref="WindowRects"/> 在渲染线程；
 /// <see cref="SetScene"/>、<see cref="SetHovered"/>、<see cref="Toggle"/> 等在 UI 线程。宿主回调都在锁外发出。
@@ -78,6 +82,11 @@ public sealed class OverviewController : IGestureTarget
     private volatile OverviewScene _scene = OverviewScene.Empty;
     private volatile DesktopBarState _desktops = DesktopBarState.Empty;
     private int _zoomDesktop = -1;
+    private bool _zoomTracking; // 四指横滑正在跟手预览 _zoomDesktop
+    private bool _zoomCommitted; // 已决定切过去（真实桌面已在切换）：放大落定时撤层
+    private int _swipeDirection; // +1 = 右边的桌面（手指向左），-1 = 左边
+    private double _swipeTravelMm = 45;
+    private bool _swipeIgnoring;
 
     private bool _visible;
     private bool _prewarming;
@@ -95,7 +104,11 @@ public sealed class OverviewController : IGestureTarget
         _host = host;
         _config = config;
         _transition = new InteractiveTransition(0, 1, 0) { Spring = config().Spring.ToParameters() };
+        DesktopSwipe = new DesktopSwipeTarget(this);
     }
+
+    /// <summary>总览展开时，切桌面的手势（四指横滑）改由它处理：在总览里跟手预览并切到相邻桌面。</summary>
+    public IGestureTarget DesktopSwipe { get; }
 
     public OverviewScene Scene => _scene;
 
@@ -143,6 +156,7 @@ public sealed class OverviewController : IGestureTarget
             if (!current)
             {
                 _zoomDesktop = index;
+                _zoomCommitted = true;
                 _focusTarget = null;
                 _zoom.AnimateTo(1, hostUs);
             }
@@ -345,15 +359,21 @@ public sealed class OverviewController : IGestureTarget
             zoomDesktop = _zoomDesktop;
             if (_zoomDesktop >= 0)
             {
-                // 放大进入别的桌面：落定时撤层（真实桌面早已切过去），各状态复位，下次从收起态开始
-                if (zoom.JustSettled && zoom.Value >= 1 - SettleEpsilon && _visible)
+                if (zoom.JustSettled && !_zoomTracking && _zoomCommitted && zoom.Value >= 1 - SettleEpsilon && _visible)
                 {
+                    // 放大进入别的桌面：落定时撤层（真实桌面早已切过去），各状态复位，下次从收起态开始
                     _visible = false;
                     hide = true;
                     _zoomDesktop = -1;
+                    _zoomCommitted = false;
                     _transition.SnapTo(0);
                     _bar.SnapTo(0);
                     _zoom.SnapTo(0);
+                }
+                else if (zoom.JustSettled && !_zoomTracking && !_zoomCommitted && zoom.Value <= SettleEpsilon)
+                {
+                    _zoomDesktop = -1; // 四指横滑没切过去：缩回原位，回到普通总览
+                    zoomDesktop = -1;
                 }
             }
             else if (s.JustSettled && _visible && !_tracking)
@@ -406,6 +426,76 @@ public sealed class OverviewController : IGestureTarget
             (dest[i], opacity[i]) = OverviewVisuals.SceneWindow(w, scene.Tile(i, frame.BarExpansion), frame.Progress, frame.EmphasizedWindow == w.Id);
             opacity[i] *= fade;
         }
+    }
+
+    // ---------- 总览里四指横滑切桌面（输入线程） ----------
+
+    private sealed class DesktopSwipeTarget(OverviewController owner) : IGestureTarget
+    {
+        public void Prepare(long hostUs)
+        {
+        }
+
+        public void Unprepare(long hostUs)
+        {
+        }
+
+        public void Begin(in GestureEvent e) => owner.BeginDesktopSwipe(e);
+
+        public void Update(in GestureEvent e) => owner.UpdateDesktopSwipe(e);
+
+        public void End(in GestureEvent e) => owner.EndDesktopSwipe(e);
+    }
+
+    private void BeginDesktopSwipe(in GestureEvent e)
+    {
+        int index;
+        lock (_gate)
+        {
+            // 手指向左 = 内容向左 = 右边的桌面过来（与四指切桌面一致）
+            _swipeDirection = e.Direction == GestureDirection.Left ? 1 : e.Direction == GestureDirection.Right ? -1 : 0;
+            index = _desktops.Current + _swipeDirection;
+            _swipeIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _swipeDirection == 0 ||
+                             _transition.Target < 1 - SettleEpsilon || index < 0 || index >= _desktops.Count;
+            if (_swipeIgnoring) return; // 首尾桌面之外、或总览还没展开好：不接管
+            _zoomDesktop = index;
+            _zoomTracking = true;
+            _zoomCommitted = false;
+            _swipeTravelMm = Math.Max(1, _config().TravelMm * 1.5);
+            _zoom.BeginTracking(e.HostTimeUs);
+        }
+        _host.PreviewDesktop(index);
+    }
+
+    private void UpdateDesktopSwipe(in GestureEvent e)
+    {
+        lock (_gate)
+        {
+            if (_swipeIgnoring || !_zoomTracking) return;
+        }
+        _zoom.Track(_swipeDirection * -e.DxMm / _swipeTravelMm);
+    }
+
+    private void EndDesktopSwipe(in GestureEvent e)
+    {
+        int commit = -1;
+        lock (_gate)
+        {
+            if (_swipeIgnoring || !_zoomTracking) return;
+            _zoomTracking = false;
+            if (e.Phase == GesturePhase.Cancelled)
+            {
+                _zoom.CancelTracking(0, e.HostTimeUs);
+                return;
+            }
+            double target = _zoom.Release(_swipeDirection * -e.VxMmS / _swipeTravelMm, e.HostTimeUs);
+            if (target >= 1 - SettleEpsilon)
+            {
+                _zoomCommitted = true;
+                commit = _zoomDesktop;
+            }
+        }
+        if (commit >= 0) _host.SwitchDesktop(commit); // 松手就切（不等动画），覆盖层继续把放大播完
     }
 
     // 展开方向：竖直轴向上、水平轴向右为正

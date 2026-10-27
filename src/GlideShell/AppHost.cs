@@ -132,7 +132,9 @@ internal sealed class AppHost
         // 总览已展开时，切换窗口的手势改为在总览里移动选中项（之后三指下滑 / Enter 切过去）
         GestureAction.SwitchWindows => _overview.IsVisible ? _overviewBrowse : _switcher,
         // 虚拟桌面接口自检不通过、或用户关掉了它：四指横滑交还系统（原生切桌面本身已跟手）
-        GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled => _desktopSwitch,
+        // 总览展开、有桌面条时：四指横滑在总览里预览并切到相邻桌面（不另起切桌面覆盖层，否则总览会先消失再出现）
+        GestureAction.SwitchDesktops when _virtualDesktops.Available && _config.Desktops.Enabled =>
+            _overview.IsVisible && _overview.Desktops.Count >= 2 ? _overview.DesktopSwipe : _desktopSwitch,
         GestureAction.Drag => _drag,
         _ => null,
     };
@@ -185,6 +187,9 @@ internal sealed class AppHost
     {
         // overview-bar：三指上滑展开总览，再（不动鼠标）展开桌面条、点相邻的桌面——验证桌面条与放大进入
         bool bar = name == "overview-bar";
+        // overview-swipe：三指上滑展开总览后，四指左滑在总览里切到右边的桌面
+        bool swipe = name == "overview-swipe";
+        if (swipe) name = "overview";
         // overview-hold：展开后停 6 秒再退出（留时间给外部用真实鼠标操作总览）
         int linger = name == "overview-hold" ? 6000 : 1500;
         if (bar || name == "overview-hold") name = "overview";
@@ -205,6 +210,20 @@ internal sealed class AppHost
                 _recognizer?.Process(ContactFrame.Create(now, now, contacts));
             }
             Log.Info($"模拟手势 {name} 回放完毕");
+            if (swipe)
+            {
+                Thread.Sleep(900);
+                var (fingers, steps) = SyntheticTouch.Scripts["desktop-right"];
+                long t0 = HostClock.NowUs();
+                foreach (var (atMs, contacts) in SyntheticTouch.Frames(fingers, steps))
+                {
+                    long due = t0 + (long)(atMs * 1000);
+                    while (HostClock.NowUs() < due) Thread.Sleep(1);
+                    long now = HostClock.NowUs();
+                    _recognizer?.Process(ContactFrame.Create(now, now, contacts));
+                }
+                Log.Info("模拟：总览里四指左滑回放完毕");
+            }
             if (bar)
             {
                 Thread.Sleep(700);

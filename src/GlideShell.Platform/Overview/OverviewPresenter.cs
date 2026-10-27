@@ -144,6 +144,13 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         ReleaseScene();
     });
 
+    public void PreviewDesktop(int desktopIndex) => _ui.Post(() =>
+    {
+        if (!_shown) return;
+        foreach (var o in _overlays) o.BeginZoom(desktopIndex);
+        Select(-1);
+    });
+
     public void SwitchDesktop(int desktopIndex) => _ui.Post(() =>
     {
         if (!_shown || _desktops is null || desktopIndex < 0 || desktopIndex >= _barState.Count) return;
@@ -525,6 +532,9 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     {
         var controller = Controller;
         var frame = controller.Sample(nowUs);
+        // 只画可见的帧：撤层那一帧之后控制器已复位（进度、放大归零），UI 线程撤层前若再按复位后的状态画一帧，
+        // 原来桌面的窗口会回到原位闪一下（真机：点桌面条切桌面时闪一下前一个桌面）
+        if (!frame.Visible) return false;
         if (frame.EmphasizedWindow != _renderEmphasized)
         {
             // 三指下滑收起开始强调某个窗口：交给 UI 线程把它提到最上层（只在强调对象变化时投递一次）

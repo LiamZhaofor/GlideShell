@@ -104,6 +104,7 @@ public class DesktopBarTests
         public void Closing(long? focusWindowId) => Calls.Add($"Closing:{focusWindowId?.ToString() ?? "-"}");
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
         public void SwitchDesktop(int desktopIndex) => Calls.Add($"SwitchDesktop:{desktopIndex}");
+        public void PreviewDesktop(int desktopIndex) => Calls.Add($"PreviewDesktop:{desktopIndex}");
     }
 
     private static (OverviewController C, FakeHost Host, long T) Opened()
@@ -165,6 +166,55 @@ public class DesktopBarTests
         Assert.False(after.Visible);
         Assert.Equal(0, after.Progress, 6); // 复位：下次从收起态开始
         Assert.Equal(-1, after.ZoomDesktop);
+    }
+
+    private static GestureEvent Swipe4(GesturePhase phase, double dxMm, double vx, long t, GestureDirection direction = GestureDirection.Left)
+        => new(GestureKind.Swipe, phase, 4, GestureAxis.Horizontal, direction, dxMm, 0, vx, 0, t, t);
+
+    [Fact]
+    public void Four_finger_swipe_in_the_overview_zooms_into_the_neighbor_and_switches_on_release()
+    {
+        var (c, host, t) = Opened(); // 当前是第 1 个桌面（下标 0），右边有桌面 2
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
+        Assert.Equal("PreviewDesktop:1", host.Calls[^1]);
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -30, -200, t + 100_000));
+        var mid = c.Sample(t + 110_000);
+        Assert.Equal(1, mid.ZoomDesktop);
+        Assert.Equal(30 / 45.0, mid.Zoom, 3); // 1:1 跟手（行程 = 总览行程 × 1.5）
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("SwitchDesktop", StringComparison.Ordinal)); // 手指在板上不切
+
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -30, -200, t + 120_000));
+        Assert.Equal("SwitchDesktop:1", host.Calls[^1]); // 松手就切
+        c.Sample(t + 3_000_000);
+        Assert.Equal("Hide:-", host.Calls[^1]);
+    }
+
+    [Fact]
+    public void Short_four_finger_swipe_in_the_overview_shrinks_back_without_switching()
+    {
+        var (c, host, t) = Opened();
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t));
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -8, 0, t + 100_000));
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -8, 0, t + 120_000));
+        var back = c.Sample(t + 3_000_000);
+        Assert.Equal(-1, back.ZoomDesktop);
+        Assert.Equal(0, back.Zoom, 6);
+        Assert.True(back.Visible); // 仍在总览里
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("SwitchDesktop", StringComparison.Ordinal) || x.StartsWith("Hide", StringComparison.Ordinal));
+        c.GoToDesktop(2, t + 3_000_000); // 之后还能正常点桌面条
+        Assert.Equal("SwitchDesktop:2", host.Calls[^1]);
+    }
+
+    [Fact]
+    public void Four_finger_swipe_past_the_last_desktop_is_ignored()
+    {
+        var (c, host, t) = Opened();
+        const GestureDirection right = GestureDirection.Right; // 手指向右 = 左边的桌面，第 1 个桌面左边没有
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t, right));
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, 40, 0, t + 100_000, right));
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, 40, 300, t + 120_000, right));
+        Assert.Equal(-1, c.Sample(t + 200_000).ZoomDesktop);
+        Assert.DoesNotContain(host.Calls, x => x.Contains("Desktop", StringComparison.Ordinal));
     }
 
     [Fact]
