@@ -342,7 +342,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             }
         }
         var scene = Controller.Scene;
-        int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
+        long hitUs = HostClock.NowUs();
+        int index = scene.HitTest(x, y, Controller.ProgressAt(hitUs), Controller.BarExpansionAt(hitUs));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
         if (id == _hoveredId) return;
         Select(index);
@@ -362,7 +363,8 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             }
         }
         var scene = Controller.Scene;
-        int index = scene.HitTest(x, y, Controller.ProgressAt(HostClock.NowUs()));
+        long hitUs = HostClock.NowUs();
+        int index = scene.HitTest(x, y, Controller.ProgressAt(hitUs), Controller.BarExpansionAt(hitUs));
         long? id = index >= 0 ? scene.Windows[index].Id : null;
         if (id is { } chosen) RaiseForDismiss(chosen);
         Controller.Close(id, HostClock.NowUs());

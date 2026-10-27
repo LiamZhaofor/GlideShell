@@ -144,11 +144,11 @@ public sealed class OverviewScene
         return [.. order];
     }
 
-    /// <summary>某进度下鼠标点中的窗口（从最上层往下找），没有返回 -1。</summary>
-    public int HitTest(double x, double y, double progress)
+    /// <summary>某进度（与桌面条展开程度）下鼠标点中的窗口（从最上层往下找），没有返回 -1。</summary>
+    public int HitTest(double x, double y, double progress, double barExpansion = 0)
     {
         for (int i = 0; i < Windows.Count; i++)
-            if (OverviewVisuals.SceneWindow(Windows[i], Slots[i].Tile, progress, emphasized: false).Rect.Contains(x, y)) return i;
+            if (OverviewVisuals.SceneWindow(Windows[i], Tile(i, barExpansion), progress, emphasized: false).Rect.Contains(x, y)) return i;
         return -1;
     }
 }
