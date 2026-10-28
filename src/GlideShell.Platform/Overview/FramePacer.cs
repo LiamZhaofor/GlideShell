@@ -30,15 +30,15 @@ internal sealed unsafe partial class FramePacer : IDisposable
     /// <summary>当前刷新周期（ms），取不到时为 0（此时不做晚取样）。</summary>
     public double PeriodMs => _periodMs;
 
-    /// <summary>在 tick 醒来后调用：等到本周期内的取样点再返回。</summary>
-    public void WaitForSamplePoint(long tickUs)
+    /// <summary>在 tick 醒来后调用：等到本周期内的取样点再返回。返回比取样点晚了多少（µs，没晚为 0），诊断用。</summary>
+    public long WaitForSamplePoint(long tickUs)
     {
         if (tickUs - _periodCheckedUs > 1_000_000) RefreshPeriod(tickUs); // 刷新率可能变（插拔电源、换屏）
-        if (_periodMs <= 0) return;
+        if (_periodMs <= 0) return 0;
         double lead = Math.Min(_leadMs, _periodMs * 0.5);
         long targetUs = tickUs + (long)((_periodMs - lead) * 1000);
         long remainingUs = targetUs - HostClock.NowUs();
-        if (remainingUs <= 0) return;
+        if (remainingUs <= 0) return -remainingUs;
 
         long sleepUs = remainingUs - (long)(SpinMs * 1000);
         if (sleepUs > 0 && _timer != 0)
@@ -47,6 +47,7 @@ internal sealed unsafe partial class FramePacer : IDisposable
             if (SetWaitableTimer(_timer, &due, 0, 0, 0, 0)) WaitForSingleObject(_timer, 100);
         }
         while (HostClock.NowUs() < targetUs) Thread.SpinWait(20);
+        return Math.Max(0, HostClock.NowUs() - targetUs);
     }
 
     public void Dispose()
