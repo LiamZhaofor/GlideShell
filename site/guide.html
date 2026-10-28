@@ -72,7 +72,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.01"/></svg>
         <p>程序还没有正式的代码签名，第一次运行时 Windows 可能提示「Windows 已保护你的电脑」或「无法验证发布者」。点<strong>更多信息 → 仍要运行</strong>即可。GlideShell 完全开源，也可以自己从源码构建。</p>
       </div>
-      <p><strong>升级</strong>：下载新版本后同样双击「安装.cmd」。正在运行的 GlideShell 会先正常退出再被替换，你的设置会保留。</p>
+      <p><strong>升级</strong>：有新版本时 GlideShell 会在托盘通知你（点通知或托盘菜单里的「下载新版本」打开下载页面）。下载后同样双击「安装.cmd」，正在运行的 GlideShell 会先正常退出再被替换，你的设置会保留。</p>
+      <p>升级检测每天向 GitHub 查一次最新的版本号，不发送其他数据。不想要的话在「设置 → 关于」里关掉「自动检查更新」，之后 GlideShell 完全不联网；那里也可以随时手动检查。</p>
 
       <h2 id="first">第一次使用</h2>
       <p>装好后什么都不用设，直接试：</p>
@@ -182,7 +183,7 @@
           <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、Alt+Tab 与键盘切换桌面。</td></tr>
           <tr><td>鼠标与触发角</td><td>按住拖动的键与灵敏度；四个角的触发动作。</td></tr>
           <tr><td>排除的程序</td><td>哪些程序在前台时不接管手势。</td></tr>
-          <tr><td>关于</td><td>版本、配置文件、日志、恢复默认设置。</td></tr>
+          <tr><td>关于</td><td>版本、自动检查更新与手动检查、配置文件、日志、恢复默认设置。</td></tr>
         </tbody>
       </table>
       <p>设置窗口也可以全程用键盘操作：<span class="kbd">Tab</span> 移动，<span class="kbd">空格</span> / <span class="kbd">Enter</span> 操作，<span class="kbd">←</span> <span class="kbd">→</span> 调滑块，<span class="kbd">Esc</span> 关闭。</p>
@@ -212,7 +213,7 @@
       <h3>切换桌面时屏幕底部出现桌面名</h3>
       <p>这是 Windows 自己画的提示，目前没有办法从外部隐藏。</p>
       <h3>想反馈问题</h3>
-      <p>托盘右键 → 打开日志目录，把 <code>glideshell.log</code> 附在 <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">GitHub Issues</a> 里，并说明你的笔记本型号与 Windows 版本。日志只保存在本机，GlideShell 不联网。</p>
+      <p>托盘右键 → 打开日志目录，把 <code>glideshell.log</code> 附在 <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">GitHub Issues</a> 里，并说明你的笔记本型号与 Windows 版本。日志只保存在本机，不会被上传。</p>
 
       <h2 id="uninstall">卸载</h2>
       <p>双击安装包里的 <strong>卸载.cmd</strong>。它会先让 GlideShell 正常退出、确认系统手势已经还原，再删除程序、开始菜单和开机启动。</p>

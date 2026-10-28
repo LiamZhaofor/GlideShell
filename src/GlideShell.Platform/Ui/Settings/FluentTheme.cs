@@ -95,5 +95,6 @@ internal sealed record FluentTheme(
         public const string Speed = "", Move = "", Folder = "", Document = "", Reset = "", Power = "";
         public const string Monitor = "", Switch = "", ViewAll = "", Color = "", Keyboard = "", Warning = "";
         public const string Settings = "", Apps = "", Desktop = "";
+        public const string Sync = "", Download = "";
     }
 }

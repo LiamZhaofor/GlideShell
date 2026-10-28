@@ -2,6 +2,7 @@ using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Gestures;
 using GlideShell.Platform.Native;
+using GlideShell.Platform.Updates;
 using GlideShell.Platform.Ui.Settings;
 using Icons = GlideShell.Platform.Ui.Settings.FluentTheme.Icons;
 
@@ -290,6 +291,22 @@ public sealed partial class SettingsWindow
         b.Card("autostart2", Icons.Power, "开机时启动", "登录 Windows 后自动在后台运行",
             Toggle("autostart2T", () => _model.Autostart, v => _model = _model with { Autostart = v }), 96);
 
+        b.Section("更新");
+        b.Card("checkUpdates", Icons.Sync, "自动检查更新", "每天向 GitHub 查一次有没有新版本，有的话在托盘通知。只查版本号，不发送其他数据；关掉后完全不联网",
+            Toggle("checkUpdatesT", () => _model.CheckUpdates, v => _model = _model with { CheckUpdates = v }), 96);
+        if (_env.UpdateStatus is { } updateStatus && _env.CheckUpdates is { } check)
+        {
+            var st = updateStatus();
+            bool available = st.State == UpdateState.Available && st.Latest is not null;
+            string label = available ? "下载" : st.State == UpdateState.Checking ? "正在检查" : "检查";
+            var button = new Item(available ? ItemKind.AccentButton : ItemKind.Button, "updateB")
+            {
+                Text = label, Click = available ? _env.OpenUpdatePage ?? check : check, Enabled = st.State != UpdateState.Checking,
+            };
+            b.Card("updateNow", available ? Icons.Download : Icons.Info, available ? $"有新版本 {st.Latest!.Version.ToString(3)}" : "检查更新",
+                UpdateText(st), button, b.ButtonWidthDip(label));
+        }
+
         b.Section("更多");
         b.Card("config", Icons.Document, "配置文件", "弹簧参数等不常用的选项在配置文件里，保存后立即生效",
             Button("configB", "打开", _env.OpenConfigFile), b.ButtonWidthDip("打开"));
@@ -297,6 +314,19 @@ public sealed partial class SettingsWindow
             b.Card("logs", Icons.Folder, "日志", "遇到问题时可以把日志发给开发者", Button("logsB", "打开", logs), b.ButtonWidthDip("打开"));
         b.Card("defaults", Icons.Reset, "恢复默认设置", "所有设置回到刚安装时的样子（排除的程序和开机启动保留）",
             Button("defaultsB", "恢复默认", ResetDefaults), b.ButtonWidthDip("恢复默认"));
+    }
+
+    private string UpdateText(UpdateStatus st)
+    {
+        string current = _env.Version.Length > 0 ? $"当前版本 {_env.Version}" : "当前版本";
+        return st.State switch
+        {
+            UpdateState.Checking => "正在向 GitHub 查询…",
+            UpdateState.UpToDate => $"{current}，已经是最新的（{st.CheckedAt:HH:mm} 检查）",
+            UpdateState.Available => $"{current}。点「下载」打开下载页面，下载后双击「安装.cmd」即可升级，设置会保留",
+            UpdateState.Failed => $"检查失败：{st.Error}",
+            _ => $"{current}，还没有检查过",
+        };
     }
 
     private void ResetDefaults()

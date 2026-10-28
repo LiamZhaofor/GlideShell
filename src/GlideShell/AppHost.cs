@@ -15,6 +15,7 @@ using GlideShell.Platform.Overview;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Switcher;
 using GlideShell.Platform.Ui;
+using GlideShell.Platform.Updates;
 using GlideShell.Platform.VirtualDesktops;
 
 namespace GlideShell;
@@ -44,6 +45,8 @@ internal sealed class AppHost
     private DesktopHotkeys? _desktopKeys;
     private AltTabHotkeys? _altTab;
     private HotCornerWatcher? _hotCorners;
+    private readonly UpdateChecker _updates = new(typeof(AppHost).Assembly.GetName().Version ?? new Version(0, 0, 0), Path.GetDirectoryName(Log.DefaultDirectory)!);
+    private long _lastUpdateCheckMs = long.MinValue; // 上一次自动升级检测（Environment.TickCount64）
     private ForegroundMonitor? _foreground;
     private PtpInputThread? _input;
     private GestureRouter _router = null!;
@@ -128,6 +131,7 @@ internal sealed class AppHost
         if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, () => (_config.Desktops.TravelMm, _config.Overview.TravelMm), Suppressed,
             _mouseRouter.OnGesture);
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
+        if (_simulate is null) _ui.PostDelayed(UpdateFirstCheckMs, UpdateTick); // 模拟模式（自动化验证）不联网
         WatchConfig();
         _presenter.WarmUp();
         if (_simulate is not null) StartSimulation(_simulate);
@@ -571,8 +575,13 @@ internal sealed class AppHost
         }
         if (excluded.Count == 0) excluded.Add(new("（没有）", Enabled: false));
 
+        var update = _updates.Status is { State: UpdateState.Available, Latest: { } latest }
+            ? new List<TrayMenuItem> { new($"下载新版本 {latest.Version.ToString(3)}…", OpenUpdatePage), TrayMenuItem.Separator }
+            : [];
+
         return
         [
+            .. update,
             new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
             new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
             new("设置…", OpenSettings),
@@ -593,6 +602,56 @@ internal sealed class AppHost
         ];
     }
 
+    // ---------- 升级检测 ----------
+
+    private const int UpdateFirstCheckMs = 20_000, UpdateTickMs = 10 * 60_000;
+    private const long UpdateIntervalMs = 24L * 3600_000;
+
+    /// <summary>
+    /// 自动升级检测的定时器（UI 线程，每 10 分钟醒一次）：开着「自动检查更新」、且离上次自动检查超过一天时查一次。
+    /// 关着时什么也不做（不联网）；重新打开后下一次醒来就查。
+    /// </summary>
+    private void UpdateTick()
+    {
+        long now = Environment.TickCount64;
+        if (_config.Updates.Check && (_lastUpdateCheckMs == long.MinValue || now - _lastUpdateCheckMs >= UpdateIntervalMs))
+        {
+            _lastUpdateCheckMs = now;
+            CheckUpdates(manual: false);
+        }
+        _ui.PostDelayed(UpdateTickMs, UpdateTick);
+    }
+
+    /// <summary>查一次（UI 线程）。<paramref name="manual"/>：设置里点了「检查」——结果显示在设置窗口里，不弹托盘通知。</summary>
+    private void CheckUpdates(bool manual)
+    {
+        if (!_updates.CheckAsync(status => _ui.Post(() => OnUpdateChecked(status, manual)))) return;
+        SettingsWindow.RefreshIfOpen();
+    }
+
+    private void OnUpdateChecked(UpdateStatus status, bool manual)
+    {
+        SettingsWindow.RefreshIfOpen();
+        switch (status.State)
+        {
+            case UpdateState.Available when status.Latest is { } latest:
+                string version = latest.Version.ToString(3);
+                Log.Info($"升级检测：有新版本 {version}（当前 {_updates.Current.ToString(3)}）");
+                // 每个新版本只通知一次（重启后也记得）；手动检查的结果已经显示在设置里
+                if (_updates.MarkNotified(latest.Version) && !manual)
+                    _tray?.ShowBalloon($"GlideShell {version} 可以更新了", "点这里打开下载页面。托盘菜单里也有「下载新版本」。", onClick: OpenUpdatePage);
+                break;
+            case UpdateState.UpToDate:
+                Log.Info($"升级检测：已是最新版本（{_updates.Current.ToString(3)}）");
+                break;
+            case UpdateState.Failed:
+                Log.Info($"升级检测失败：{status.Error}");
+                break;
+        }
+    }
+
+    private void OpenUpdatePage() => OpenPath(_updates.PageUrl);
+
     // ---------- 设置窗口 ----------
 
     private void OpenSettings()
@@ -604,7 +663,10 @@ internal sealed class AppHost
             SaveSettings,
             () => OpenPath(ConfigStore.DefaultPath),
             typeof(AppHost).Assembly.GetName().Version?.ToString(3) ?? "",
-            () => OpenPath(Log.DefaultDirectory)));
+            () => OpenPath(Log.DefaultDirectory),
+            () => _updates.Status,
+            () => CheckUpdates(manual: true),
+            OpenUpdatePage));
     }
 
     /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>

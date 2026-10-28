@@ -63,6 +63,8 @@ public sealed record SettingsModel
     public bool TakeOverDesktopHotkeys { get; init; }
 
     public bool TakeOverAltTab { get; init; }
+
+    public bool CheckUpdates { get; init; }
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
     public double CornerRadius { get; init; }
     public MouseDragButton MouseButton { get; init; }
@@ -145,6 +147,7 @@ public sealed record SettingsModel
             AppWindows = c.Overview.AppWindows,
             TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
             TakeOverAltTab = c.Switcher.TakeOverAltTab,
+            CheckUpdates = c.Updates.Check,
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
             CornerRadius = c.Overview.CornerRadius,
             MouseButton = c.Mouse.Button,
@@ -231,6 +234,7 @@ public sealed record SettingsModel
             HotCorners = c.HotCorners with { TopLeft = HotCorners[0], TopRight = HotCorners[1], BottomLeft = HotCorners[2], BottomRight = HotCorners[3] },
             Drag = c.Drag with { PixelsPerMm = DragPixelsPerMm, Acceleration = DragAcceleration },
             ExcludedProcesses = [.. ExcludedProcesses],
+            Updates = c.Updates with { Check = CheckUpdates },
         };
         return updated.Sanitize();
     }

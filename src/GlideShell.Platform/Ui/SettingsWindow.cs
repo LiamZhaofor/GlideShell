@@ -19,7 +19,10 @@ public sealed record SettingsEnvironment(
     Func<SettingsModel, IReadOnlyList<string>> Save,
     Action OpenConfigFile,
     string Version = "",
-    Action? OpenLogs = null);
+    Action? OpenLogs = null,
+    Func<Updates.UpdateStatus>? UpdateStatus = null,
+    Action? CheckUpdates = null,
+    Action? OpenUpdatePage = null);
 
 /// <summary>
 /// 设置窗口：Windows 11「设置」的样子——Mica 背景、左侧导航、右侧一页页圆角卡片（图标 + 标题 + 一句说明 + 右侧控件），
@@ -90,6 +93,12 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         User32.ShowWindow(window.Handle, User32.SW_SHOWNORMAL);
         User32.SetForegroundWindow(window.Handle);
         return window;
+    }
+
+    /// <summary>开着的话按最新状态重排一次（例如升级检测有了结果）。UI 线程。</summary>
+    public static void RefreshIfOpen()
+    {
+        if (s_current is { Handle: not 0 } open) open.Relayout();
     }
 
     /// <summary>创建但不显示（<see cref="ShowOrActivate"/> 内部使用；也供离屏截图检查布局）。</summary>

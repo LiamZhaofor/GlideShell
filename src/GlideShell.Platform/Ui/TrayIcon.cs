@@ -24,6 +24,7 @@ public sealed unsafe class TrayIcon : IDisposable
     private readonly uint _taskbarCreated;
     private string _tip;
     private bool _added;
+    private Action? _balloonClick; // 当前这条通知被点击时
 
     public TrayIcon(UiThread ui, string tip, Func<IReadOnlyList<TrayMenuItem>> menu, Action? onClick = null)
     {
@@ -48,9 +49,10 @@ public sealed unsafe class TrayIcon : IDisposable
         }
     }
 
-    /// <summary>气泡通知（Windows 11 显示为系统通知）。</summary>
-    public void ShowBalloon(string title, string text, bool warning = false)
+    /// <summary>气泡通知（Windows 11 显示为系统通知）。<paramref name="onClick"/>：用户点了这条通知时（UI 线程）。</summary>
+    public void ShowBalloon(string title, string text, bool warning = false, Action? onClick = null)
     {
+        _balloonClick = onClick;
         var data = Data(Shell32.NIF_INFO);
         Shell32.CopyTo(title, data.szInfoTitle, 64);
         Shell32.CopyTo(text, data.szInfo, 256);
@@ -96,6 +98,12 @@ public sealed unsafe class TrayIcon : IDisposable
     {
         uint evt = (uint)(lParam & 0xFFFF);
         if (evt is Shell32.NIN_SELECT or Shell32.NIN_KEYSELECT) _onClick?.Invoke();
+        else if (evt == Shell32.NIN_BALLOONUSERCLICK)
+        {
+            var click = _balloonClick;
+            _balloonClick = null;
+            click?.Invoke();
+        }
         else if (evt is User32.WM_CONTEXTMENU or User32.WM_RBUTTONUP)
         {
             int x = (short)(wParam & 0xFFFF), y = (short)((wParam >> 16) & 0xFFFF);

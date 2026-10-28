@@ -427,6 +427,15 @@ legacy/
   - 实测（`--simulate switch-back` 截屏）：背景亮度 245 → 171；最外侧的项淡出，没有硬边。
 - 经典缩略图退路（共享缩略图不可用时）仍是圆角横带。
 
+### 4.22 升级检测（2026-10-28）
+
+用户要求加版本检测，并且可以选择开不开。
+- **查询**：GitHub `GET /repos/LiamZhaofor/GlideShell/releases/latest`（只返回正式版本，不含预发布与草稿）。用系统的 WinHTTP（`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`，走系统代理，TLS 由系统处理）直接 P/Invoke，不用 HttpClient——NativeAOT 下 HttpClient 会让 exe 多出好几 MB；响应用 `JsonDocument` 读（`ReleaseInfo.Parse`，不用反射）。只发版本查询本身（User-Agent 带当前版本号），不下载、不自动安装。实测约 0.4 秒（`PtpProbe update <版本>`）。
+- **时机**：启动后约 20 秒查一次，之后每天一次（10 分钟一次的定时器看离上次自动检查是否超过一天；关掉再打开后下一次醒来就查）。模拟模式不联网。
+- **通知**：发现新版本时托盘通知一次（点通知打开版本页面）；每个版本只通知一次，记在 `%LOCALAPPDATA%\GlideShell\update-notified.txt`，重启后也记得。托盘菜单最上面出现「下载新版本 x.y.z…」。
+- **设置**：「关于 → 更新」：「自动检查更新」开关（`updates.check`，默认开；关掉后完全不联网）；状态卡片显示当前版本、上次检查结果，按钮「检查」（手动检查，结果只显示在这里，不弹通知），有新版本时变成「下载」。
+- 官网 FAQ 原来写「不联网」，改为说明唯一的联网就是这个版本查询、可以关掉。
+
 ## 5. P1 技术验证项
 
 ### S1 输入语义（需要真机手指，约 10 分钟）

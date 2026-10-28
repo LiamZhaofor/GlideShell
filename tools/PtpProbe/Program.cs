@@ -44,6 +44,7 @@ return command switch
     "testwindow" when args.Length >= 6 => TestWindow(args),
     "bar" when args.Length >= 2 => BarGeometry(int.Parse(args[1])),
     "scenarios" => ListScenarios(),
+    "update" => UpdateCheck(args.Length > 1 ? args[1] : null),
     "selftest" => SelfTest(),
     _ => Usage(),
 };
@@ -74,6 +75,7 @@ static int Usage()
           PtpProbe testwindow x y 宽 高 毫秒
                                            显示一个橙色测试窗口（多显示器实测用，物理像素坐标）
           PtpProbe scenarios               列出录制场景
+          PtpProbe update [当前版本]        按 GlideShell 的升级检测查一次 GitHub 上的最新版本（默认当作 0.0.0）
           PtpProbe selftest                自检原始输入管道
         """);
     return 2;
@@ -412,6 +414,24 @@ static int ShadowCompare(string? size, string? dump, string? monitor)
 }
 
 /// 主屏上 n 个桌面时总览桌面条的几何（物理像素，实测脚本用来算点哪里）：每行「名称 中心x 中心y」
+static int UpdateCheck(string? current)
+{
+    var version = GlideShell.Core.Updates.ReleaseInfo.TryParseVersion(current, out var v) ? v : new Version(0, 0, 0);
+    var checker = new GlideShell.Platform.Updates.UpdateChecker(version, Path.GetTempPath());
+    using var done = new ManualResetEventSlim();
+    GlideShell.Platform.Updates.UpdateStatus? result = null;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    checker.CheckAsync(s =>
+    {
+        result = s;
+        done.Set();
+    });
+    done.Wait(TimeSpan.FromSeconds(40));
+    Console.WriteLine($"当前 {checker.Current.ToString(3)} → {result?.State}，最新 {result?.Latest?.Tag ?? "-"}，页面 {checker.PageUrl}，" +
+                      $"耗时 {sw.ElapsedMilliseconds}ms{(result?.Error is { } e ? "，错误：" + e : "")}");
+    return result is { State: GlideShell.Platform.Updates.UpdateState.UpToDate or GlideShell.Platform.Updates.UpdateState.Available } ? 0 : 1;
+}
+
 static int BarGeometry(int count)
 {
     var m = GlideShell.Platform.Shell.Monitors.Enumerate().First(x => x.IsPrimary);

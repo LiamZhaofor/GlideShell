@@ -46,6 +46,15 @@ public sealed record OverviewConfig
     public double CornerRadius { get; set; } = 12;
 }
 
+public sealed record UpdatesConfig
+{
+    /// <summary>
+    /// 自动检查有没有新版本：启动后约 20 秒、之后每天一次，向 GitHub 查询最新的正式版本号（只有这一个请求，不发送任何其他数据）。
+    /// 发现新版本时托盘通知一次。关掉后程序完全不联网（设置里手动点「检查」除外）。
+    /// </summary>
+    public bool Check { get; set; } = true;
+}
+
 public sealed record SwitcherConfig
 {
     /// <summary>横滑多少毫米切换一个窗口。</summary>
@@ -178,6 +187,9 @@ public sealed record GlideShellConfig
 
     /// <summary>触发角：指针停在屏幕某个角上时触发的动作。</summary>
     public HotCornersConfig HotCorners { get; set; } = new();
+
+    /// <summary>升级检测。</summary>
+    public UpdatesConfig Updates { get; set; } = new();
 
     [JsonIgnore] // 计算值，不写进配置文件
     public GestureMap EffectiveMap => Bindings is { Count: > 0 } b

@@ -44,6 +44,15 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Update_check_is_on_by_default_and_round_trips()
+    {
+        var config = new GlideShellConfig();
+        Assert.True(SettingsModel.FromConfig(config).CheckUpdates);
+        var (saved, _) = (SettingsModel.FromConfig(config) with { CheckUpdates = false }).ApplyTo(config);
+        Assert.False(ConfigStore.Parse(ConfigStore.Serialize(saved)).Config.Updates.Check);
+    }
+
+    [Fact]
     public void Default_config_round_trips_without_writing_a_custom_map()
     {
         var config = new GlideShellConfig();

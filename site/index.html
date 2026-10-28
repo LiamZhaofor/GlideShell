@@ -268,7 +268,7 @@
           <details><summary>会不会弄乱我原来的手势设置？</summary><p>不会。GlideShell 只接管它实现了的手势，接管前会先把你原来的设置记下来；退出、暂停、卸载，甚至程序意外崩溃时，都会自动还原。万一没有还原，运行 <code>GlideShell.exe --restore-native</code> 即可。</p></details>
           <details><summary>某个程序里我想用 Windows 自己的手势怎么办？</summary><p>在设置的「排除的程序」里加上它，这个程序在前台时 GlideShell 就不接管手势。全屏游戏、视频默认也不接管。</p></details>
           <details><summary>支持 Windows 10 吗？</summary><p>暂时不支持。GlideShell 用到了 Windows 11 才有的合成器接口。</p></details>
-          <details><summary>收费吗？会收集数据吗？</summary><p>完全免费、开源（MIT 许可）。不联网，不收集任何数据；日志只保存在本机。</p></details>
+          <details><summary>收费吗？会收集数据吗？</summary><p>完全免费、开源（MIT 许可）。不收集任何数据，日志只保存在本机。唯一的联网是每天向 GitHub 查一次有没有新版本（只查版本号），可以在设置里关掉，关掉后完全不联网。</p></details>
         </div>
       </div>
     </section>
