@@ -97,13 +97,28 @@ public sealed class OverviewScene
                 excluded[i] = true;
                 continue;
             }
-            var area = areas.Count == 0 ? w.Source : areas[Math.Clamp(w.MonitorIndex, 0, areas.Count - 1)].WorkArea;
+            int own = areas.Count == 0 ? -1 : Math.Clamp(w.MonitorIndex, 0, areas.Count - 1);
+            var area = own < 0 ? w.Source : areas[own].WorkArea;
             var s = w.Source;
-            // 往哪边推：窗口中心相对屏幕中心的方向，按屏幕宽高归一化后取较大的那个轴
-            double dx = (s.CenterX - area.CenterX) / Math.Max(1, area.Width), dy = (s.CenterY - area.CenterY) / Math.Max(1, area.Height);
-            RectD tile = Math.Abs(dx) >= Math.Abs(dy)
-                ? s.Offset(dx >= 0 ? area.Right + marginPx - s.Left : area.Left - marginPx - s.Right, 0)
-                : s.Offset(0, dy >= 0 ? area.Bottom + marginPx - s.Top : area.Top - marginPx - s.Bottom);
+            // 往哪边推：离窗口中心最近的那条屏幕边（按屏幕宽高归一化）。推出去会落到别的屏上的方向不用——
+            // 多显示器时两块屏相接的那条边外面还是屏幕，窗口会停在隔壁屏上看得见；四个方向都不行才退回最近的边
+            Span<(double Distance, RectD Tile)> options =
+            [
+                ((area.Right - s.CenterX) / Math.Max(1, area.Width), s.Offset(area.Right + marginPx - s.Left, 0)),
+                ((s.CenterX - area.Left) / Math.Max(1, area.Width), s.Offset(area.Left - marginPx - s.Right, 0)),
+                ((area.Bottom - s.CenterY) / Math.Max(1, area.Height), s.Offset(0, area.Bottom + marginPx - s.Top)),
+                ((s.CenterY - area.Top) / Math.Max(1, area.Height), s.Offset(0, area.Top - marginPx - s.Bottom)),
+            ];
+            int best = -1, nearest = 0;
+            for (int k = 0; k < options.Length; k++)
+            {
+                if (options[k].Distance < options[nearest].Distance) nearest = k;
+                bool lands = false;
+                for (int m = 0; m < areas.Count; m++)
+                    if (m != own && areas[m].WorkArea.Intersects(options[k].Tile)) lands = true;
+                if (!lands && (best < 0 || options[k].Distance < options[best].Distance)) best = k;
+            }
+            var tile = options[best >= 0 ? best : nearest].Tile;
             slots[i] = new LayoutSlot(tile, tile);
         }
         return new OverviewScene(Windows, slots, new DesktopBarGeometry?[Count], _context with { Areas = areas }, (bool[])_removed.Clone(), null, excluded);

@@ -256,15 +256,20 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         var next = layer?.AddWindow(Handle, index, (nint)scene.Windows[index].Id, Monitor.DpiScale, out int hr);
         if (next is null) return layer is null ? 0 : unchecked((int)0x80004005);
         pages.Members[page] = [.. pages.Members[page], index];
-        if (page == pages.Home) _layer = next;
-        else
-        {
-            pages.Layers[page] = next;
-            foreach (var (id, cached) in _pageCache.ToList())
-                if (ReferenceEquals(cached, layer)) _pageCache[id] = next;
-        }
+        SwapLayer(layer!, next);
         if (DecorActive) _decor!.AddWindow(page, scene, next.ShowsContent(index));
         return 0;
+    }
+
+    /// <summary>某一层加了窗口、换成了接管它全部视觉的新层：所有引用它的地方（当前页、各页、页缓存）都换过去。</summary>
+    private void SwapLayer(SharedThumbnailLayer old, SharedThumbnailLayer next)
+    {
+        if (ReferenceEquals(_layer, old)) _layer = next;
+        if (_pages is { } pages)
+            for (int k = 0; k < pages.Layers.Length; k++)
+                if (ReferenceEquals(pages.Layers[k], old)) pages.Layers[k] = next;
+        foreach (var (id, cached) in _pageCache.ToList())
+            if (ReferenceEquals(cached, old)) _pageCache[id] = next;
     }
 
     /// <summary>当前显示的关闭按钮（屏幕坐标，没有为 null）。</summary>
@@ -292,11 +297,22 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         User32.InvalidateRect(Handle, null, 1);
     }
 
-    /// <summary>UI 线程：开始拖动当前页的某个窗口，把它挂到最上面一支（不是本屏的窗口、或不是共享缩略图时什么也不做）。</summary>
+    /// <summary>
+    /// UI 线程：开始拖动当前页的某个窗口，把它挂到最上面一支（不是共享缩略图时什么也不做）。
+    /// 不是本屏的窗口也挂上：拖着它可以经过、放到别的屏上——先把它加进本屏的缩略图层（不算本屏的成员，不画标题），
+    /// 平时它在别的屏的位置上，本屏裁掉看不见。
+    /// </summary>
     public void Lift(int sceneIndex)
     {
         Unlift();
-        if (_dragRoot is null || !_members.Contains(sceneIndex) || CurrentLayer is not SharedThumbnailLayer layer) return;
+        if (_dragRoot is null || CurrentLayer is not SharedThumbnailLayer layer || sceneIndex < 0 || sceneIndex >= _scene.Count) return;
+        if (!layer.Contains(sceneIndex))
+        {
+            var next = layer.AddWindow(Handle, sceneIndex, (nint)_scene.Windows[sceneIndex].Id, Monitor.DpiScale, out _);
+            if (next is null) return;
+            SwapLayer(layer, next);
+            layer = next;
+        }
         _lifted = layer.Lift(sceneIndex, _dragRoot);
     }
 

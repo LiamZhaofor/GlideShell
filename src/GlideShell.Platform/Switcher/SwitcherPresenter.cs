@@ -1,4 +1,4 @@
-using GlideShell.Core.Geometry;
+﻿using GlideShell.Core.Geometry;
 using GlideShell.Core.Overview;
 using GlideShell.Core.Switcher;
 using GlideShell.Platform.Diagnostics;
@@ -142,12 +142,17 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         var bandRect = layout.BandRect(monitor.DpiScale);
         // 合成层可用时横带窗口本身完全透明（没有 GDI 表面），背景是合成层里半透明的烟灰面板
         bool wantComposed = _shared?.Get() is not null && _shared.Decor(_ui) is not null;
-        if (_band is null || _band.Rect != bandRect || _band.Monitor.DpiScale != monitor.DpiScale || _band.Composed != wantComposed)
-            RecreateBand(monitor, bandRect, wantComposed);
+        // 合成层模式下横带窗口铺满工作区；别的屏上也有窗口时连那几块屏一起铺上——选中的窗口松手后要飞回它在别的屏上的原位，
+        // 只铺本屏的话飞到屏幕边上就被裁掉了（双屏真机）
+        var span = monitors.Where(m => m == monitor || windows.Any(w => m.WorkArea.Intersects(w.Source)))
+            .Aggregate(monitor.WorkArea, (r, m) => RectD.Union(r, m.WorkArea));
+        if (_band is null || _band.Rect != bandRect || _band.Monitor.DpiScale != monitor.DpiScale || _band.Composed != wantComposed ||
+            (wantComposed && _band.WindowRect != span))
+            RecreateBand(monitor, bandRect, wantComposed ? span : bandRect);
         var scene = new SwitcherScene(windows, layout);
         var old = _thumbs;
         bool composed = wantComposed && PrepareComposition(scene, monitor, _band!.WindowRect, bandRect);
-        if (!composed && _band!.Composed) RecreateBand(monitor, bandRect, false); // 合成层失败：退回经典缩略图 + GDI
+        if (!composed && _band!.Composed) RecreateBand(monitor, bandRect, bandRect); // 合成层失败：退回经典缩略图 + GDI
         _thumbs = composed ? Thumbs.Empty : Thumbs.Register(_band!.Handle, bandRect, scene);
         old.Unregister();
         _band!.SetScene(scene, drawTitle: !composed);
@@ -157,15 +162,16 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         Log.Info($"切换条预热：{windows.Count} 个窗口，耗时 {(HostClock.NowUs() - t0) / 1000.0:F1}ms");
     }
 
-    private void RecreateBand(MonitorInfo monitor, RectD bandRect, bool composed)
+    /// <param name="windowRect">横带窗口的位置：等于 <paramref name="bandRect"/> 时是经典模式（窗口就是横带），否则是合成层模式（透明，铺满）。</param>
+    private void RecreateBand(MonitorInfo monitor, RectD bandRect, RectD windowRect)
     {
         DisposeComposition();
         _band?.Dispose();
-        _band = new SwitcherBand(monitor, bandRect, composed);
+        _band = new SwitcherBand(monitor, bandRect, windowRect == bandRect ? null : windowRect);
     }
 
     /// <summary>共享缩略图 + 合成层装饰；不可用或失败时返回 false（用经典缩略图）。</summary>
-    /// <param name="windowRect">横带窗口在屏幕上的位置（合成层模式下是整个工作区，缩略图才能飞出横带）。</param>
+    /// <param name="windowRect">横带窗口在屏幕上的位置（合成层模式下是整个工作区或几块屏，缩略图才能飞出横带）。</param>
     private bool PrepareComposition(SwitcherScene scene, MonitorInfo monitor, RectD windowRect, RectD bandRect)
     {
         var backend = _shared?.Get();
@@ -350,13 +356,13 @@ internal sealed unsafe class SwitcherBand : NativeWindow
     private bool _drawTitle = true;
     private readonly bool _acrylic;
 
-    public SwitcherBand(MonitorInfo monitor, RectD rect, bool composed = false)
+    /// <param name="composedRect">非空 = 合成层模式，窗口铺在这里（透明）：选中的缩略图松手后才能飞出横带、飞回窗口原位。</param>
+    public SwitcherBand(MonitorInfo monitor, RectD rect, RectD? composedRect = null)
     {
         Monitor = monitor;
         Rect = rect;
-        Composed = composed;
-        // 合成层模式下窗口铺满工作区（透明），选中的缩略图松手后才能飞出横带、飞回窗口原位
-        WindowRect = composed ? monitor.WorkArea : rect;
+        bool composed = Composed = composedRect is not null;
+        WindowRect = composedRect ?? rect;
         var w = WindowRect;
         Create("GlideShell.Switcher", User32.WS_POPUP,
             User32.WS_EX_TOPMOST | User32.WS_EX_TOOLWINDOW_U | User32.WS_EX_NOACTIVATE_U | 0x20 /* WS_EX_TRANSPARENT：鼠标穿透 */ |
@@ -382,7 +388,7 @@ internal sealed unsafe class SwitcherBand : NativeWindow
     /// <summary>横带（面板）在屏幕上的位置。</summary>
     public RectD Rect { get; }
 
-    /// <summary>窗口在屏幕上的位置：合成层模式下是整个工作区，否则就是横带。</summary>
+    /// <summary>窗口在屏幕上的位置：合成层模式下是整个工作区（别的屏上有窗口时连那几块屏一起），否则就是横带。</summary>
     public RectD WindowRect { get; }
 
     /// <param name="drawTitle">GDI 画选中项标题（合成层画标题时为 false）。</param>

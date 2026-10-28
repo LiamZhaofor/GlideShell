@@ -164,6 +164,31 @@ public class ShowDesktopTests
     }
 
     [Fact]
+    public void Pushing_aside_never_parks_a_window_on_the_neighbouring_screen()
+    {
+        // 本机双屏：笔记本屏（150%）在左、外接主屏在右，两块屏在 x = 0 相接
+        var laptop = new RectD(-2560, 0, 2560, 1528);
+        var external = new RectD(0, 0, 2560, 1380);
+        OverviewArea[] areas = [new(laptop, 1.5), new(external, 1.25)];
+        var scene = OverviewScene.Build(
+        [
+            new OverviewWindow(1, "laptop-right", new RectD(-900, 400, 800, 700), false, true, 0, "p"),
+            new OverviewWindow(2, "external-left", new RectD(100, 300, 900, 600), false, false, 1, "p"),
+            new OverviewWindow(3, "external-right", new RectD(1800, 400, 700, 500), false, false, 1, "p"),
+        ], areas);
+        var pushed = scene.PushAside(areas);
+        for (int i = 0; i < scene.Count; i++)
+        {
+            var tile = pushed.Slots[i].Tile;
+            Assert.False(laptop.Intersects(tile) || external.Intersects(tile), $"窗口 {i} 停在了 {tile}");
+        }
+        Assert.True(pushed.Slots[2].Tile.Left >= external.Right); // 外侧的边照旧就近推出
+        // 靠近相接处的窗口改走上 / 下（离得近的那条边）
+        Assert.Equal(scene.Windows[0].Source.Left, pushed.Slots[0].Tile.Left);
+        Assert.Equal(scene.Windows[1].Source.Left, pushed.Slots[1].Tile.Left);
+    }
+
+    [Fact]
     public void Grouping_by_app_puts_windows_of_the_same_app_next_to_each_other()
     {
         // a、b、a、b 交错分布在一排：就近排是 a b a b；按程序分组后两个 a 挨着

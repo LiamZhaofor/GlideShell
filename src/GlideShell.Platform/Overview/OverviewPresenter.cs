@@ -1,4 +1,4 @@
-using GlideShell.Core.Configuration;
+﻿using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Motion;
 using GlideShell.Core.Overview;
@@ -726,7 +726,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 _pressWindow = PressedWindow(overlay, x, y);
                 break;
             case OverlayMouse.Move:
-                if (_dragging) DragMove(overlay, x, y);
+                if (_dragging) DragMove(OverlayAt(overlay, x, y), x, y);
                 else if (_press is not null && _pressWindow is { } id && Math.Max(Math.Abs(x - _pressX), Math.Abs(y - _pressY)) >= DragThreshold(overlay))
                 {
                     if (!BeginDrag(overlay, id, x, y)) _pressWindow = null; // 不能拖：松开时照旧按点击处理
@@ -735,7 +735,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 else if (_press is null) OnMouseMove(overlay, x, y);
                 break;
             case OverlayMouse.Up:
-                if (_dragging) Drop(overlay, x, y);
+                if (_dragging) Drop(OverlayAt(overlay, x, y), x, y);
                 else if (_press is { } pressed) OnClick(pressed, _pressX, _pressY);
                 _press = null;
                 break;
@@ -755,6 +755,10 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         }
         _press = null;
     }
+
+    /// <summary>指针所在那块屏的覆盖层：拖着窗口可以拖到别的屏上（按下的覆盖层捕获了鼠标）；不在任何屏的工作区里时用 <paramref name="fallback"/>。</summary>
+    private OverlayWindow OverlayAt(OverlayWindow fallback, double x, double y)
+        => _overlays.FirstOrDefault(o => o.IsShown && o.Monitor.WorkArea.Contains(x, y)) ?? fallback;
 
     private static double DragThreshold(OverlayWindow overlay) => Math.Max(User32.GetSystemMetrics(User32.SM_CXDRAG), 6 * overlay.Monitor.DpiScale);
 
@@ -827,7 +831,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         {
             double e = Controller.BarExpansionAt(now);
             var hit = bar.Contains(x, y, 1) ? bar.Hit(x, y, e, removable: false) : DesktopBarHit.Nothing;
-            var source = scene.Windows[index].Source;
+            var source = OnScreen(scene.Windows[index], overlay.Monitor.WorkArea);
             if (hit.Part == DesktopBarPart.Desktop && hit.Index != _barState.CurrentIndex && hit.Index < _barState.Count)
             {
                 target = _barState.Desktops[hit.Index];
@@ -865,6 +869,18 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
             _barHovered = DesktopBarHit.Nothing;
             UpdateDecorations();
         }
+    }
+
+    /// <summary>
+    /// 窗口在 <paramref name="area"/> 这块屏上的位置：放到别的屏的桌面条上时，按它在自己那块屏里的相对位置换算过去，
+    /// 缩进那块屏的桌面缩略图里位置才对（缩略图按所在屏的工作区缩小）。
+    /// </summary>
+    private RectD OnScreen(OverviewWindow window, RectD area)
+    {
+        var s = window.Source;
+        if (area.Intersects(s) || _overlays.FirstOrDefault(o => o.Monitor.Index == window.MonitorIndex)?.Monitor.WorkArea is not { } own) return s;
+        double kx = area.Width / Math.Max(1, own.Width), ky = area.Height / Math.Max(1, own.Height);
+        return new RectD(area.Left + (s.Left - own.Left) * kx, area.Top + (s.Top - own.Top) * ky, s.Width * kx, s.Height * ky);
     }
 
     /// <summary>

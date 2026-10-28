@@ -610,6 +610,9 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
 
     public bool HasWallpaper => _wallpaper.Visual != 0;
 
+    /// <summary>本层有没有这个窗口（有画面与否都算）。</summary>
+    public bool Contains(int sceneIndex) => Array.Exists(_windows, e => e.SceneIndex == sceneIndex);
+
     public bool ShowsContent(int sceneIndex)
     {
         foreach (var e in _windows)
