@@ -25,6 +25,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private readonly RenderLoop _render;
     private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
     private OverlayComposition? _panelRoot, _content, _decorRoot; // 从下往上：烟灰面板、缩略图、文字与选中框
+    private OverlayComposition? _launchRoot; // 最上面：飞回中的窗口（不裁剪，可以飞到别的屏上）
+    private nint _lifted; // 挂到 _launchRoot 上的窗口分组（0 = 没有）
     private volatile SharedThumbnailLayer? _layer;
     private SwitcherDecor? _decor;
     private SharedThumbnailBackend? _backend;
@@ -75,6 +77,11 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     /// </summary>
     public void Launching(long windowId) => _ui.Post(() =>
     {
+        // 缩略图一支裁在本屏里（两端滑出去的项不能露到隔壁屏上），飞回的窗口挂到不裁剪的最上一支，才能飞到别的屏上的原位
+        var scene = Controller.Scene;
+        int index = Enumerable.Range(0, scene.Count).FirstOrDefault(i => scene.Windows[i].Id == windowId, -1);
+        if (_layer is { } layer && _launchRoot is not null && index >= 0 && _lifted == 0) _lifted = layer.Lift(index, _launchRoot);
+
         nint hwnd = (nint)windowId;
         if (!User32.IsWindow(hwnd) || !User32.IsIconic(hwnd)) return;
         WindowActivator.RestoreBehind(hwnd);
@@ -99,8 +106,16 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _thumbs.HideAll();
         _decor?.HideAll(); // 装饰只改属性不提交，接着缩略图层的 HideAll 一起提交
         _layer?.HideAll();
+        PutBack();
         _band?.HideBand();
         Release();
+    }
+
+    /// <summary>飞回的窗口放回缩略图一支（下次会话复用这一层）。</summary>
+    private void PutBack()
+    {
+        if (_lifted != 0 && _launchRoot is not null) _layer?.PutBack(_lifted, _launchRoot);
+        _lifted = 0;
     }
 
     public void Dispose()
@@ -113,15 +128,17 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 
     private void DisposeComposition()
     {
+        PutBack();
         _layer?.Unregister();
         _layer = null;
         _decor?.Dispose();
         _decor = null;
+        _launchRoot?.Dispose();
         _panelRoot?.Dispose();
         _content?.Dispose();
         _decorRoot?.Dispose();
         _composition?.Dispose();
-        _panelRoot = _content = _decorRoot = _composition = null;
+        _panelRoot = _content = _decorRoot = _launchRoot = _composition = null;
     }
 
     // ---------- UI 线程 ----------
@@ -194,7 +211,12 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         if (_composition is not null) _panelRoot ??= _composition.CreateBranch(out hr);
         if (_panelRoot is not null) _content ??= _composition!.CreateBranch(out hr);
         if (_content is not null) _decorRoot ??= _composition!.CreateBranch(out hr);
-        var layer = _decorRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, windowRect, monitor.DpiScale,
+        if (_decorRoot is not null) _launchRoot ??= _composition!.CreateBranch(out hr);
+        PutBack(); // 上一次会话没走撤层就重新准备（不该发生）：飞回的窗口也先放回去
+        // 窗口铺满几块屏时，缩略图只露在切换条所在的这块屏上（切换条两端滑出去的项不能出现在隔壁屏）
+        _content?.SetClip(monitor.WorkArea.Left - windowRect.Left, monitor.WorkArea.Top - windowRect.Top,
+            monitor.WorkArea.Right - windowRect.Left, monitor.WorkArea.Bottom - windowRect.Top);
+        var layer = _launchRoot is null ? null : SharedThumbnailLayer.Register(backend, _content!, _band.Handle, windowRect, monitor.DpiScale,
             scene.Windows.Select((w, i) => (i, (nint)w.Id)).ToList(), _layer, out hr, withWallpaper: false);
         _layer = layer;
         if (layer is null)

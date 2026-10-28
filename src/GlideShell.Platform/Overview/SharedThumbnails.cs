@@ -390,12 +390,15 @@ internal sealed unsafe class OverlayComposition : IDisposable
     }
 
     /// <summary>裁剪到自己坐标系里的 (0,0)–(width,height)（缩放后随之缩小）。</summary>
-    public void SetClip(double width, double height)
+    public void SetClip(double width, double height) => SetClip(0, 0, width, height);
+
+    /// <summary>裁剪到自己坐标系里的 (left,top)–(right,bottom)（不提交）。</summary>
+    public void SetClip(double left, double top, double right, double bottom)
     {
         lock (_backend.Gate)
         {
             if (_root == null) return;
-            var r = new Dcomp.D2D_RECT_F { Right = (float)width, Bottom = (float)height };
+            var r = new Dcomp.D2D_RECT_F { Left = (float)left, Top = (float)top, Right = (float)right, Bottom = (float)bottom };
             Dcomp.SetClip(_root, &r);
         }
     }
