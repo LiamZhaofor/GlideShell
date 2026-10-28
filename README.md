@@ -32,7 +32,7 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 
 ## 安装
 
-从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-1.6.2-win-x64.zip`，解压后双击 **安装.cmd**。
+从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-2.0.0-win-x64.zip`，解压后双击 **安装.cmd**。
 
 - 程序装到 `%LOCALAPPDATA%\Programs\GlideShell`，并添加开始菜单与开机启动，不需要管理员权限。
 - 卸载：双击 **卸载.cmd**。它会先退出程序、确认系统手势已还原，再删除程序。配置与日志会保留；要连同它们一起删除，运行 `uninstall.ps1 -Purge`。
