@@ -20,11 +20,11 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
 {
     private const int WhMouseLl = 14;
     private const uint WmMouseMove = 0x0200, WmMButtonDown = 0x0207, WmMButtonUp = 0x0208, WmXButtonDown = 0x020B, WmXButtonUp = 0x020C;
-    private const uint WmQuit = 0x0012, WmInput = 0x00FF, WmApp = 0x8000;
+    private const uint WmQuit = 0x0012, WmInput = 0x00FF, WmApp = 0x8000, WmRawOn = WmApp + 1, WmRawOff = WmApp + 2;
     private const uint LlmhfInjected = 0x1;
     private const nint Marker = 0x47534D42; // 补发的点击带这个 dwExtraInfo，钩子认出来放行
     private const uint MouseeventfMiddleDown = 0x0020, MouseeventfMiddleUp = 0x0040, MouseeventfXDown = 0x0080, MouseeventfXUp = 0x0100;
-    private const uint RidInput = 0x10000003, RidevInputSink = 0x00000100, RimTypeMouse = 0;
+    private const uint RidInput = 0x10000003, RidevInputSink = 0x00000100, RidevRemove = 0x00000001, RimTypeMouse = 0;
     private const ushort MouseMoveAbsolute = 0x01;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -78,6 +78,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
     private nint _sink; // 收原始输入的仅消息窗口
     private MouseDragButton _held = MouseDragButton.None; // 正按着、被拦截的键
     private bool _rawSeen; // 这次按住期间收到过相对位移的原始输入
+    private bool _rawRegistered, _rawFailureLogged; // 钩子线程
     private int _lastX, _lastY;
 
     /// <param name="travel">切一个桌面、完全展开总览各要多少毫米（与触摸板同一套配置）。</param>
@@ -103,12 +104,14 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
             Log.Warn($"鼠标按键手势：安装鼠标钩子失败（{Marshal.GetLastPInvokeError()}）");
             return;
         }
-        StartRawInput();
+        CreateSink();
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
             if (msg.message == WmApp) SendClick((MouseDragButton)(int)msg.wParam);
             else if (msg.message == WmInput) OnRawInput(msg.lParam);
+            else if (msg.message == WmRawOn) SetRawInput(true);
+            else if (msg.message == WmRawOff) SetRawInput(false);
             else User32.DispatchMessageW(&msg);
         }
         User32.UnhookWindowsHookEx(_hook);
@@ -116,14 +119,27 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         if (_sink != 0) User32.DestroyWindow(_sink);
     }
 
-    /// <summary>一个仅消息窗口收鼠标的原始输入（后台也收）；失败时只用钩子里的指针坐标。</summary>
-    private void StartRawInput()
+    /// <summary>收鼠标原始输入的仅消息窗口。</summary>
+    private void CreateSink()
     {
         fixed (char* cls = "STATIC")
             _sink = User32.CreateWindowExW(0, cls, null, 0, 0, 0, 0, 0, -3 /* HWND_MESSAGE */, 0, Kernel32.GetModuleHandleW(null), 0);
-        var device = new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevInputSink, Target = _sink };
-        if (_sink == 0 || !RegisterRawInputDevices(&device, 1, (uint)sizeof(RawInputDevice)))
+    }
+
+    /// <summary>
+    /// 只在按住手势键期间收鼠标的原始输入（后台也收）：一直开着的话，鼠标、触摸板指针每动一下都要把这个线程多唤醒一次
+    /// （每秒几百上千次）。失败时只用钩子里的指针坐标。
+    /// </summary>
+    private void SetRawInput(bool on)
+    {
+        if (_sink == 0 || on == _rawRegistered) return;
+        var device = new RawInputDevice { UsagePage = 1, Usage = 2, Flags = on ? RidevInputSink : RidevRemove, Target = on ? _sink : 0 };
+        if (RegisterRawInputDevices(&device, 1, (uint)sizeof(RawInputDevice))) _rawRegistered = on;
+        else if (on && !_rawFailureLogged)
+        {
+            _rawFailureLogged = true;
             Log.Warn($"鼠标按键手势：注册原始输入失败（{Marshal.GetLastPInvokeError()}），改用指针坐标");
+        }
     }
 
     private void OnRawInput(nint handle)
@@ -133,7 +149,12 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         if (GetRawInputData(handle, RidInput, &raw, &size, 24) == unchecked((uint)-1) || raw.Type != RimTypeMouse) return;
         if (_held == MouseDragButton.None || (raw.Flags & MouseMoveAbsolute) != 0) return;
         if (raw.LastX == 0 && raw.LastY == 0) return;
-        _rawSeen = true;
+        if (!_rawSeen)
+        {
+            // 按下后才开始收原始输入：第一包对应的那次移动钩子已经按指针坐标算过了，不重复算
+            _rawSeen = true;
+            return;
+        }
         _recognizer.Move(raw.LastX, raw.LastY, HostClock.NowUs());
     }
 
@@ -173,6 +194,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
             {
                 var button = _held;
                 _held = MouseDragButton.None;
+                PostThreadMessageW(_threadId, WmRawOff, 0, 0);
                 // 没拖开：补发这次点击（在钩子回调之外发，见 Run）
                 if (!_recognizer.Release(now)) PostThreadMessageW(_threadId, WmApp, (nint)(int)button, 0);
                 return true;
@@ -186,6 +208,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         if (_suppressed()) return false;
         _held = cfg.Button;
         _rawSeen = false;
+        PostThreadMessageW(_threadId, WmRawOn, 0, 0);
         _lastX = m->X;
         _lastY = m->Y;
         var (kx, ky) = ScaleAt(m->X, m->Y, cfg.Sensitivity);

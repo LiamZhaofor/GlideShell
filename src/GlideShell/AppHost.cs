@@ -128,8 +128,7 @@ internal sealed class AppHost
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
         _altTab = new AltTabHotkeys(_ui, OnAltTab, () => _ui.Post(() => _switcher.KeyCommit(HostClock.NowUs())),
             () => _ui.Post(() => _switcher.KeyCancel(HostClock.NowUs())));
-        if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, () => (_config.Desktops.TravelMm, _config.Overview.TravelMm), Suppressed,
-            _mouseRouter.OnGesture);
+        UpdateMouseGestures();
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
         if (_simulate is null) _ui.PostDelayed(UpdateFirstCheckMs, UpdateTick); // 模拟模式（自动化验证）不联网
         WatchConfig();
@@ -377,6 +376,23 @@ internal sealed class AppHost
         _switcher.KeyStep(direction, HostClock.NowUs());
     }
 
+    /// <summary>
+    /// 鼠标按键手势只在选了按键时才装低级鼠标钩子（UI 线程）：钩子装着，Windows 每个鼠标事件（包括移动）都要切到钩子线程，
+    /// 高回报率的鼠标连续移动时能占到一个核心的百分之几；选「不用」就把钩子摘掉，开销为零。模拟模式不装。
+    /// </summary>
+    private void UpdateMouseGestures()
+    {
+        bool want = _simulate is null && _config.Mouse.Button != MouseDragButton.None;
+        if (want && _mouseGestures is null)
+            _mouseGestures = new MouseButtonGestures(() => _config.Mouse, () => (_config.Desktops.TravelMm, _config.Overview.TravelMm), Suppressed,
+                _mouseRouter.OnGesture);
+        else if (!want && _mouseGestures is not null)
+        {
+            _mouseGestures.Dispose();
+            _mouseGestures = null;
+        }
+    }
+
     /// <summary>触发角（UI 线程）：暂停、排除的程序在前台、全屏时不触发。</summary>
     private void OnHotCorner(HotCornerAction action)
     {
@@ -555,6 +571,7 @@ internal sealed class AppHost
         _activeMap = map;
         if (!_paused && mapChanged) TakeOverNativeGestures();
         _hotCorners?.Refresh();
+        UpdateMouseGestures();
         Log.Info("配置已重载");
     }
 

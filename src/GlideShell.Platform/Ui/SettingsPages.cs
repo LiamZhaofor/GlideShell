@@ -180,7 +180,7 @@ public sealed partial class SettingsWindow
         b.Section("按住鼠标键拖动");
         b.Paragraph("像 Mac Mouse Fix 一样：按住一个鼠标键拖动，左右切换桌面（桌面跟着指针走），上拉打开总览，下拉只看当前程序的窗口。只点一下仍是这个键原来的功能。");
         var buttons = SettingsModel.MouseButtonChoices;
-        b.Card("mouseButton", Icons.Mouse, "按住的键", "侧键一般在鼠标左侧拇指的位置",
+        b.Card("mouseButton", Icons.Mouse, "按住的键", "侧键一般在鼠标左侧拇指的位置。开着时移动鼠标会占一点 CPU（回报率越高越多），不用就选「不用」",
             new Item(ItemKind.Dropdown, "mouseButtonD")
             {
                 Options = buttons.Select(SettingsModel.MouseButtonLabel).ToList(),
