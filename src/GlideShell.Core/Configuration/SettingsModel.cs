@@ -65,6 +65,8 @@ public sealed record SettingsModel
     public bool TakeOverAltTab { get; init; }
 
     public bool CheckUpdates { get; init; }
+
+    public bool ThreeFingerTapMiddleClick { get; init; }
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
     public double CornerRadius { get; init; }
     public MouseDragButton MouseButton { get; init; }
@@ -148,6 +150,7 @@ public sealed record SettingsModel
             TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
             TakeOverAltTab = c.Switcher.TakeOverAltTab,
             CheckUpdates = c.Updates.Check,
+            ThreeFingerTapMiddleClick = c.ThreeFingerTapMiddleClick,
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
             CornerRadius = c.Overview.CornerRadius,
             MouseButton = c.Mouse.Button,
@@ -220,6 +223,7 @@ public sealed record SettingsModel
             // 与默认映射一致时不写自定义映射，以后默认映射调整时自动跟上
             Bindings = isDefault ? null : bindings,
             ThreeFingerDrag = ThreeFingerDrag,
+            ThreeFingerTapMiddleClick = ThreeFingerTapMiddleClick,
             PauseInFullscreen = PauseInFullscreen,
             Recognition = c.Recognition with { SlopMm = SlopMm, TapMaxMoveMm = Math.Min(c.Recognition.TapMaxMoveMm, SlopMm) },
             Overview = c.Overview with

@@ -34,19 +34,23 @@ public enum RestoreAction
 /// 计算「要接管哪些系统手势」与「怎样还原」（纯函数）。原则：
 /// <list type="bullet">
 /// <item>只接管映射表里 GlideShell 绑定的（指数, 轴）；同指数的其他方向保持用户当前的实际效果。</item>
-/// <item>轻点（中键等）永远不动。</item>
+/// <item>轻点不动，只有一个例外：GlideShell 自己做三指轻点中键时，系统的三指轻点置为「无」（否则会各点一次）。</item>
 /// <item>某指数的总开关是预设模式时，先展开成自定义模式下的等效方向值，再把被接管的方向置为「无」。</item>
 /// </list>
 /// </summary>
 public static class TakeoverPlanner
 {
     /// <param name="current">注册表当前值（null = 不存在，Explorer 使用缺省值）。</param>
+    /// <param name="threeFingerTap">GlideShell 自己处理三指轻点（中键）：系统的三指轻点置为「无」。</param>
     /// <returns>需要写入的项（已与当前值相同的不列出）与警告。</returns>
     public static (IReadOnlyList<TakeoverChange> Changes, IReadOnlyList<string> Warnings) Plan(
-        GestureMap map, Func<string, int?> current)
+        GestureMap map, Func<string, int?> current, bool threeFingerTap = false)
     {
         var changes = new List<TakeoverChange>();
         var warnings = new List<string>();
+        if (threeFingerTap && current(TouchpadSettings.ThreeFingerTap.Name) != TouchpadSettings.ActionNothing)
+            changes.Add(new TakeoverChange(TouchpadSettings.ThreeFingerTap.Name, TouchpadSettings.ThreeFingerTap.Id,
+                current(TouchpadSettings.ThreeFingerTap.Name), TouchpadSettings.ActionNothing));
         foreach (int fingers in new[] { 3, 4 })
         {
             bool vertical = map.Resolve(fingers, GestureAxis.Vertical) != GestureAction.None;

@@ -98,7 +98,7 @@ internal sealed class AppHost
         _router = new GestureRouter(() => _activeMap, Target, Suppressed);
         // 鼠标按键手势：按住拖动左右 = 切桌面、上下 = 总览（下拉在收起态是应用窗口视图），与触摸板共用控制器
         _mouseRouter = new GestureRouter(() => MouseMap, Target, Suppressed);
-        _recognizer = new GestureRecognizer(_config.Recognition, _router.OnGesture);
+        _recognizer = new GestureRecognizer(_config.Recognition, OnGesture);
 
         string? inputProblem = _simulate is null ? StartInput() : null;
         if (_simulate is null)
@@ -172,6 +172,20 @@ internal sealed class AppHost
     /// </summary>
     private GestureMap ActiveMap(GlideShellConfig cfg)
         => new(cfg.EffectiveMap.Bindings.Where(b => b.Action != GestureAction.None && Target(b.Action) is not null).ToList());
+
+    /// <summary>
+    /// 识别器的回调（输入线程）：三指轻点发一次鼠标中键，其余交给路由。系统的三指轻点在接管期间是「无」，不会再点一次；
+    /// 暂停时系统设置已还原，交给系统。排除的程序、全屏时照样发——中键是指针的基本功能，不是手势，系统的又已经关着。
+    /// </summary>
+    private void OnGesture(GestureEvent e)
+    {
+        if (e.Kind == GestureKind.Tap)
+        {
+            if (e.Fingers == 3 && _config.ThreeFingerTapMiddleClick && !_paused && _simulate is null) MouseButtonGestures.SendClick(MouseDragButton.Middle);
+            return;
+        }
+        _router.OnGesture(e);
+    }
 
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>
     private bool Suppressed()
@@ -388,7 +402,7 @@ internal sealed class AppHost
 
     private void TakeOverNativeGestures()
     {
-        var result = _native.TakeOver(_activeMap);
+        var result = _native.TakeOver(_activeMap, _config.ThreeFingerTapMiddleClick);
         foreach (var m in result.Messages) Log.Info($"系统手势：{m}");
         if (!result.Verified) RetryVerify(1, ++_takeoverGeneration);
     }
@@ -535,9 +549,9 @@ internal sealed class AppHost
         var old = _config;
         LoadConfig();
         var cfg = _config;
-        if (cfg.Recognition != old.Recognition) _recognizer = new GestureRecognizer(cfg.Recognition, _router.OnGesture);
+        if (cfg.Recognition != old.Recognition) _recognizer = new GestureRecognizer(cfg.Recognition, OnGesture);
         var map = ActiveMap(cfg);
-        bool mapChanged = !map.Bindings.SequenceEqual(_activeMap.Bindings);
+        bool mapChanged = !map.Bindings.SequenceEqual(_activeMap.Bindings) || cfg.ThreeFingerTapMiddleClick != old.ThreeFingerTapMiddleClick;
         _activeMap = map;
         if (!_paused && mapChanged) TakeOverNativeGestures();
         _hotCorners?.Refresh();

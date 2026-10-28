@@ -107,7 +107,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
-            if (msg.message == WmApp) Replay((MouseDragButton)(int)msg.wParam);
+            if (msg.message == WmApp) SendClick((MouseDragButton)(int)msg.wParam);
             else if (msg.message == WmInput) OnRawInput(msg.lParam);
             else User32.DispatchMessageW(&msg);
         }
@@ -221,8 +221,11 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         };
     }
 
-    /// <summary>补发一次点击（按下 + 松开），带标记让钩子放行。</summary>
-    private static void Replay(MouseDragButton button)
+    /// <summary>
+    /// 发一次点击（按下 + 松开），带标记让钩子放行：按键手势没拖开时补发原来的点击，三指轻点的中键也用它
+    /// （按住中键拖动的手势开着时，不带标记的中键会被钩子当成真的按下）。
+    /// </summary>
+    public static void SendClick(MouseDragButton button)
     {
         var inputs = stackalloc MouseInput[2];
         (uint downFlag, uint upFlag, uint data) = button switch

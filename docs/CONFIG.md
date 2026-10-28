@@ -15,6 +15,7 @@
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `threeFingerDrag` | `false` | 三指拖移：三指滑动 = 按住左键拖动。开启后三指整组让给拖移，总览改为四指上下、切换窗口没有手势（同 macOS）。三指轻点（中键）不受影响 |
+| `threeFingerTapMiddleClick` | `true` | 三指轻点 = 鼠标中键，由 GlideShell 自己识别并发送中键点击（轻点：按下到全部抬起不超过 `recognition.tapMaxDurationMs`、质心移动不超过 `recognition.tapMaxMoveMm`）。开着时系统自己的三指轻点在接管期间置为「无」（两边不会各点一次），退出、暂停时还原成你原来的设置；关掉后三指轻点交还 Windows 的设置。排除的程序、全屏时照样有效（中键是指针的基本功能） |
 | `excludedProcesses` | `[]` | 前台是这些程序时不接管手势（进程名，不含 `.exe`，不区分大小写），例如 `["mstsc", "vmware"]` |
 | `pauseInFullscreen` | `true` | 前台是全屏程序（游戏、演示、视频）时不接管手势 |
 | `hotCorners` | 都是 `None` | 触发角，见下文 |

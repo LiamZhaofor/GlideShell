@@ -40,10 +40,28 @@ public class TakeoverPlannerTests
     }
 
     [Fact]
-    public void Taps_are_never_touched()
+    public void Taps_are_not_touched_unless_glideshell_does_the_three_finger_tap()
     {
         var (changes, _) = TakeoverPlanner.Plan(GestureMap.Default, Reg(ThisMachine));
         Assert.DoesNotContain(changes, c => c.Name.Contains("Tap", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Three_finger_tap_is_turned_off_while_glideshell_sends_the_middle_click_and_restored_after()
+    {
+        var (changes, _) = TakeoverPlanner.Plan(GestureMap.Default, Reg(ThisMachine), threeFingerTap: true);
+        var tap = Assert.Single(changes, c => c.Name.Contains("Tap", StringComparison.Ordinal));
+        Assert.Equal("ThreeFingerTapEnabled", tap.Name);
+        Assert.Equal(4, tap.Original); // 用户原来的中键
+        Assert.Equal(0, tap.Written); // 接管期间系统不再点一次
+
+        var during = Apply(ThisMachine, changes);
+        var restore = TakeoverPlanner.PlanRestore(new TakeoverRecord(DateTimeOffset.Now, "test", changes), Reg(during));
+        Assert.Equal(RestoreAction.WriteOriginal, restore.Single(p => p.Change.Name == "ThreeFingerTapEnabled").Action);
+
+        // 系统本来就是「无」：不用改
+        var off = new Dictionary<string, int>(ThisMachine) { ["ThreeFingerTapEnabled"] = 0 };
+        Assert.DoesNotContain(TakeoverPlanner.Plan(GestureMap.Default, Reg(off), threeFingerTap: true).Changes, c => c.Name == "ThreeFingerTapEnabled");
     }
 
     [Fact]

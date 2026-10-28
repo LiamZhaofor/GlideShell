@@ -112,6 +112,8 @@ public sealed partial class SettingsWindow
         }
         b.Card("drag", Icons.Move, "三指拖移", "三指滑动等于按住左键拖动（像 Mac 的三指拖移）。开启后三指只用来拖动，窗口总览改为四指上下滑。",
             Toggle("dragT", () => _model.ThreeFingerDrag, v => _model = _model.WithThreeFingerDrag(v)), 96);
+        b.Card("tap", Icons.Mouse, "三指轻点 = 鼠标中键", "三指轻轻点一下等于按鼠标中键（在新标签页打开链接、关闭标签页）。开着时 Windows 自己的三指轻点暂停，不会点两次",
+            Toggle("tapT", () => _model.ThreeFingerTapMiddleClick, v => _model = _model with { ThreeFingerTapMiddleClick = v }), 96);
 
         b.Section("灵敏度");
         var presets = SensitivityPreset.All;

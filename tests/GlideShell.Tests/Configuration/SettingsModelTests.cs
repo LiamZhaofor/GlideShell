@@ -44,6 +44,15 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Three_finger_tap_middle_click_is_on_by_default_and_round_trips()
+    {
+        var config = new GlideShellConfig();
+        Assert.True(SettingsModel.FromConfig(config).ThreeFingerTapMiddleClick);
+        var (saved, _) = (SettingsModel.FromConfig(config) with { ThreeFingerTapMiddleClick = false }).ApplyTo(config);
+        Assert.False(ConfigStore.Parse(ConfigStore.Serialize(saved)).Config.ThreeFingerTapMiddleClick);
+    }
+
+    [Fact]
     public void Update_check_is_on_by_default_and_round_trips()
     {
         var config = new GlideShellConfig();

@@ -168,6 +168,12 @@ public sealed record GlideShellConfig
     /// <summary>三指拖移（P6）。开启后三指整组让给拖移，总览等改为四指。</summary>
     public bool ThreeFingerDrag { get; set; }
 
+    /// <summary>
+    /// 三指轻点 = 鼠标中键，由 GlideShell 自己识别并发送中键点击（不依赖系统的三指轻点，有的机器上系统的会失灵）。
+    /// 开启时系统自己的三指轻点在接管期间置为「无」，两边不会各点一次；退出、暂停时还原。关掉后三指轻点交还 Windows 的设置。
+    /// </summary>
+    public bool ThreeFingerTapMiddleClick { get; set; } = true;
+
     public OverviewConfig Overview { get; set; } = new();
 
     public SwitcherConfig Switcher { get; set; } = new();

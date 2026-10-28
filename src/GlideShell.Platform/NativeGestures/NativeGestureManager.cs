@@ -33,7 +33,8 @@ public sealed class NativeGestureManager(string? recordPath = null)
     /// 接管映射表需要的系统手势。先还原旧记录（崩溃残留、映射表变更），再从用户的原生设置出发重新规划，
     /// 保证记录里的「原值」永远是用户自己的设置。
     /// </summary>
-    public NativeGestureResult TakeOver(GestureMap map)
+    /// <param name="threeFingerTap">GlideShell 自己做三指轻点中键：系统的三指轻点一并接管（置为「无」）。</param>
+    public NativeGestureResult TakeOver(GestureMap map, bool threeFingerTap = false)
     {
         var messages = new List<string>();
         if (LoadRecord() is { IsEmpty: false })
@@ -42,7 +43,7 @@ public sealed class NativeGestureManager(string? recordPath = null)
             messages.AddRange(restored.Messages);
         }
 
-        var (changes, warnings) = TakeoverPlanner.Plan(map, ReadDword);
+        var (changes, warnings) = TakeoverPlanner.Plan(map, ReadDword, threeFingerTap);
         messages.AddRange(warnings);
         if (changes.Count == 0)
         {
