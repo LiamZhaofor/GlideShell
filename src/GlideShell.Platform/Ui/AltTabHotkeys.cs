@@ -4,7 +4,8 @@ namespace GlideShell.Platform.Ui;
 
 /// <summary>
 /// 接管 Alt+Tab：按住 Alt 时的 Tab / Shift+Tab 在低级键盘钩子里吞掉，交给 <c>onStep</c>（+1 下一个 / −1 上一个）。
-/// 会话进行中（Alt 还按着）：←/→ 也移动一格，Esc 取消（<c>onCancel</c>），Enter 立即切换（<c>onCommit</c>），其余按键吞掉不处理；
+/// 会话进行中（Alt 还按着）：←/→ 也移动一格，Esc 取消（<c>onCancel</c>），Enter 立即切换（<c>onCommit</c>），
+/// Delete 关闭选中的窗口（<c>onClose</c>，同 Windows 原生），其余按键吞掉不处理；
 /// 松开 Alt 时切换（<c>onCommit</c>）。Alt 的松开照常交给系统，否则系统里 Alt 的按键状态会卡在按下。
 /// 开始接管时补发一个未分配的虚拟键：否则前台程序看到 Alt 按下又松开、中间没有别的键，会激活自己的菜单栏。
 /// <c>onStep</c> 第一次返回 false 表示这次不接管（功能关闭、暂停、排除的程序等），Tab 照常交给系统的 Alt+Tab。
@@ -12,7 +13,7 @@ namespace GlideShell.Platform.Ui;
 /// </summary>
 public sealed class AltTabHotkeys : IDisposable
 {
-    private const uint VkTab = 0x09, VkEnter = 0x0D, VkEscape = 0x1B, VkLeft = 0x25, VkRight = 0x27, VkLWin = 0x5B, VkRWin = 0x5C, VkUnassigned = 0xE8;
+    private const uint VkTab = 0x09, VkEnter = 0x0D, VkEscape = 0x1B, VkDelete = 0x2E, VkLeft = 0x25, VkRight = 0x27, VkLWin = 0x5B, VkRWin = 0x5C, VkUnassigned = 0xE8;
     private const uint VkShift = 0x10, VkControl = 0x11, VkAlt = 0x12, VkLShift = 0xA0, VkRShift = 0xA1, VkLControl = 0xA2, VkRControl = 0xA3, VkLAlt = 0xA4, VkRAlt = 0xA5;
 
     /// <summary>会话中每隔多久确认一次 Alt 还按着（钩子超时被系统跳过时可能收不到 Alt 的松开，切换条不能一直挂着）。</summary>
@@ -21,13 +22,14 @@ public sealed class AltTabHotkeys : IDisposable
     private readonly UiThread _ui;
     private readonly KeyboardHook _hook;
     private readonly Func<int, bool> _onStep;
-    private readonly Action _onCommit, _onCancel;
+    private readonly Action _onCommit, _onCancel, _onClose;
     private readonly HashSet<uint> _swallowed = []; // 吞掉了按下的键：它们的松开也要吞
     private bool _active;
     private bool _disposed;
 
-    public AltTabHotkeys(UiThread ui, Func<int, bool> onStep, Action onCommit, Action onCancel)
+    public AltTabHotkeys(UiThread ui, Func<int, bool> onStep, Action onCommit, Action onCancel, Action onClose)
     {
+        _onClose = onClose;
         _ui = ui;
         _onStep = onStep;
         _onCommit = onCommit;
@@ -82,6 +84,9 @@ public sealed class AltTabHotkeys : IDisposable
                 break;
             case VkEnter:
                 End(commit: true);
+                break;
+            case VkDelete:
+                _onClose(); // 会话继续：选中项落到下一个窗口
                 break;
         }
         return true;

@@ -132,7 +132,11 @@ internal sealed partial class AppHost
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
         _altTab = new AltTabHotkeys(_ui, OnAltTab, () => _ui.Post(() => _switcher.KeyCommit(HostClock.NowUs())),
-            () => _ui.Post(() => _switcher.KeyCancel(HostClock.NowUs())));
+            () => _ui.Post(() => _switcher.KeyCancel(HostClock.NowUs())),
+            () => _ui.Post(() =>
+            {
+                if (_switcher.IsKeySession) _switcherPresenter.CloseSelected();
+            }));
         UpdateMouseGestures();
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
         if (_simulate is null) _ui.PostDelayed(UpdateFirstCheckMs, UpdateTick); // 模拟模式（自动化验证）不联网

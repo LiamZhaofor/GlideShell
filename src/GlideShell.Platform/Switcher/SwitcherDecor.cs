@@ -149,11 +149,14 @@ internal sealed unsafe class SwitcherDecor
         double appear = Math.Clamp(frame.Appear, 0, 1) * (frame.LaunchIndex >= 0 ? 1 - OverviewVisuals.SmoothStep(0, 0.6, frame.Launch) : 1);
         lock (_res.Backend.Gate)
         {
-            // 选中框：在 p 两侧的两项之间插值（两端橡皮筋时停在首 / 末项）
+            // 选中框：在 p 两侧的两项之间插值（两端橡皮筋时停在首 / 末项）；Alt+Tab 时鼠标悬停选中的，直接画在那一项上
             double c = Math.Clamp(p, 0, n - 1);
             int f = (int)Math.Floor(c);
             int g = Math.Min(n - 1, f + 1);
-            var rect = RectD.Lerp(layout.ItemRect(f, p), layout.ItemRect(g, p), c - f);
+            var rect = frame.RingIndex >= 0 && frame.RingIndex < n
+                ? layout.ItemRect(frame.RingIndex, p)
+                : RectD.Lerp(layout.ItemRect(f, p), layout.ItemRect(g, p), c - f);
+            double center = frame.RingIndex >= 0 ? frame.RingIndex : p; // 标题显示选中框那一项的
             double out_ = (RingGapDip + RingStrokeDip) * dpi;
             _ring?.Place(rect.Offset(-_origin.Left, -_origin.Top).Inflate(out_, out_), appear);
             _dim?.Place(_monitor.WorkArea.Offset(-_origin.Left, -_origin.Top), appear * DimOpacity); // 只暗切换条所在的这块屏
@@ -163,7 +166,7 @@ internal sealed unsafe class SwitcherDecor
             for (int i = 0; i < n; i++)
             {
                 if (labels[i] is not { } l || l.TextW <= 0) continue;
-                double d = i - p;
+                double d = i - center;
                 double alpha = appear * Math.Clamp(1 - Math.Abs(d), 0, 1);
                 double total = (l.HasIcon ? iconPx + gapPx : 0) + l.TextW;
                 double x0 = Math.Round(box.CenterX - total / 2 + d * SlideDip * dpi);

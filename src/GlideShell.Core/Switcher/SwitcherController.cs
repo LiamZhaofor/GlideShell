@@ -39,8 +39,9 @@ public sealed record SwitcherScene(IReadOnlyList<OverviewWindow> Windows, Switch
 /// 落定时宿主把窗口切到前台并撤层。没有在飞回时为 0。
 /// </param>
 /// <param name="LaunchIndex">正在飞回的窗口（-1 = 没有）。</param>
+/// <param name="RingIndex">选中框画在哪一项上（-1 = 跟着连续位置走）：Alt+Tab 时鼠标悬停选中，切换条不滚动，只有选中框移过去。</param>
 public readonly record struct SwitcherFrame(double Position, int Selected, double Appear, TransitionPhase Phase, bool Visible, double Launch = 0,
-    int LaunchIndex = -1);
+    int LaunchIndex = -1, int RingIndex = -1);
 
 /// <summary>
 /// 横滑跟手切换窗口：连续位置 p（0 = 当前窗口）随手指 1:1 移动（手指向左，内容向左，下一个窗口进入中央），
@@ -70,7 +71,8 @@ public sealed class SwitcherController : IGestureTarget
     private double _mmPerWindow = 22;
     private long _shownAtUs;
     private bool _keySession; // 键盘（Alt+Tab）会话中：Alt 还按着
-    private int _keyIndex;
+    private int _keyIndex; // 选中项
+    private int _stripIndex; // 切换条居中的那一项（鼠标悬停改选中项时不动）
 
     public SwitcherController(ISwitcherHost host, Func<SwitcherConfig> config)
     {
@@ -215,15 +217,72 @@ public sealed class SwitcherController : IGestureTarget
                 _visible = true;
                 _prewarming = false;
                 _shownAtUs = hostUs + KeyRevealDelayUs;
-                _keyIndex = 0;
+                _keyIndex = _stripIndex = 0;
                 _transition.SnapTo(0);
                 show = true;
             }
-            _keyIndex = ((_keyIndex + Math.Sign(direction)) % n + n) % n;
+            // 从选中项（可能是鼠标悬停选的）往下走一格，切换条把它滚到中间
+            _keyIndex = _stripIndex = ((_keyIndex + Math.Sign(direction)) % n + n) % n;
             _transition.AnimateTo(_keyIndex, hostUs);
         }
         if (show) _host.Show();
         return true;
+    }
+
+    /// <summary>键盘会话中选中的窗口（Delete 关它；不在会话中为 null）。</summary>
+    public long? KeySelectedWindow
+    {
+        get
+        {
+            lock (_gate) return _keySession && _keyIndex < _scene.Count ? _scene.Windows[_keyIndex].Id : null;
+        }
+    }
+
+    /// <summary>切换条此刻居中的那一项（键盘会话中，鼠标命中测试按它算卡片位置；不在会话中为 -1）。</summary>
+    public int KeyStripIndex
+    {
+        get { lock (_gate) return _keySession ? _stripIndex : -1; }
+    }
+
+    /// <summary>
+    /// Alt+Tab 时鼠标悬停在第 <paramref name="index"/> 项上：选中它，但切换条不滚动（滚过去的话指针下换成了别的卡片，会一直滚下去），
+    /// 只有选中框移过去。不在键盘会话中、下标越界返回 false。
+    /// </summary>
+    public bool KeyHover(int index)
+    {
+        lock (_gate)
+        {
+            if (!_keySession || index < 0 || index >= _scene.Count) return false;
+            _keyIndex = index;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 键盘会话中场景换了（Alt+Tab 里按 Delete 关掉了选中的窗口，宿主已重新准备场景并调用过 <see cref="SetScene"/>）：
+    /// 选中项留在原来的位置（现在是下一个窗口），切换条随之回到它。窗口都没了就收起。
+    /// </summary>
+    public void KeyAfterRemove(long hostUs)
+    {
+        bool hide = false;
+        lock (_gate)
+        {
+            if (!_keySession) return;
+            int n = _scene.Count;
+            if (n == 0)
+            {
+                _keySession = false;
+                _visible = false;
+                _transition.SnapTo(0);
+                hide = true;
+            }
+            else
+            {
+                _keyIndex = _stripIndex = Math.Min(_keyIndex, n - 1);
+                _transition.AnimateTo(_keyIndex, hostUs);
+            }
+        }
+        if (hide) _host.Hide(null);
     }
 
     /// <summary>
@@ -295,7 +354,7 @@ public sealed class SwitcherController : IGestureTarget
         double appear, launch;
         int launchIndex;
         double position = s.Value;
-        int keyIndex;
+        int keyIndex, ringIndex;
         lock (_gate)
         {
             if (_launchIndex < 0 && s.JustSettled && _visible && !_tracking && !_keySession)
@@ -325,6 +384,7 @@ public sealed class SwitcherController : IGestureTarget
             launch = _launchIndex >= 0 ? Math.Clamp(l.Value, 0, 1) : 0;
             launchIndex = _launchIndex;
             keyIndex = _keySession ? _keyIndex : -1;
+            ringIndex = _keySession && _keyIndex != _stripIndex ? _keyIndex : -1;
             if (hide)
             {
                 _launchIndex = -1;
@@ -334,6 +394,6 @@ public sealed class SwitcherController : IGestureTarget
         if (hide) _host.Hide(activate);
         // 键盘切换时标题直接是按到的那一项（弹簧经过中间各项时不让标题跟着闪）
         int selected = keyIndex >= 0 ? keyIndex : scene.Layout.Nearest(position);
-        return new SwitcherFrame(position, selected, appear, s.Phase, visible, launch, launchIndex);
+        return new SwitcherFrame(position, selected, appear, s.Phase, visible, launch, launchIndex, ringIndex);
     }
 }

@@ -317,6 +317,49 @@ public class SwitcherControllerTests
     }
 
     [Fact]
+    public void Hovering_a_card_selects_it_without_scrolling_the_strip()
+    {
+        var (c, host) = Create(windows: 5);
+        c.KeyStep(+1, 0);
+        Run(c, 0, 800_000);
+        Assert.True(c.KeyHover(3));
+        var f = Run(c, 800_000, 1_600_000);
+        Assert.Equal(1, f.Position, 2); // 切换条不动（还是第 1 项居中）
+        Assert.Equal(3, f.Selected);
+        Assert.Equal(3, f.RingIndex); // 选中框移到悬停的那张
+        Assert.Equal(1, c.KeyStripIndex);
+
+        c.KeyStep(+1, 1_600_000); // 按 Tab：从悬停的那张往下走，切换条把它滚到中间
+        f = Run(c, 1_600_000, 2_600_000);
+        Assert.Equal(4, f.Selected);
+        Assert.Equal(4, f.Position, 2);
+        Assert.Equal(-1, f.RingIndex);
+
+        c.KeyHover(2);
+        c.KeyCommit(2_600_000);
+        Run(c, 2_600_000, 4_000_000);
+        Assert.Equal("Hide:102", host.Calls[^1]); // 松开 Alt：切到悬停选中的那个
+    }
+
+    [Fact]
+    public void Removing_the_selected_window_keeps_the_selection_in_place()
+    {
+        var (c, host) = Create(windows: 4);
+        c.KeyStep(+1, 0);
+        c.KeyStep(+1, 10_000);
+        c.KeyStep(+1, 20_000); // 选中最后一个（第 3 项）
+        var fewer = Enumerable.Range(0, 3).Select(i => new OverviewWindow(100 + i, $"W{i}", new RectD(0, 0, 1600, 1000), false, i == 0, 0, "p")).ToList();
+        c.SetScene(new SwitcherScene(fewer, SwitcherLayout.Create(fewer.Select(w => (w.Source.Width, w.Source.Height)).ToList(), new RectD(0, 0, 2560, 1528))), 30_000);
+        c.KeyAfterRemove(30_000);
+        Assert.Equal(2, Run(c, 30_000, 900_000).Selected); // 越界了：落到现在的最后一个
+
+        c.SetScene(SwitcherScene.Empty, 900_000);
+        c.KeyAfterRemove(900_000); // 全关了：收起
+        Assert.Equal("Hide:-", host.Calls[^1]);
+        Assert.False(c.IsKeySession);
+    }
+
+    [Fact]
     public void Keys_are_ignored_while_a_swipe_is_tracking()
     {
         var (c, _) = Create();

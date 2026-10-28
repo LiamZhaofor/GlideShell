@@ -70,6 +70,8 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     public void Show() => _ui.Post(() =>
     {
         if (!_prepared) Prepare();
+        _band?.SetClickThrough(!Controller.IsKeySession);
+        StartPointer();
         _band?.ShowBand();
         _shown = true;
         _render.Wake();
@@ -111,9 +113,105 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _decor?.HideAll(); // 装饰只改属性不提交，接着缩略图层的 HideAll 一起提交
         _layer?.HideAll();
         PutBack();
+        _band?.SetClickThrough(true);
         _band?.HideBand();
+        _closing.Clear();
         Release();
     }
+
+    // ---------- Alt+Tab：鼠标与 Delete ----------
+
+    private const double PointerSlopPx = 4;
+    private User32.POINT _pointerStart;
+    private bool _pointerMoved;
+    private readonly HashSet<long> _closing = []; // 这次会话里按 Delete 关掉的窗口：重新准备场景时不再列出
+
+    /// <summary>会话开始：记下指针位置。切换条出现在静止的指针下面时系统也会发一次移动，真的动了才算悬停。</summary>
+    private void StartPointer()
+    {
+        User32.POINT p;
+        User32.GetCursorPos(&p);
+        _pointerStart = p;
+        _pointerMoved = false;
+    }
+
+    /// <summary>UI 线程：切换条窗口上的鼠标（只在 Alt+Tab 时才收得到）。悬停选中、点卡片切过去、点空白处取消。</summary>
+    private void OnPointer(bool click, double x, double y)
+    {
+        if (!Controller.IsKeySession) return;
+        if (!click && !_pointerMoved)
+        {
+            if (Math.Abs(x - _pointerStart.X) < PointerSlopPx && Math.Abs(y - _pointerStart.Y) < PointerSlopPx) return;
+            _pointerMoved = true;
+        }
+        int hit = CardAt(x, y);
+        long now = HostClock.NowUs();
+        if (!click)
+        {
+            if (hit >= 0) Controller.KeyHover(hit);
+            return;
+        }
+        if (hit >= 0)
+        {
+            Controller.KeyHover(hit);
+            Controller.KeyCommit(now);
+        }
+        else Controller.KeyCancel(now);
+    }
+
+    /// <summary>指针下的卡片（按切换条居中的那一项算位置；两端淡得看不清的不算），没有返回 -1。</summary>
+    private int CardAt(double x, double y)
+    {
+        var scene = Controller.Scene;
+        int strip = Controller.KeyStripIndex;
+        if (strip < 0) return -1;
+        for (int i = 0; i < scene.Count; i++)
+        {
+            var r = scene.Layout.ItemRect(i, strip);
+            if (r.Contains(x, y) && scene.Layout.EdgeFade(r) > 0.3) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// UI 线程：Alt+Tab 里按 Delete，关闭选中的窗口（像点它自己的「×」一样发 SC_CLOSE）。之后每 50ms 看一次：
+    /// 窗口没了就从切换条上移走、选中项落到下一个；弹出了确认框（例如「是否保存」）或 1.5 秒后还在，就切过去让用户看到它在问什么。
+    /// </summary>
+    public void CloseSelected()
+    {
+        if (Controller.KeySelectedWindow is not { } id || _closing.Contains(id)) return;
+        User32.PostMessageW((nint)id, 0x0112 /* WM_SYSCOMMAND */, 0xF060 /* SC_CLOSE */, 0);
+        Log.Info($"切换条：关闭窗口 0x{id:X}");
+        WatchClose(id, Environment.TickCount64 + 1500);
+    }
+
+    private void WatchClose(long id, long deadline) => _ui.PostDelayed(50, () =>
+    {
+        if (!_shown || !Controller.IsKeySession) return;
+        nint hwnd = (nint)id;
+        if (!User32.IsWindow(hwnd) || !User32.IsWindowVisible(hwnd))
+        {
+            _closing.Add(id);
+            Prepare(); // 按此刻的窗口重新准备（不含关掉的），缩略图注册尽量复用
+            Controller.KeyAfterRemove(HostClock.NowUs());
+            if (_shown && Controller.IsKeySession)
+            {
+                _band?.SetClickThrough(false); // 横带可能换了一个（铺的屏变了）
+                _band?.ShowBand();
+            }
+            return;
+        }
+        nint popup = User32.GetWindow(hwnd, 6 /* GW_ENABLEDPOPUP */);
+        if ((popup != 0 && popup != hwnd) || Environment.TickCount64 >= deadline)
+        {
+            Log.Info($"切换条：窗口 0x{id:X} 没有直接关掉（{(popup != 0 && popup != hwnd ? "弹出了对话框" : "超时")}），切过去");
+            var scene = Controller.Scene;
+            int index = Enumerable.Range(0, scene.Count).FirstOrDefault(i => scene.Windows[i].Id == id, -1);
+            if (index >= 0 && Controller.KeyHover(index)) Controller.KeyCommit(HostClock.NowUs());
+            return;
+        }
+        WatchClose(id, deadline);
+    });
 
     /// <summary>飞回的窗口放回缩略图一支（下次会话复用这一层）。</summary>
     private void PutBack()
@@ -153,6 +251,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         var monitors = Monitors.Enumerate();
         if (monitors.Count == 0) return;
         var windows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet());
+        if (_closing.Count > 0) windows.RemoveAll(w => _closing.Contains(w.Id));
         // 第 0 项必须是当前前台窗口（置顶窗口在 Z 序里可能排在它前面）
         int fg = windows.FindIndex(w => w.IsForeground);
         if (fg > 0)
@@ -194,7 +293,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     {
         DisposeComposition();
         _band?.Dispose();
-        _band = new SwitcherBand(monitor, bandRect, windowRect == bandRect ? null : windowRect);
+        _band = new SwitcherBand(monitor, bandRect, windowRect == bandRect ? null : windowRect) { OnPointer = OnPointer };
     }
 
     /// <summary>共享缩略图 + 合成层装饰；不可用或失败时返回 false（用经典缩略图）。</summary>
@@ -445,12 +544,28 @@ internal sealed unsafe class SwitcherBand : NativeWindow
 
     public void HideBand() => User32.ShowWindow(Handle, User32.SW_HIDE);
 
+    /// <summary>鼠标点击（false 为移动），屏幕坐标。只在不穿透时（Alt+Tab）收得到。</summary>
+    public Action<bool, double, double>? OnPointer { get; init; }
+
+    /// <summary>鼠标穿透（三指滑动时）还是接收鼠标（Alt+Tab 时：悬停选中、点击切换）。</summary>
+    public void SetClickThrough(bool through)
+    {
+        const nint Transparent = 0x20; // WS_EX_TRANSPARENT
+        nint style = User32.GetWindowLongPtrW(Handle, User32.GWL_EXSTYLE);
+        nint next = through ? style | Transparent : style & ~Transparent;
+        if (next != style) User32.SetWindowLongPtrW(Handle, User32.GWL_EXSTYLE, next);
+    }
+
     protected override nint? WndProc(uint msg, nint wParam, nint lParam)
     {
         switch (msg)
         {
             case User32.WM_MOUSEACTIVATE:
                 return User32.MA_NOACTIVATE;
+            case User32.WM_MOUSEMOVE:
+            case User32.WM_LBUTTONDOWN:
+                OnPointer?.Invoke(msg == User32.WM_LBUTTONDOWN, WindowRect.Left + (short)(lParam & 0xFFFF), WindowRect.Top + (short)((lParam >> 16) & 0xFFFF));
+                return 0;
             case User32.WM_ERASEBKGND:
                 return 1;
             case User32.WM_PAINT:
