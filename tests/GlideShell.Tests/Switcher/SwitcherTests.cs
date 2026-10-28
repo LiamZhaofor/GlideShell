@@ -288,14 +288,27 @@ public class SwitcherControllerTests
     }
 
     [Fact]
-    public void Escape_returns_to_the_current_window_without_switching()
+    public void Escape_hides_right_away_without_a_fly_back()
     {
         var (c, host) = Create();
         c.KeyStep(+1, 0);
         Run(c, 0, 500_000);
         c.KeyCancel(500_000);
-        Run(c, 500_000, 2_500_000);
+        Assert.Equal("Hide:-", host.Calls[^1]); // 立刻撤层，不等飞回
+        Assert.False(c.IsVisible);
+    }
+
+    [Fact]
+    public void Choosing_the_current_window_again_hides_without_replaying_its_animation()
+    {
+        var (c, host) = Create(windows: 3);
+        c.KeyStep(+1, 0);
+        c.KeyStep(+1, 10_000);
+        c.KeyStep(+1, 20_000); // 绕一圈回到第 0 项（当前窗口）
+        Run(c, 20_000, 800_000);
+        c.KeyCommit(800_000);
         Assert.Equal("Hide:-", host.Calls[^1]);
+        Assert.Equal(-1, c.Sample(810_000).LaunchIndex); // 没有飞回
     }
 
     [Fact]

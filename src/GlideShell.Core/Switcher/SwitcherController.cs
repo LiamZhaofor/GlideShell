@@ -286,12 +286,12 @@ public sealed class SwitcherController : IGestureTarget
     }
 
     /// <summary>
-    /// 松开 Alt（或按回车）：切换到选中的窗口。切换条还没淡入（快速按一下）就直接切过去、立刻撤层；
+    /// 松开 Alt（或按回车）：切换到选中的窗口。切换条还没淡入（快速按一下）就直接切过去、立刻撤层；选中的是当前窗口也立刻撤层；
     /// 否则选中的缩略图从切换条飞回窗口原位，落定时切换。
     /// </summary>
     public void KeyCommit(long hostUs) => EndKeySession(commit: true, hostUs);
 
-    /// <summary>Esc：不切换。切换条已出现时当前窗口飞回原位再撤层（与手势滑回原处一样）。</summary>
+    /// <summary>Esc：不切换，直接撤层。</summary>
     public void KeyCancel(long hostUs) => EndKeySession(commit: false, hostUs);
 
     private void EndKeySession(bool commit, long hostUs)
@@ -303,7 +303,9 @@ public sealed class SwitcherController : IGestureTarget
             if (!_keySession) return;
             _keySession = false;
             int index = commit ? _keyIndex : 0;
-            if (hostUs < _shownAtUs)
+            // 还没淡入（快速按一下），或者选回了当前窗口 / 取消了：直接撤层。当前窗口本来就在原位，
+            // 再让它从切换条飞回去像是又打开了一次（三指手势滑回原处时卡片跟手缩回是连续的倒退，那边照旧）
+            if (hostUs < _shownAtUs || index == 0)
             {
                 hideNow = true;
                 activate = index > 0 ? _scene.Windows[index].Id : null;
