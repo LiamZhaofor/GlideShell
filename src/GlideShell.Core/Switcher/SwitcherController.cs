@@ -46,11 +46,15 @@ public readonly record struct SwitcherFrame(double Position, int Selected, doubl
 /// 横滑跟手切换窗口：连续位置 p（0 = 当前窗口）随手指 1:1 移动（手指向左，内容向左，下一个窗口进入中央），
 /// 松手按投影落点吸附到最近的窗口，同时选中的缩略图飞回窗口的真实位置（<see cref="SwitcherFrame.Launch"/>），
 /// 落定时切换前台、撤层，画面与真实桌面无缝衔接。两端有橡皮筋。动画中（包括飞回途中）再次滑动从当前位置接管。
+/// 也可以用键盘驱动（Alt+Tab，见 <see cref="KeyStep"/>）：每按一次 Tab 选中项弹簧移动一格，松开 Alt 时同样飞回。
 /// 线程约定与 <see cref="OverviewController"/> 相同。
 /// </summary>
 public sealed class SwitcherController : IGestureTarget
 {
     private const double AppearMs = 120;
+
+    /// <summary>键盘切换时切换条延迟多久才淡入：快速按一下 Alt+Tab 直接切到上一个窗口，不闪出切换条（与系统的 Alt+Tab 一致）。</summary>
+    public const long KeyRevealDelayUs = 100_000;
 
     private readonly ISwitcherHost _host;
     private readonly Func<SwitcherConfig> _config;
@@ -65,6 +69,8 @@ public sealed class SwitcherController : IGestureTarget
     private bool _tracking;
     private double _mmPerWindow = 22;
     private long _shownAtUs;
+    private bool _keySession; // 键盘（Alt+Tab）会话中：Alt 还按着
+    private int _keyIndex;
 
     public SwitcherController(ISwitcherHost host, Func<SwitcherConfig> config)
     {
@@ -85,6 +91,12 @@ public sealed class SwitcherController : IGestureTarget
     public bool IsVisible
     {
         get { lock (_gate) return _visible; }
+    }
+
+    /// <summary>键盘会话中（Alt+Tab 按下、Alt 还没松开）。</summary>
+    public bool IsKeySession
+    {
+        get { lock (_gate) return _keySession; }
     }
 
     /// <summary>宿主准备好场景后调用（UI 线程）；窗口数在这时才确定，同步更新取值范围。</summary>
@@ -131,6 +143,7 @@ public sealed class SwitcherController : IGestureTarget
                 show = true;
             }
             _tracking = true;
+            _keySession = false; // 按着 Alt 又用手势滑：交给手势
             if (_launchIndex >= 0)
             {
                 // 飞回途中又滑起来：停止飞回，从当前位置接着跟手
@@ -182,6 +195,93 @@ public sealed class SwitcherController : IGestureTarget
         if (launching is { } id) _host.Launching(id);
     }
 
+    // ---------- 键盘（Alt+Tab，UI 线程） ----------
+
+    /// <summary>
+    /// Alt+Tab：第一次调用开始一次键盘会话（宿主须已准备好场景，第 0 个是当前窗口），<paramref name="direction"/> = +1 选中下一个窗口、
+    /// −1 选中最后一个（Alt+Shift+Tab）；之后每次移动一格，两端循环。选中项弹簧移到中央；切换条延迟 <see cref="KeyRevealDelayUs"/> 才淡入。
+    /// 正在跟手滑动、正在飞回或没有窗口时返回 false（不开始）。
+    /// </summary>
+    public bool KeyStep(int direction, long hostUs)
+    {
+        bool show = false;
+        lock (_gate)
+        {
+            int n = _scene.Count;
+            if (!_keySession)
+            {
+                if (_visible || n == 0) return false;
+                _keySession = true;
+                _visible = true;
+                _prewarming = false;
+                _shownAtUs = hostUs + KeyRevealDelayUs;
+                _keyIndex = 0;
+                _transition.SnapTo(0);
+                show = true;
+            }
+            _keyIndex = ((_keyIndex + Math.Sign(direction)) % n + n) % n;
+            _transition.AnimateTo(_keyIndex, hostUs);
+        }
+        if (show) _host.Show();
+        return true;
+    }
+
+    /// <summary>
+    /// 松开 Alt（或按回车）：切换到选中的窗口。切换条还没淡入（快速按一下）就直接切过去、立刻撤层；
+    /// 否则选中的缩略图从切换条飞回窗口原位，落定时切换。
+    /// </summary>
+    public void KeyCommit(long hostUs) => EndKeySession(commit: true, hostUs);
+
+    /// <summary>Esc：不切换。切换条已出现时当前窗口飞回原位再撤层（与手势滑回原处一样）。</summary>
+    public void KeyCancel(long hostUs) => EndKeySession(commit: false, hostUs);
+
+    private void EndKeySession(bool commit, long hostUs)
+    {
+        bool hideNow = false;
+        long? activate = null, launching = null;
+        lock (_gate)
+        {
+            if (!_keySession) return;
+            _keySession = false;
+            int index = commit ? _keyIndex : 0;
+            if (hostUs < _shownAtUs)
+            {
+                hideNow = true;
+                activate = index > 0 ? _scene.Windows[index].Id : null;
+                _visible = false;
+                _transition.SnapTo(0);
+            }
+            else
+            {
+                _launchIndex = index;
+                _launch.SnapTo(0);
+                _launch.AnimateTo(1, hostUs);
+                if (index > 0) launching = _scene.Windows[index].Id;
+            }
+        }
+        if (hideNow) _host.Hide(activate);
+        if (launching is { } id) _host.Launching(id);
+    }
+
+    /// <summary>
+    /// 飞回还没落定时立刻结束它（连按 Alt+Tab：下一次要从新的前台窗口算起）：返回 true 并给出要切到前台的窗口，
+    /// 撤层由调用方同步完成（不再调用 <see cref="ISwitcherHost.Hide"/>）。没有在飞回时返回 false。
+    /// </summary>
+    public bool FinishLaunch(out long? activate)
+    {
+        lock (_gate)
+        {
+            activate = null;
+            if (_launchIndex < 0 || _tracking || _keySession || !_visible) return false;
+            activate = _launchIndex > 0 ? _scene.Windows[_launchIndex].Id : null;
+            _launchIndex = -1;
+            _launch.SnapTo(0);
+            _visible = false;
+            _transition.SnapTo(0);
+            return true;
+        }
+    }
+
     // ---------- 渲染线程 ----------
 
     public SwitcherFrame Sample(long hostUs)
@@ -195,9 +295,10 @@ public sealed class SwitcherController : IGestureTarget
         double appear, launch;
         int launchIndex;
         double position = s.Value;
+        int keyIndex;
         lock (_gate)
         {
-            if (_launchIndex < 0 && s.JustSettled && _visible && !_tracking)
+            if (_launchIndex < 0 && s.JustSettled && _visible && !_tracking && !_keySession)
             {
                 // 兜底（没有松手事件就落定了，例如场景为空）：选中的缩略图从这里飞回窗口原位
                 _launchIndex = scene.Count == 0 ? -1 : (int)Math.Clamp(Math.Round(s.Value), 0, scene.Count - 1);
@@ -223,6 +324,7 @@ public sealed class SwitcherController : IGestureTarget
             appear = Math.Clamp((hostUs - _shownAtUs) / 1000.0 / AppearMs, 0, 1);
             launch = _launchIndex >= 0 ? Math.Clamp(l.Value, 0, 1) : 0;
             launchIndex = _launchIndex;
+            keyIndex = _keySession ? _keyIndex : -1;
             if (hide)
             {
                 _launchIndex = -1;
@@ -230,7 +332,8 @@ public sealed class SwitcherController : IGestureTarget
             }
         }
         if (hide) _host.Hide(activate);
-        int nearest = scene.Layout.Nearest(position);
-        return new SwitcherFrame(position, nearest, appear, s.Phase, visible, launch, launchIndex);
+        // 键盘切换时标题直接是按到的那一项（弹簧经过中间各项时不让标题跟着闪）
+        int selected = keyIndex >= 0 ? keyIndex : scene.Layout.Nearest(position);
+        return new SwitcherFrame(position, selected, appear, s.Phase, visible, launch, launchIndex);
     }
 }

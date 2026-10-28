@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>使用教程 — GlideShell</title>
-  <meta name="description" content="GlideShell 使用教程：安装、各个手势、窗口总览、桌面条、显示桌面、切换窗口与桌面、鼠标按键手势、触发角、设置与常见问题。">
+  <meta name="description" content="GlideShell 使用教程：安装、各个手势、窗口总览、桌面条、显示桌面、切换窗口（含 Alt+Tab）与桌面、鼠标按键手势、触发角、设置与常见问题。">
   <meta name="theme-color" content="#4f6cf0">
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/style.css">
@@ -143,9 +143,17 @@
         <p>显示桌面其实会把窗口最小化，所以从任务栏也能把它们一个个点回来。以管理员身份运行的程序，GlideShell 没有权限把它推开。</p>
       </div>
 
-      <h2 id="switcher">切换窗口（三指左右滑）</h2>
+      <h2 id="switcher">切换窗口（三指左右滑 / Alt+Tab）</h2>
       <p>三指左右滑，屏幕中央出现一排窗口缩略图，跟着手指平移，居中的那个带蓝色选中框。松手后选中的窗口从切换条飞回它的位置并切到前台。往回滑到最开始的窗口再松手，就什么也不切换。</p>
       <p>总览已经打开时，三指左右滑改为在总览里移动选中项。</p>
+      <h3>Alt+Tab</h3>
+      <p>键盘的 <span class="kbd">Alt</span> + <span class="kbd">Tab</span> 也换成了同一个切换条：</p>
+      <ul>
+        <li><strong>按住 <span class="kbd">Alt</span></strong>，每按一次 <span class="kbd">Tab</span> 选下一个窗口（<span class="kbd">Shift</span> + <span class="kbd">Tab</span> 选上一个，<span class="kbd">←</span> <span class="kbd">→</span> 也可以，到头会绕回来）。</li>
+        <li><strong>松开 <span class="kbd">Alt</span></strong>：选中的窗口从切换条飞回它的位置并切到前台。按 <span class="kbd">Esc</span> 取消，<span class="kbd">Enter</span> 立即切换。</li>
+        <li><strong>快速按一下</strong> Alt+Tab：直接切回上一个窗口，切换条不会出现（和 Windows 一样）。</li>
+      </ul>
+      <p>暂停、排除的程序在前台或全屏暂停时，Alt+Tab 仍是 Windows 自己的。不想要的话在「设置 → 总览与桌面 → 键盘」里关掉。</p>
 
       <h2 id="desktops">切换桌面（四指左右滑）</h2>
       <p>四指左右滑，相邻的桌面跟着手指滑进来；滑过一半或滑得够快就切过去。没有相邻桌面时会有橡皮筋回弹。</p>
@@ -171,7 +179,7 @@
         <tbody>
           <tr><td>首页</td><td>看看每个手势现在做什么；开机启动、全屏时暂停。</td></tr>
           <tr><td>触摸板手势</td><td>每个手势交给谁；三指拖移；灵敏度（高 / 标准 / 低），「细调」里可以分别调各手势要滑多远、拖移的指针速度。</td></tr>
-          <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、键盘切换桌面。</td></tr>
+          <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、Alt+Tab 与键盘切换桌面。</td></tr>
           <tr><td>鼠标与触发角</td><td>按住拖动的键与灵敏度；四个角的触发动作。</td></tr>
           <tr><td>排除的程序</td><td>哪些程序在前台时不接管手势。</td></tr>
           <tr><td>关于</td><td>版本、配置文件、日志、恢复默认设置。</td></tr>

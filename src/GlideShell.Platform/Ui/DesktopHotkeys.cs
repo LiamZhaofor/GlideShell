@@ -36,13 +36,17 @@ public sealed unsafe class DesktopHotkeys : IDisposable
         if (!ctrl || !win || Pressed(VkShift) || Pressed(VkAlt)) return false;
         if (!_onStep(vk == VkLeft ? -1 : 1)) return false;
         _swallowed = vk;
-        SuppressStartMenu();
+        SendUnassignedKey();
         return true;
     }
 
     private static bool Pressed(uint vk) => User32.GetAsyncKeyState((int)vk) < 0;
 
-    private static void SuppressStartMenu()
+    /// <summary>
+    /// 补发一次未分配的虚拟键（0xE8）按下与松开：夹在修饰键的按下与松开之间，系统就不会把它当成「单独按了一下」
+    /// （Win 单按弹出开始菜单、Alt 单按激活程序的菜单栏）。
+    /// </summary>
+    internal static void SendUnassignedKey()
     {
         var inputs = stackalloc User32.INPUT[2];
         inputs[0] = new User32.INPUT { type = User32.INPUT_KEYBOARD, ki = new User32.KEYBDINPUT { wVk = VkUnassigned } };

@@ -61,6 +61,8 @@ public sealed record SettingsModel
     public bool GroupByApp { get; init; }
     public bool AppWindows { get; init; }
     public bool TakeOverDesktopHotkeys { get; init; }
+
+    public bool TakeOverAltTab { get; init; }
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
     public double CornerRadius { get; init; }
     public MouseDragButton MouseButton { get; init; }
@@ -142,6 +144,7 @@ public sealed record SettingsModel
             GroupByApp = c.Overview.GroupByApp,
             AppWindows = c.Overview.AppWindows,
             TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
+            TakeOverAltTab = c.Switcher.TakeOverAltTab,
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
             CornerRadius = c.Overview.CornerRadius,
             MouseButton = c.Mouse.Button,
@@ -222,7 +225,7 @@ public sealed record SettingsModel
                 CornerRadius = CornerRadius,
             },
             Mouse = c.Mouse with { Button = MouseButton, Sensitivity = MouseSensitivity },
-            Switcher = c.Switcher with { MmPerWindow = MmPerWindow },
+            Switcher = c.Switcher with { MmPerWindow = MmPerWindow, TakeOverAltTab = TakeOverAltTab },
             // 界面用「系统默认」表达不接管切桌面，旧的 Enabled 开关统一置为 true，免得两处说法不一致
             Desktops = c.Desktops with { TravelMm = DesktopTravelMm, Enabled = true, TakeOverHotkeys = TakeOverDesktopHotkeys },
             HotCorners = c.HotCorners with { TopLeft = HotCorners[0], TopRight = HotCorners[1], BottomLeft = HotCorners[2], BottomRight = HotCorners[3] },

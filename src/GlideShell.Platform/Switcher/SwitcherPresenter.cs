@@ -81,7 +81,13 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _ui.PostDelayed(1500, () => WindowActivator.EnableTransitions(hwnd));
     });
 
-    public void Hide(long? activateWindowId) => _ui.Post(() =>
+    public void Hide(long? activateWindowId) => _ui.Post(() => HideNow(activateWindowId));
+
+    /// <summary>UI 线程：键盘会话开始前同步准备场景（按下 Alt+Tab 那一刻的窗口与前台）。</summary>
+    public void PrepareNow() => Prepare();
+
+    /// <summary>UI 线程：同步撤层并把 <paramref name="activateWindowId"/> 切到前台（连按 Alt+Tab 时提前结束上一次的飞回）。</summary>
+    public void HideNow(long? activateWindowId)
     {
         // 合成层模式下选中的缩略图已经飞到窗口原位、盖在它上面：先在覆盖层下面把窗口切到前台（最小化的不播系统动画直接还原），
         // 等 DWM 合成一帧再撤层，画面无缝衔接
@@ -95,7 +101,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
         _layer?.HideAll();
         _band?.HideBand();
         Release();
-    });
+    }
 
     public void Dispose()
     {

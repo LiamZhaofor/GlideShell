@@ -42,6 +42,7 @@ internal sealed class AppHost
     private TrayIcon? _tray;
     private HotKeys? _hotkeys;
     private DesktopHotkeys? _desktopKeys;
+    private AltTabHotkeys? _altTab;
     private HotCornerWatcher? _hotCorners;
     private ForegroundMonitor? _foreground;
     private PtpInputThread? _input;
@@ -122,6 +123,8 @@ internal sealed class AppHost
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
+        _altTab = new AltTabHotkeys(_ui, OnAltTab, () => _ui.Post(() => _switcher.KeyCommit(HostClock.NowUs())),
+            () => _ui.Post(() => _switcher.KeyCancel(HostClock.NowUs())));
         if (_simulate is null) _mouseGestures = new MouseButtonGestures(() => _config.Mouse, () => (_config.Desktops.TravelMm, _config.Overview.TravelMm), Suppressed,
             _mouseRouter.OnGesture);
         _hotCorners = new HotCornerWatcher(_ui, () => _config.HotCorners, OnHotCorner);
@@ -321,6 +324,39 @@ internal sealed class AppHost
         if (_switcher.IsVisible) return true;
         _desktopSwitch.Step(direction, now);
         return true;
+    }
+
+    /// <summary>
+    /// Alt+Tab（UI 线程，键盘钩子里）：返回 true 表示由 GlideShell 的切换条处理、吞掉这次 Tab。钩子里只做判断，
+    /// 枚举窗口等工作投递出去（钩子回调必须很快返回）。暂停、排除的程序在前台、全屏暂停、总览或切桌面进行中时交给系统。
+    /// </summary>
+    private bool OnAltTab(int direction)
+    {
+        var cfg = _config;
+        if (!_switcher.IsKeySession)
+        {
+            if (!cfg.Switcher.TakeOverAltTab || _paused || _overview.IsVisible || _desktopSwitch.IsVisible || _drag.IsDragging) return false;
+            var fg = _foreground?.Current;
+            if (fg is not null && cfg.IsExcluded(fg.ProcessName)) return false;
+            if (cfg.PauseInFullscreen && _foreground?.IsFullscreenNow() == true) return false;
+        }
+        _ui.Post(() => AltTabStep(direction));
+        return true;
+    }
+
+    /// <summary>
+    /// 键盘会话的一步（UI 线程）。第一步：上一次的飞回还没落定就立刻落定（新的会话要从新的前台窗口算起），
+    /// 再按此刻的窗口与前台准备场景。正在跟手滑动时什么也不做。
+    /// </summary>
+    private void AltTabStep(int direction)
+    {
+        if (!_switcher.IsKeySession)
+        {
+            if (_switcher.FinishLaunch(out long? activate)) _switcherPresenter.HideNow(activate);
+            else if (_switcher.IsVisible) return;
+            _switcherPresenter.PrepareNow();
+        }
+        _switcher.KeyStep(direction, HostClock.NowUs());
     }
 
     /// <summary>触发角（UI 线程）：暂停、排除的程序在前台、全屏时不触发。</summary>
@@ -634,6 +670,7 @@ internal sealed class AppHost
         Log.Info("正在退出");
         _configWatcher?.Dispose();
         _desktopKeys?.Dispose();
+        _altTab?.Dispose();
         _mouseGestures?.Dispose();
         _hotCorners?.Dispose();
         _input?.Dispose();

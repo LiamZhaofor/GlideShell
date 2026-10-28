@@ -156,7 +156,9 @@ public sealed partial class SettingsWindow
         SliderCard(b, "corner", "窗口圆角", "窗口在总览里缩小成卡片时的圆角（跟着窗口一起缩小）。0 = 保持窗口原样", 0, 32, 1, v => v == 0 ? "原样" : $"{v:0}",
             () => _model.CornerRadius, v => _model = _model with { CornerRadius = v }, icon: Icons.Desktop);
 
-        b.Section("虚拟桌面");
+        b.Section("键盘");
+        b.Card("altTab", Icons.Keyboard, "Alt+Tab 用切换条", "按住 Alt、每按一次 Tab 选下一个窗口，松开 Alt 切过去；快速按一下直接回到上一个窗口",
+            Toggle("altTabT", () => _model.TakeOverAltTab, v => _model = _model with { TakeOverAltTab = v }), 96);
         b.Card("desktopKeys", Icons.Keyboard, "键盘切换桌面也跟手", "Ctrl+Win+←/→ 用 GlideShell 的切换动画；总览开着时改为在总览里翻页",
             Toggle("desktopKeysT", () => _model.TakeOverDesktopHotkeys, v => _model = _model with { TakeOverDesktopHotkeys = v }, _env.DesktopsAvailable), 96,
             enabled: _env.DesktopsAvailable);

@@ -51,6 +51,12 @@ public sealed record SwitcherConfig
     /// <summary>横滑多少毫米切换一个窗口。</summary>
     public double MmPerWindow { get; set; } = 22;
 
+    /// <summary>
+    /// Alt+Tab 也用 GlideShell 的切换条（替代系统的）：按住 Alt 每按一次 Tab 移动一格，松开 Alt 切过去；快速按一下直接切到上一个窗口。
+    /// 暂停、排除的程序在前台、全屏暂停时仍交给系统。
+    /// </summary>
+    public bool TakeOverAltTab { get; set; } = true;
+
     public SpringConfig Spring { get; set; } = new() { Response = 0.3, DampingRatio = 0.9 };
 }
 

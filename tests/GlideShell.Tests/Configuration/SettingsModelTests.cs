@@ -31,6 +31,19 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Alt_tab_takeover_is_on_by_default_and_round_trips()
+    {
+        var config = new GlideShellConfig();
+        var model = SettingsModel.FromConfig(config);
+        Assert.True(model.TakeOverAltTab);
+
+        var (saved, problems) = (model with { TakeOverAltTab = false }).ApplyTo(config);
+        Assert.Empty(problems);
+        Assert.False(saved.Switcher.TakeOverAltTab);
+        Assert.False(ConfigStore.Parse(ConfigStore.Serialize(saved)).Config.Switcher.TakeOverAltTab);
+    }
+
+    [Fact]
     public void Default_config_round_trips_without_writing_a_custom_map()
     {
         var config = new GlideShellConfig();

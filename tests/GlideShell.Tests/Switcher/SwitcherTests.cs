@@ -215,4 +215,95 @@ public class SwitcherControllerTests
         c.Sample(10_000_000);
         Assert.Equal("Hide:-", host.Calls[^1]);
     }
+
+    // ---------- 键盘（Alt+Tab） ----------
+
+    /// <summary>逐帧取样到 <paramref name="until"/>（模拟渲染线程）。</summary>
+    private static SwitcherFrame Run(SwitcherController c, long from, long until)
+    {
+        var f = c.Sample(from);
+        for (long t = from; t <= until; t += 5_000) f = c.Sample(t);
+        return f;
+    }
+
+    [Fact]
+    public void Quick_alt_tab_switches_to_the_previous_window_without_showing_the_bar()
+    {
+        var (c, host) = Create();
+        Assert.True(c.KeyStep(+1, 0));
+        Assert.Equal(0, c.Sample(50_000).Appear); // 还在延迟里：切换条不可见
+        c.KeyCommit(60_000);
+
+        Assert.Equal("Hide:101", host.Calls[^1]); // 立刻切到上一个窗口，不等飞回
+        Assert.False(c.IsVisible);
+        Assert.False(c.IsKeySession);
+    }
+
+    [Fact]
+    public void Holding_alt_shows_the_bar_and_each_tab_moves_one_window()
+    {
+        var (c, host) = Create();
+        c.KeyStep(+1, 0);
+        c.KeyStep(+1, 30_000);
+        var f = Run(c, 30_000, 1_000_000);
+        Assert.Equal(2, f.Selected);
+        Assert.Equal(2, f.Position, 2);
+        Assert.Equal(1, f.Appear);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("Hide")); // 弹簧停住不等于松开 Alt
+
+        c.KeyCommit(1_000_000);
+        Run(c, 1_000_000, 3_000_000);
+        Assert.Equal("Hide:102", host.Calls[^1]); // 飞回落定后切过去
+    }
+
+    [Fact]
+    public void Shift_tab_starts_from_the_last_window_and_steps_wrap_around()
+    {
+        var (c, _) = Create(windows: 4);
+        c.KeyStep(-1, 0);
+        Assert.Equal(3, Run(c, 0, 800_000).Selected);
+        c.KeyStep(+1, 800_000);
+        Assert.Equal(0, Run(c, 800_000, 2_000_000).Selected); // 最后一个再往后回到第一个
+        c.KeyStep(-1, 2_000_000);
+        Assert.Equal(3, Run(c, 2_000_000, 3_000_000).Selected);
+    }
+
+    [Fact]
+    public void Escape_returns_to_the_current_window_without_switching()
+    {
+        var (c, host) = Create();
+        c.KeyStep(+1, 0);
+        Run(c, 0, 500_000);
+        c.KeyCancel(500_000);
+        Run(c, 500_000, 2_500_000);
+        Assert.Equal("Hide:-", host.Calls[^1]);
+    }
+
+    [Fact]
+    public void Alt_tab_during_a_fly_back_finishes_it_first()
+    {
+        var (c, host) = Create();
+        c.KeyStep(+1, 0);
+        Run(c, 0, 500_000);
+        c.KeyCommit(500_000);
+        c.Sample(550_000); // 正在飞回
+
+        Assert.False(c.KeyStep(+1, 560_000)); // 不能接着旧场景走
+        Assert.True(c.FinishLaunch(out long? activate));
+        Assert.Equal(101, activate);
+        Assert.False(c.IsVisible);
+        Run(c, 560_000, 2_000_000);
+        Assert.DoesNotContain("Hide:101", host.Calls); // 由调用方撤层，控制器不再回调
+        Assert.True(c.KeyStep(+1, 2_000_000)); // 之后可以开始新的会话
+    }
+
+    [Fact]
+    public void Keys_are_ignored_while_a_swipe_is_tracking()
+    {
+        var (c, _) = Create();
+        c.Begin(Ev(GesturePhase.Began, 0, 0, 0));
+        Assert.False(c.KeyStep(+1, 10_000));
+        Assert.False(c.IsKeySession);
+    }
 }
+
