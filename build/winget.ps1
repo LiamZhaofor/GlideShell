@@ -34,7 +34,7 @@ if (-not $a) { throw "$tag 里没有 $asset（先发布）" }
 if ($a.digest -notmatch '^sha256:([0-9a-fA-F]{64})$') { throw "$asset 没有 SHA-256 摘要" }
 $sha = $Matches[1].ToUpperInvariant()
 $date = ([datetime]$release.published_at).ToString("yyyy-MM-dd")
-$schema = "1.10.0"
+$schema = "1.12.0"
 
 $out = Join-Path $root "artifacts/winget/$Version"
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
