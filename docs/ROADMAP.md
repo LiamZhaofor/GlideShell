@@ -650,7 +650,7 @@ legacy/
 - 入口：设置「关于 → 更新」的「升级」（进度、失败原因、更新说明）、托盘菜单「升级到 x.y.z…」（先确认）、新版本通知（点了先确认）、`GlideShell.exe --upgrade`。
 - install.ps1 修正：发 `--quit` 用的可能是另一处安装的 exe，原来只等那个路径上的进程退出；现在也等要覆盖的那个 exe（含看门狗）都退出，免得复制时文件还被占着。
 - 真机验证：临时目录里放一个版本号为 1.6.0 的普通版，`--upgrade` 后 8 秒内从 GitHub 下载 1.6.2、SHA-256 校验通过、旧实例正常退出、1.6.2 在原处启动；开机启动与开始菜单没有被动到。
-- **winget**：`build/winget.ps1 -Version x.y.z` 从 GitHub Release 读发布包地址与 SHA-256，生成 `LiamZhaofor.GlideShell` 的四个清单（版本、安装、en-US、zh-CN；schema 1.10.0）到 `artifacts/winget/<版本>/` 并 `winget validate`（1.6.2 已通过）。zip 里的 exe 按便携应用装（命令别名 `glideshell`）：不跑 install.ps1，没有开始菜单快捷方式，开机启动在设置里开——要完全解决得做正式安装程序（MSI / MSIX），最好先有签名。提交到 microsoft/winget-pkgs 要用户同意；上架之前 README 与官网不写 `winget install`。
+- **winget**：`build/winget.ps1 -Version x.y.z` 从 GitHub Release 读发布包地址与 SHA-256，生成 `LiamZhaofor.GlideShell` 的四个清单（版本、安装、en-US、zh-CN；schema 1.10.0）到 `artifacts/winget/<版本>/` 并 `winget validate`（1.6.2 已通过）。zip 里的 exe 按便携应用装（命令别名 `glideshell`）：不跑 install.ps1，没有开始菜单快捷方式，开机启动在设置里开——要完全解决得做正式安装程序（MSI / MSIX），最好先有签名。提交到 microsoft/winget-pkgs 要用户同意；上架之前 README 与官网不写 `winget install`。2.0.0 发布后（schema 改为 winget-pkgs 当前要求的 1.12.0）用户同意提交：microsoft/winget-pkgs#464006（2026-10-28，等用户签 CLA 与审核）。
 
 ### 9.6 这一版不做
 
