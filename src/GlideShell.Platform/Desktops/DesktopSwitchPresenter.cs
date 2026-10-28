@@ -26,6 +26,11 @@ public sealed class DesktopSwitchPresenter : IDesktopSwitchHost, IDisposable
     private readonly VirtualDesktopService _desktops;
     private readonly SharedThumbnailSource _shared;
     private readonly RenderLoop _render;
+
+    /// <summary>最近一次渲染会话的帧统计与刷新周期（诊断用）。</summary>
+    public FrameStats LastRender => _render.LastSession;
+
+    public double RefreshPeriodMs => _render.RefreshPeriodMs;
     private readonly List<DesktopOverlay> _overlays = [];
     private volatile DesktopOverlay[] _renderOverlays = [];
     private DesktopSwitchController? _controller;

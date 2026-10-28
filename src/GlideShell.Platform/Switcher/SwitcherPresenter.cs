@@ -22,6 +22,11 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private readonly Func<double> _cornerRadius;
     private volatile float _radiusPx;
     private readonly RenderLoop _render;
+
+    /// <summary>最近一次渲染会话的帧统计与刷新周期（诊断用）。</summary>
+    public FrameStats LastRender => _render.LastSession;
+
+    public double RefreshPeriodMs => _render.RefreshPeriodMs;
     private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
     private OverlayComposition? _panelRoot, _content, _decorRoot; // 从下往上：变暗层、缩略图、文字与选中框
     private OverlayComposition? _launchRoot; // 最上面：飞回中的窗口（不裁剪，可以飞到别的屏上）

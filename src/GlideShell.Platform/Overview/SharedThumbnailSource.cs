@@ -18,6 +18,15 @@ public sealed class SharedThumbnailSource : IDisposable
     /// <param name="enabled">配置开关（overview.sharedThumbnails），每次取用时读。</param>
     public SharedThumbnailSource(Func<bool> enabled) => _enabled = enabled;
 
+    /// <summary>探测结果（还没用到过为 null），诊断用。</summary>
+    public string? Status { get; private set; }
+
+    /// <summary>合成层装饰的探测结果（还没用到过为 null）。</summary>
+    public string? DecorStatus { get; private set; }
+
+    /// <summary>本次运行已改用经典缩略图（探测失败或某处注册失败）。</summary>
+    public bool Unavailable => _unavailable;
+
     /// <summary>配置开启且探测通过时返回后端，否则 null（调用方用经典缩略图）。</summary>
     internal SharedThumbnailBackend? Get()
     {
@@ -25,6 +34,7 @@ public sealed class SharedThumbnailSource : IDisposable
         if (_backend is null)
         {
             _backend = SharedThumbnailBackend.TryCreate(out string status);
+            Status = status;
             Log.Info($"缩略图后端：{status}");
             if (_backend is null) _unavailable = true;
         }
@@ -42,6 +52,7 @@ public sealed class SharedThumbnailSource : IDisposable
         {
             _decorTried = true;
             _decor = DecorResources.TryCreate(backend, ui, out string status);
+            DecorStatus = status;
             Log.Info($"总览装饰：{status}");
         }
         return _decor;
@@ -52,6 +63,7 @@ public sealed class SharedThumbnailSource : IDisposable
     {
         if (_unavailable) return;
         _unavailable = true;
+        Status = $"{where}注册失败 0x{hr:X8}，本次运行改用经典缩略图";
         Log.Warn($"{where}：共享缩略图视觉失败 0x{hr:X8}，本次运行改用经典缩略图");
     }
 

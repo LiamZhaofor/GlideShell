@@ -1,6 +1,7 @@
 using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Gestures;
+using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Native;
 using GlideShell.Platform.Updates;
 using GlideShell.Platform.Ui.Settings;
@@ -11,7 +12,7 @@ namespace GlideShell.Platform.Ui;
 /// <summary>设置窗口的各页内容：每页一个函数，用 <see cref="PageBuilder"/> 从上往下排。文字面向第一次用的人：说清楚做什么、在哪里用。</summary>
 public sealed partial class SettingsWindow
 {
-    private const int PageCount = 6;
+    private const int PageCount = 7;
 
     private static string PageTitle(int page) => page switch
     {
@@ -20,6 +21,7 @@ public sealed partial class SettingsWindow
         2 => "总览与桌面",
         3 => "鼠标与触发角",
         4 => "排除的程序",
+        5 => "诊断",
         _ => "关于",
     };
 
@@ -30,6 +32,7 @@ public sealed partial class SettingsWindow
         2 => Icons.TaskView,
         3 => Icons.Mouse,
         4 => Icons.Block,
+        5 => Icons.Health,
         _ => Icons.Info,
     };
 
@@ -44,6 +47,7 @@ public sealed partial class SettingsWindow
             case 2: OverviewPage(b); break;
             case 3: MousePage(b); break;
             case 4: ExcludedPage(b); break;
+            case 5: DiagnosticsPage(b); break;
             default: AboutPage(b); break;
         }
     }
@@ -316,6 +320,35 @@ public sealed partial class SettingsWindow
             b.Card("logs", Icons.Folder, "日志", "遇到问题时可以把日志发给开发者", Button("logsB", "打开", logs), b.ButtonWidthDip("打开"));
         b.Card("defaults", Icons.Reset, "恢复默认设置", "所有设置回到刚安装时的样子（排除的程序和开机启动保留）",
             Button("defaultsB", "恢复默认", ResetDefaults), b.ButtonWidthDip("恢复默认"));
+    }
+
+    // ---------- 诊断 ----------
+
+    private void DiagnosticsPage(PageBuilder b)
+    {
+        b.Paragraph("GlideShell 依赖几项系统能力（触摸板原始输入、虚拟桌面接口、共享缩略图等），这里逐项列出它们在你的电脑上是否正常。" +
+                    "遇到问题时生成一份诊断报告贴到 GitHub Issue，就能看到你的机器上发生了什么。");
+        if (_env.CreateDiagnosticReport is { } report)
+            b.Card("report", Icons.Document, "生成诊断报告",
+                "版本、系统、触摸板、显示器、下面的自检结果、配置和最近的日志。只保存在本机并复制到剪贴板，不会上传；贴出去之前可以先看一眼",
+                Button("reportB", "生成", report, accent: true), b.ButtonWidthDip("生成"));
+        if (_env.OpenLogs is { } logs)
+            b.Card("logs2", Icons.Folder, "日志", "每次启动、手势、渲染统计都记在这里", Button("logs2B", "打开", logs), b.ButtonWidthDip("打开"));
+
+        b.Section("兼容自检");
+        var checks = _env.Compatibility?.Invoke() ?? [];
+        for (int i = 0; i < checks.Count; i++)
+        {
+            var c = checks[i];
+            string icon = c.Level switch
+            {
+                CheckLevel.Ok => Icons.Ok,
+                CheckLevel.Warning => Icons.Warning,
+                CheckLevel.Unavailable => Icons.Unavailable,
+                _ => Icons.Info,
+            };
+            b.Card($"chk{i}", icon, c.Name, $"{c.LevelText} · {c.Detail}");
+        }
     }
 
     private string UpdateText(UpdateStatus st)

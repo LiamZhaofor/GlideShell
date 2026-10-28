@@ -21,6 +21,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private readonly UiThread _ui;
     private readonly Func<OverviewConfig> _config;
     private readonly RenderLoop _render;
+
+    /// <summary>最近一次渲染会话的帧统计与刷新周期（诊断用）。</summary>
+    public FrameStats LastRender => _render.LastSession;
+
+    public double RefreshPeriodMs => _render.RefreshPeriodMs;
     private readonly KeyboardHook _keys;
     private readonly List<OverlayWindow> _overlays = [];
     private volatile OverlayWindow[] _renderOverlays = [];

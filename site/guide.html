@@ -183,6 +183,7 @@
           <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、Alt+Tab 与键盘切换桌面。</td></tr>
           <tr><td>鼠标与触发角</td><td>按住拖动的键与灵敏度；四个角的触发动作。</td></tr>
           <tr><td>排除的程序</td><td>哪些程序在前台时不接管手势。</td></tr>
+          <tr><td>诊断</td><td>逐项查看兼容自检（触摸板、系统手势接管、虚拟桌面、共享缩略图等）；生成诊断报告。</td></tr>
           <tr><td>关于</td><td>版本、自动检查更新与手动检查、配置文件、日志、恢复默认设置。</td></tr>
         </tbody>
       </table>
@@ -213,7 +214,8 @@
       <h3>切换桌面时屏幕底部出现桌面名</h3>
       <p>这是 Windows 自己画的提示，目前没有办法从外部隐藏。</p>
       <h3>想反馈问题</h3>
-      <p>托盘右键 → 打开日志目录，把 <code>glideshell.log</code> 附在 <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">GitHub Issues</a> 里，并说明你的笔记本型号与 Windows 版本。日志只保存在本机，不会被上传。</p>
+      <p>托盘右键 → <strong>生成诊断报告</strong>（或「设置 → 诊断」里的「生成」）。它会把版本、系统、触摸板、显示器、兼容自检结果、配置和最近的日志写成一个文本文件，复制到剪贴板并用记事本打开。看一眼没问题，就贴到 <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">GitHub Issues</a> 里，再说明一下你做了什么、看到了什么。报告和日志只保存在本机，GlideShell 不会上传。</p>
+      <p>GlideShell 意外退出后，下次启动会在托盘提示一次，点提示也能直接生成诊断报告。</p>
 
       <h2 id="uninstall">卸载</h2>
       <p>双击安装包里的 <strong>卸载.cmd</strong>。它会先让 GlideShell 正常退出、确认系统手势已经还原，再删除程序、开始菜单和开机启动。</p>

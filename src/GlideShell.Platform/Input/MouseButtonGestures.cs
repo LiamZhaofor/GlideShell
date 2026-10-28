@@ -75,6 +75,9 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
     private readonly Thread _thread;
     private uint _threadId;
     private nint _hook;
+
+    /// <summary>鼠标钩子装上了（诊断用）。</summary>
+    public bool Hooked => _hook != 0;
     private nint _sink; // 收原始输入的仅消息窗口
     private MouseDragButton _held = MouseDragButton.None; // 正按着、被拦截的键
     private bool _rawSeen; // 这次按住期间收到过相对位移的原始输入

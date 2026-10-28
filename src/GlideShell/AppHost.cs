@@ -29,7 +29,7 @@ namespace GlideShell;
 /// 看门狗进程 GlideShell.exe --watchdog：主进程异常退出后还原系统手势
 /// </code>
 /// </summary>
-internal sealed class AppHost
+internal sealed partial class AppHost
 {
     private const uint VkO = 0x4F;
 
@@ -116,6 +116,11 @@ internal sealed class AppHost
             OpenSettings();
             return 0;
         });
+        _ui.OnMessage(InstanceControl.DiagnosticsMessage, (_, _) =>
+        {
+            CreateDiagnosticReport();
+            return 0;
+        });
         _ui.OnMessage(InstanceControl.QuitMessage, (_, _) =>
         {
             Log.Info("收到退出请求（--quit）");
@@ -135,6 +140,7 @@ internal sealed class AppHost
         _presenter.WarmUp();
         if (_simulate is not null) StartSimulation(_simulate);
         if (inputProblem is not null) _tray.ShowBalloon("GlideShell 收不到触摸板输入", inputProblem, warning: true);
+        else if (_simulate is null && NoticeLastCrash()) { } // 上次异常退出：这条提示比欢迎重要
         else if (_firstRun && _simulate is null) _tray.ShowBalloon("GlideShell 已在后台运行", Welcome(_activeMap));
 
         _ui.Run();
@@ -420,6 +426,7 @@ internal sealed class AppHost
     {
         var result = _native.TakeOver(_activeMap, _config.ThreeFingerTapMiddleClick);
         foreach (var m in result.Messages) Log.Info($"系统手势：{m}");
+        _nativeVerified = result.Verified;
         if (!result.Verified) RetryVerify(1, ++_takeoverGeneration);
     }
 
@@ -437,6 +444,7 @@ internal sealed class AppHost
             if (result.Verified)
             {
                 Log.Info($"系统手势：第 {attempt} 次重试后已生效");
+                _nativeVerified = true;
                 return;
             }
             foreach (var m in result.Messages) Log.Info($"系统手势（重试 {attempt}）：{m}");
@@ -628,6 +636,7 @@ internal sealed class AppHost
             TrayMenuItem.Separator,
             new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
             new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
+            new("生成诊断报告", CreateDiagnosticReport),
             TrayMenuItem.Separator,
             new("退出", () => _ui.Quit()),
         ];
@@ -697,7 +706,9 @@ internal sealed class AppHost
             () => OpenPath(Log.DefaultDirectory),
             () => _updates.Status,
             () => CheckUpdates(manual: true),
-            OpenUpdatePage));
+            OpenUpdatePage,
+            CompatibilityChecks,
+            CreateDiagnosticReport));
     }
 
     /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>

@@ -22,6 +22,9 @@ public sealed unsafe class KeyboardHook : IDisposable
 
     public bool IsInstalled { get; private set; }
 
+    /// <summary>系统钩子挂着（有订阅者且安装成功），诊断用。</summary>
+    public static bool Active => s_hook != 0;
+
     public void Install()
     {
         if (IsInstalled) return;
