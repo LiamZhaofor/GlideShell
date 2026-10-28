@@ -116,6 +116,11 @@ internal sealed partial class AppHost
             OpenSettings();
             return 0;
         });
+        _ui.OnMessage(InstanceControl.UpgradeMessage, (_, _) =>
+        {
+            UpgradeFromCommandLine();
+            return 0;
+        });
         _ui.OnMessage(InstanceControl.DiagnosticsMessage, (_, _) =>
         {
             CreateDiagnosticReport();
@@ -618,9 +623,7 @@ internal sealed partial class AppHost
         }
         if (excluded.Count == 0) excluded.Add(new("（没有）", Enabled: false));
 
-        var update = _updates.Status is { State: UpdateState.Available, Latest: { } latest }
-            ? new List<TrayMenuItem> { new($"下载新版本 {latest.Version.ToString(3)}…", OpenUpdatePage), TrayMenuItem.Separator }
-            : [];
+        var update = UpgradeMenuItem() is { } upgradeItem ? new List<TrayMenuItem> { upgradeItem, TrayMenuItem.Separator } : [];
 
         return
         [
@@ -682,10 +685,19 @@ internal sealed partial class AppHost
                 string version = latest.Version.ToString(3);
                 Log.Info($"升级检测：有新版本 {version}（当前 {_updates.Current.ToString(3)}）");
                 // 每个新版本只通知一次（重启后也记得）；手动检查的结果已经显示在设置里
+                if (_upgradeAfterCheck)
+                {
+                    _upgradeAfterCheck = false;
+                    StartUpgrade(confirm: false);
+                    break;
+                }
                 if (_updates.MarkNotified(latest.Version) && !manual)
-                    _tray?.ShowBalloon($"GlideShell {version} 可以更新了", "点这里打开下载页面。托盘菜单里也有「下载新版本」。", onClick: OpenUpdatePage);
+                    _tray?.ShowBalloon($"GlideShell {version} 可以更新了",
+                        CanOneClickUpgrade ? "点这里升级（自动下载、校验并安装）。托盘菜单里也有「升级」。" : "点这里打开下载页面。托盘菜单里也有「下载新版本」。",
+                        onClick: () => StartUpgrade(confirm: true));
                 break;
             case UpdateState.UpToDate:
+                _upgradeAfterCheck = false;
                 Log.Info($"升级检测：已是最新版本（{_updates.Current.ToString(3)}）");
                 break;
             case UpdateState.Failed:
@@ -712,7 +724,10 @@ internal sealed partial class AppHost
             () => CheckUpdates(manual: true),
             OpenUpdatePage,
             CompatibilityChecks,
-            CreateDiagnosticReport));
+            CreateDiagnosticReport,
+            () => Upgrader.Status,
+            UpgradesInPlace ? () => StartUpgrade(confirm: false) : null,
+            UpgradeUnavailableReason));
     }
 
     /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>

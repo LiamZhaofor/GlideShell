@@ -27,6 +27,8 @@ internal static class Program
         if (args.Contains("--quit")) return InstanceControl.RequestQuit(TimeSpan.FromSeconds(10)) ? 0 : 4;
         // 让运行中的实例生成诊断报告（设置窗口打不开时也能用）
         if (args.Contains("--diagnostics")) return InstanceControl.RequestDiagnostics() ? 0 : 5;
+        // 让运行中的实例一键升级到最新版本
+        if (args.Contains("--upgrade")) return InstanceControl.RequestUpgrade() ? 0 : 5;
 
         using var instance = new Mutex(initiallyOwned: true, @"Local\GlideShell.Instance", out bool first);
         if (!first)

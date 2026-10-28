@@ -644,6 +644,14 @@ legacy/
 - 上架 winget。
 - 一键升级：现在只提示，可以做成下载发布包、校验哈希、自动安装（是否值得做部分取决于签名）。
 
+**进展：一键升级与 winget（2026-10-28）**
+- **一键升级**：升级检测拿到的发布信息里读出附件（`ReleaseInfo.Package`）：只认 `GlideShell-{版本}-win-x64.zip`、下载地址在本仓库这一版的 `releases/download/` 下、带合法 SHA-256 的（GitHub 给每个附件算好的 `digest`），任一条不满足就只给下载页面。`Upgrader` 用 WinHTTP 下载到 `%LOCALAPPDATA%\GlideShell\updates`，核对大小与 SHA-256，解压，用系统自带的 Windows PowerShell 在隐藏窗口里运行**新版本包里自己的** install.ps1 装回当前目录（输出到 `logs\upgrade.log`）；脚本用 `--quit` 让旧实例正常退出（系统手势照常还原），复制后启动新版本。30 秒还没被关掉就当失败、可以再试。
+- 按装法区分（`InstallLocation`）：标准位置（`%LOCALAPPDATA%\Programs\GlideShell`）重建开始菜单、开机启动照旧；自定义目录装回原处、不碰开始菜单，开机启动只在原来指向这里时保留；winget 装的提示 `winget upgrade`（并复制命令）；Program Files 的 UIAccess 版不一键升级（发布包是普通权限版，会丢掉 UIAccess）。
+- 入口：设置「关于 → 更新」的「升级」（进度、失败原因、更新说明）、托盘菜单「升级到 x.y.z…」（先确认）、新版本通知（点了先确认）、`GlideShell.exe --upgrade`。
+- install.ps1 修正：发 `--quit` 用的可能是另一处安装的 exe，原来只等那个路径上的进程退出；现在也等要覆盖的那个 exe（含看门狗）都退出，免得复制时文件还被占着。
+- 真机验证：临时目录里放一个版本号为 1.6.0 的普通版，`--upgrade` 后 8 秒内从 GitHub 下载 1.6.2、SHA-256 校验通过、旧实例正常退出、1.6.2 在原处启动；开机启动与开始菜单没有被动到。
+- **winget**：`build/winget.ps1 -Version x.y.z` 从 GitHub Release 读发布包地址与 SHA-256，生成 `LiamZhaofor.GlideShell` 的四个清单（版本、安装、en-US、zh-CN；schema 1.10.0）到 `artifacts/winget/<版本>/` 并 `winget validate`（1.6.2 已通过）。zip 里的 exe 按便携应用装（命令别名 `glideshell`）：不跑 install.ps1，没有开始菜单快捷方式，开机启动在设置里开——要完全解决得做正式安装程序（MSI / MSIX），最好先有签名。提交到 microsoft/winget-pkgs 要用户同意；上架之前 README 与官网不写 `winget install`。
+
 ### 9.6 这一版不做
 
 - Windows 10 支持：工作量大（缺好几个依赖的系统能力），用户群在缩小。

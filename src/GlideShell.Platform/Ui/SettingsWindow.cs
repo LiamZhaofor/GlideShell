@@ -24,7 +24,10 @@ public sealed record SettingsEnvironment(
     Action? CheckUpdates = null,
     Action? OpenUpdatePage = null,
     Func<IReadOnlyList<Diagnostics.CompatCheck>>? Compatibility = null,
-    Action? CreateDiagnosticReport = null);
+    Action? CreateDiagnosticReport = null,
+    Func<Updates.UpgradeStatus>? UpgradeStatus = null,
+    Action? StartUpgrade = null,
+    string? UpgradeUnavailable = null);
 
 /// <summary>
 /// 设置窗口：Windows 11「设置」的样子——Mica 背景、左侧导航、右侧一页页圆角卡片（图标 + 标题 + 一句说明 + 右侧控件），

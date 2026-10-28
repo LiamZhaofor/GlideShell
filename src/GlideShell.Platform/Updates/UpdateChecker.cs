@@ -33,7 +33,6 @@ public sealed unsafe class UpdateChecker
     public const string ReleasesPage = "https://github.com/" + Repository + "/releases/latest";
 
     private const string Host = "api.github.com";
-    private const int TimeoutMs = 15_000;
     private const int MaxBytes = 1 << 20; // 正常的响应只有几 KB
 
     private readonly string _notifiedPath;
@@ -116,52 +115,14 @@ public sealed unsafe class UpdateChecker
 
     private (int Status, string Body) Get(string path)
     {
-        nint session = 0, connect = 0, request = 0;
-        try
-        {
-            session = WinHttp.WinHttpOpen($"GlideShell/{Current.ToString(3)}", WinHttp.WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, null, null, 0);
-            if (session == 0) throw new Win32Exception();
-            WinHttp.WinHttpSetTimeouts(session, TimeoutMs, TimeoutMs, TimeoutMs, TimeoutMs);
-            connect = WinHttp.WinHttpConnect(session, Host, WinHttp.INTERNET_DEFAULT_HTTPS_PORT, 0);
-            if (connect == 0) throw new Win32Exception();
-            request = WinHttp.WinHttpOpenRequest(connect, "GET", path, null, null, 0, WinHttp.WINHTTP_FLAG_SECURE);
-            if (request == 0) throw new Win32Exception();
-            const string headers = "Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
-            if (!WinHttp.WinHttpSendRequest(request, headers, uint.MaxValue /* -1：以 null 结尾 */, 0, 0, 0, 0)) throw new Win32Exception();
-            if (!WinHttp.WinHttpReceiveResponse(request, 0)) throw new Win32Exception();
-            uint status = 0, size = sizeof(uint);
-            if (!WinHttp.WinHttpQueryHeaders(request, WinHttp.WINHTTP_QUERY_STATUS_CODE | WinHttp.WINHTTP_QUERY_FLAG_NUMBER, 0, &status, &size, null))
-                throw new Win32Exception();
-
-            using var body = new MemoryStream();
-            var chunk = new byte[16 * 1024];
-            while (true)
-            {
-                uint read;
-                fixed (byte* p = chunk)
-                    if (!WinHttp.WinHttpReadData(request, p, (uint)chunk.Length, &read)) throw new Win32Exception();
-                if (read == 0) break;
-                body.Write(chunk, 0, (int)read);
-                if (body.Length > MaxBytes) throw new IOException("GitHub 的回复太大");
-            }
-            return ((int)status, Encoding.UTF8.GetString(body.GetBuffer(), 0, (int)body.Length));
-        }
-        finally
-        {
-            if (request != 0) WinHttp.WinHttpCloseHandle(request);
-            if (connect != 0) WinHttp.WinHttpCloseHandle(connect);
-            if (session != 0) WinHttp.WinHttpCloseHandle(session);
-        }
+        const string headers = "Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+        using var body = new MemoryStream();
+        int status = WinHttpClient.Get($"https://{Host}{path}", Agent, headers, body, MaxBytes);
+        return (status, Encoding.UTF8.GetString(body.GetBuffer(), 0, (int)body.Length));
     }
 
-    /// <summary>常见的 WinHTTP 错误码换成一句话（系统的错误文字对 WinHTTP 的码大多是「未知错误」）。</summary>
-    private static string Describe(int code) => code switch
-    {
-        12002 => "连接超时",
-        12007 => "找不到服务器（没有联网？）",
-        12029 => "连不上 GitHub",
-        12030 => "连接被中断",
-        12038 or 12044 or 12045 or 12057 or 12175 => "安全连接失败",
-        _ => $"网络错误 {code}",
-    };
+    /// <summary>User-Agent（GitHub API 要求有）：只带程序名与当前版本号。</summary>
+    public string Agent => $"GlideShell/{Current.ToString(3)}";
+
+    private static string Describe(int code) => WinHttpClient.Describe(code);
 }

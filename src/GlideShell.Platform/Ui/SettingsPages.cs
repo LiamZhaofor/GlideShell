@@ -303,14 +303,22 @@ public sealed partial class SettingsWindow
         if (_env.UpdateStatus is { } updateStatus && _env.CheckUpdates is { } check)
         {
             var st = updateStatus();
+            var up = _env.UpgradeStatus?.Invoke();
             bool available = st.State == UpdateState.Available && st.Latest is not null;
-            string label = available ? "下载" : st.State == UpdateState.Checking ? "正在检查" : "检查";
+            bool oneClick = available && _env.StartUpgrade is not null && st.Latest!.Package is not null;
+            bool busy = up is { Busy: true };
+            string label = busy ? "升级中" : oneClick ? "升级" : available ? "下载" : st.State == UpdateState.Checking ? "正在检查" : "检查";
             var button = new Item(available ? ItemKind.AccentButton : ItemKind.Button, "updateB")
             {
-                Text = label, Click = available ? _env.OpenUpdatePage ?? check : check, Enabled = st.State != UpdateState.Checking,
+                Text = label,
+                Click = oneClick ? _env.StartUpgrade! : available ? _env.OpenUpdatePage ?? check : check,
+                Enabled = st.State != UpdateState.Checking && !busy,
             };
             b.Card("updateNow", available ? Icons.Download : Icons.Info, available ? $"有新版本 {st.Latest!.Version.ToString(3)}" : "检查更新",
-                UpdateText(st), button, b.ButtonWidthDip(label));
+                UpdateText(st, up, oneClick), button, b.ButtonWidthDip(label));
+            if (available && (oneClick || up is { Stage: UpgradeStage.Failed }) && _env.OpenUpdatePage is { } page)
+                b.Card("updatePage", Icons.Document, "更新说明", "在 GitHub 上看这一版改了什么，也可以从那里手动下载", Button("updatePageB", "打开", page),
+                    b.ButtonWidthDip("打开"));
         }
 
         b.Section("更多");
@@ -351,13 +359,23 @@ public sealed partial class SettingsWindow
         }
     }
 
-    private string UpdateText(UpdateStatus st)
+    private string UpdateText(UpdateStatus st, UpgradeStatus? up, bool oneClick)
     {
         string current = _env.Version.Length > 0 ? $"当前版本 {_env.Version}" : "当前版本";
+        if (st.State == UpdateState.Available && up is { } u && u.Stage != UpgradeStage.Idle)
+            return u.Stage switch
+            {
+                UpgradeStage.Downloading => $"正在下载… {u.Progress * 100:0}%",
+                UpgradeStage.Verifying => "正在校验下载的文件…",
+                UpgradeStage.Installing => "正在安装，GlideShell 马上会退出并自动重新启动…",
+                _ => $"升级失败：{u.Error}。可以再试一次，或者打开更新说明手动下载",
+            };
         return st.State switch
         {
             UpdateState.Checking => "正在向 GitHub 查询…",
             UpdateState.UpToDate => $"{current}，已经是最新的（{st.CheckedAt:HH:mm} 检查）",
+            UpdateState.Available when oneClick => $"{current}。点「升级」自动下载、校验并安装，GlideShell 会自动重新启动，设置会保留",
+            UpdateState.Available when _env.UpgradeUnavailable is { } why => $"{current}。{why}",
             UpdateState.Available => $"{current}。点「下载」打开下载页面，下载后双击「安装.cmd」即可升级，设置会保留",
             UpdateState.Failed => $"检查失败：{st.Error}",
             _ => $"{current}，还没有检查过",

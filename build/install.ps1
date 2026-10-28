@@ -81,6 +81,8 @@ foreach ($exe in @($installed) + @($running) | Select-Object -Unique) {
     Wait-Released $exe
     break
 }
+# 要覆盖的那个 exe 也要等它的进程（含看门狗）都退出：发 --quit 用的可能是另一处安装的 exe（例如一键升级装回自定义目录时）
+Wait-Released $target
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($UIAccess -and -not $isAdmin) {

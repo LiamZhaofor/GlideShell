@@ -16,6 +16,8 @@ public static unsafe partial class InstanceControl
 
     public static uint DiagnosticsMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Diagnostics");
 
+    public static uint UpgradeMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Upgrade");
+
     /// <summary>
     /// 运行实例调用：允许普通进程把这几条请求发给本窗口。UIAccess 版受 UIPI 保护，
     /// 不放行的话安装 / 卸载脚本发出的 --quit、再次启动时的「打开设置」都会被系统丢掉。
@@ -26,6 +28,14 @@ public static unsafe partial class InstanceControl
         ChangeWindowMessageFilterEx(hwnd, QuitMessage, MSGFLT_ALLOW, null);
         ChangeWindowMessageFilterEx(hwnd, ShowSettingsMessage, MSGFLT_ALLOW, null);
         ChangeWindowMessageFilterEx(hwnd, DiagnosticsMessage, MSGFLT_ALLOW, null);
+        ChangeWindowMessageFilterEx(hwnd, UpgradeMessage, MSGFLT_ALLOW, null);
+    }
+
+    /// <summary>让运行实例升级到最新版本（有的话；还没查过就先查）。返回 false = 找不到运行实例。</summary>
+    public static bool RequestUpgrade()
+    {
+        nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
+        return hwnd != 0 && User32.PostMessageW(hwnd, UpgradeMessage, 0, 0);
     }
 
     /// <summary>让运行实例生成诊断报告（它会用记事本打开）。返回 false = 找不到运行实例。</summary>
