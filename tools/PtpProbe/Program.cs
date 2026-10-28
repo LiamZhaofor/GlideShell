@@ -26,7 +26,7 @@ string command = args.Length > 0 ? args[0] : "describe";
 return command switch
 {
     "describe" => Describe(),
-    "record" => Recorder.Run(Option(args, "--out"), SelectScenarios(Option(args, "--only"))),
+    "record" => Recorder.Run(Option(args, "--out"), Option(args, "--set") == "daily" ? Scenarios.Daily : SelectScenarios(Option(args, "--only"))),
     "analyze" when args.Length > 1 => Analyze(args[1]),
     "replay" when args.Length > 1 => Replay(args[1], args),
     "calibrate" when args.Length > 1 => Calibrate(args[1], args.Contains("--apply"), args.Contains("--fixtures")),
@@ -54,7 +54,7 @@ static int Usage()
     Console.WriteLine("""
         用法：
           PtpProbe                         打印触摸板报告描述符
-          PtpProbe record [--out 目录] [--only 2,3,8]
+          PtpProbe record [--out 目录] [--only 2,3,8] [--set daily]
                                            按场景引导录制轨迹（默认输出到 artifacts/traces/<时间>/）
           PtpProbe analyze <文件或目录>     分析轨迹；目录会额外输出 S1 结论草稿
           PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]

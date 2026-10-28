@@ -228,6 +228,7 @@ public sealed record GlideShellConfig
             FingerSettleMs = Clamp(r.FingerSettleMs, 0, 200, "Recognition.FingerSettleMs"),
             TapMaxDurationMs = Clamp(r.TapMaxDurationMs, 50, 1000, "Recognition.TapMaxDurationMs"),
             TapMaxMoveMm = Clamp(r.TapMaxMoveMm, 0, slop, "Recognition.TapMaxMoveMm"),
+            AdoptNearFingerMm = Clamp(r.AdoptNearFingerMm, 0, 60, "Recognition.AdoptNearFingerMm"),
             AxisLockRatio = Clamp(r.AxisLockRatio, 0.25, 4, "Recognition.AxisLockRatio"),
             VelocityWindowMs = Clamp(r.VelocityWindowMs, 20, 300, "Recognition.VelocityWindowMs"),
             StaleTimeoutMs = Clamp(r.StaleTimeoutMs, 1000, 60_000, "Recognition.StaleTimeoutMs"),

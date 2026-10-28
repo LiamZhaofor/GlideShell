@@ -43,6 +43,16 @@ public static class ScenarioExpectations
             "four-up" => Expect(swipes.Count >= 2 && All(4, GestureDirection.Up), "应有 ≥2 次四指上滑"),
             "four-horizontal" => Expect(swipes.Count >= 2 && All(4, GestureDirection.Left, GestureDirection.Right), "应有 ≥2 次四指横滑"),
             "two-scroll" or "palm" or "warmup" => Expect(swipes.Count == 0 && taps.Count == 0, "不应识别出任何三指以上手势"),
+            // 2.0 日常轨迹（record --set daily）
+            "daily-tap" => Expect(taps.Count >= 8 && swipes.Count == 0, "应有 ≥8 次三指轻点、没有滑动"),
+            "daily-tap-after-move" => Expect(taps.Count >= 5 && swipes.Count == 0, "应有 ≥5 次三指轻点、没有滑动"),
+            "daily-overview" => Expect(swipes.Count >= 8 && All(3, GestureDirection.Up, GestureDirection.Down) && swipes.All(s => s.Fingers == 3),
+                "应有 ≥8 次三指上 / 下滑"),
+            "daily-switch" => Expect(swipes.Count(s => s.Direction is GestureDirection.Left or GestureDirection.Right) >= 6 && swipes.All(s => s.Fingers == 3),
+                "应有 ≥6 次三指横滑"),
+            "daily-small" => Expect(swipes.Count >= 6 && swipes.All(s => s.Fingers == 3), "慢慢滑一小段也应识别出 ≥6 次三指滑动"),
+            "daily-four" => Expect(swipes.Count >= 4 && swipes.All(s => s.Fingers == 4), "应有 ≥4 次四指滑动，而且一次都不能认成三指"),
+            "rest-no-tap" => Expect(taps.Count == 0, "三指搭着不动不应算轻点"),
             _ => null,
         };
     }

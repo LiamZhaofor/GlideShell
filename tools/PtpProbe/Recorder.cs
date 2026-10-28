@@ -27,8 +27,8 @@ internal static class Recorder
         string dir = outDir ?? DefaultOutputDir();
         Console.WriteLine($"触摸板 VID={device.VendorId:X4} PID={device.ProductId:X4}，{device.Slots.Length} 个触点槽");
         Console.WriteLine($"轨迹输出到：{dir}");
-        Console.WriteLine("提示：录制前请退出旧的 MissionFlow 托盘程序；系统手势（切换应用、任务视图）被触发属正常现象，");
-        Console.WriteLine("      每个场景到时会自动结束，焦点被抢走时点回本窗口再继续即可。");
+        Console.WriteLine("提示：手势被系统或 GlideShell 响应（切换应用、总览、切桌面）属正常现象；");
+        Console.WriteLine("      每个场景到时会自动结束，焦点被抢走时点回本窗口再按 Enter 继续即可。");
 
         using var listener = new RawInputListener(device);
         if (!listener.Registered)

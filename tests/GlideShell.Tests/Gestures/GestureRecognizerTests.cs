@@ -208,6 +208,25 @@ public class GestureRecognizerTests
     }
 
     [Fact]
+    public void An_unconfident_finger_landing_beside_the_others_counts_right_away()
+    {
+        // 真机（日常四指轨迹）：第 4 根手指晚 58ms 落下，Confidence=0 持续约 170ms；以前在它变确定前就按三指开始了
+        var script = new TouchScript();
+        Contact Finger(int id, double x, double y) => new(id, x, y, true, true);
+        script.Raw(0, [Finger(0, 40, 60), Finger(1, 58, 58), Finger(2, 76, 60)]);
+        for (int k = 1; k <= 60; k++)
+        {
+            double dy = k < 15 ? 0 : -0.4 * (k - 15); // 第 4 根落下之前三指没动（同真机），之后 100mm/s 上滑
+            List<Contact> frame = [Finger(0, 40, 60 + dy), Finger(1, 58, 58 + dy), Finger(2, 76, 60 + dy)];
+            if (k >= 15) frame.Add(new Contact(3, 93, 63 + dy, Tip: true, Confidence: k >= 58)); // 离邻指约 17mm
+            script.Raw(4, [.. frame]);
+        }
+
+        var began = Assert.Single(script.Run(), e => e.Phase == GesturePhase.Began);
+        Assert.Equal(4, began.Fingers);
+    }
+
+    [Fact]
     public void Contacts_vanishing_without_tip_up_still_end_the_gesture()
     {
         var events = new TouchScript()

@@ -24,6 +24,7 @@ public sealed class GestureRecognizer
         public double X, Y;
         public bool Palm;
         public bool WasConfident; // 有效过：之后再出现 Confidence=0 就按手掌处理到底
+        public bool Adopted; // 落下时不确定，但紧挨着别的手指落下：直接当手指（见 GestureSettings.AdoptNearFingerMm）
         public bool Seen;
     }
 
@@ -232,15 +233,19 @@ public sealed class GestureRecognizer
             if (idx < 0)
             {
                 if (_trackedCount >= _tracked.Length) continue;
+                bool adopted = !c.Confidence && LandsBesideFingers(c.XMm, c.YMm);
                 idx = _trackedCount++;
-                _tracked[idx] = new Tracked { Id = c.Id, X = c.XMm, Y = c.YMm, Palm = !c.Confidence, WasConfident = c.Confidence, Seen = true };
+                _tracked[idx] = new Tracked
+                {
+                    Id = c.Id, X = c.XMm, Y = c.YMm, Palm = !c.Confidence && !adopted, WasConfident = c.Confidence, Adopted = adopted, Seen = true,
+                };
             }
             else
             {
                 ref var t = ref _tracked[idx];
                 bool wasPalm = t.Palm;
                 if (c.Confidence && !(t.Palm && t.WasConfident)) t.Palm = false; // 落指时不确定 → 转为有效
-                else if (!c.Confidence) t.Palm = true;
+                else if (!c.Confidence && !(t.Adopted && !t.WasConfident)) t.Palm = true; // 收下的手指在变确定之前不按手掌算
                 t.WasConfident |= c.Confidence && !t.Palm;
                 if (!t.Palm && !wasPalm)
                 {
@@ -262,6 +267,25 @@ public sealed class GestureRecognizer
         dx = common > 0 ? sx / common : 0;
         dy = common > 0 ? sy / common : 0;
         return touching;
+    }
+
+    /// <summary>
+    /// 新落下、触摸板还不确定（Confidence=0）的触点：旁边已经有至少 2 根确定的手指、离最近的一根不超过
+    /// <see cref="GestureSettings.AdoptNearFingerMm"/>，就是这次手势的又一根手指（真机：第 3 / 第 4 根手指常常先报不确定，
+    /// 80–170ms 后才变确定，期间不算会让四指被认成三指、三指起步晚近 100ms）。离得远的仍按手掌处理。
+    /// </summary>
+    private bool LandsBesideFingers(double x, double y)
+    {
+        int fingers = 0;
+        double nearest = double.MaxValue;
+        for (int i = 0; i < _trackedCount; i++)
+        {
+            ref var t = ref _tracked[i];
+            if (t.Palm) continue;
+            fingers++;
+            nearest = Math.Min(nearest, Math.Sqrt((t.X - x) * (t.X - x) + (t.Y - y) * (t.Y - y)));
+        }
+        return fingers >= 2 && nearest <= _settings.AdoptNearFingerMm;
     }
 
     private int Find(int id)

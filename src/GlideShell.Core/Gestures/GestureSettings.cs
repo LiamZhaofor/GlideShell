@@ -21,6 +21,12 @@ public sealed record GestureSettings
     /// <summary>轻点：期间质心移动不超过这个距离（应不大于 <see cref="SlopMm"/>）。</summary>
     public double TapMaxMoveMm { get; set; } = 1.0;
 
+    /// <summary>
+    /// 新落下但触摸板还不确定（Confidence=0）的触点，离最近的手指不超过这个距离、且已有至少 2 根手指时，直接当手指算
+    /// （真机日常轨迹：先报不确定的第 3 / 4 根手指离邻指 16–22mm；手掌不会落在指尖旁边）。0 = 一律等它变确定。
+    /// </summary>
+    public double AdoptNearFingerMm { get; set; } = 30;
+
     /// <summary>方向锁定：|dx| ≥ |dy| × 比例 判为横向，否则纵向。1 = 以 45° 为界。</summary>
     public double AxisLockRatio { get; set; } = 1.0;
 
