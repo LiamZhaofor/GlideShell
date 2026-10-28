@@ -1,4 +1,5 @@
 using GlideShell.Core.Geometry;
+using GlideShell.Core.Overview;
 
 namespace GlideShell.Core.Switcher;
 
@@ -64,6 +65,19 @@ public sealed class SwitcherLayout
     }
 
     private static double Emphasis(int i, double p) => 1 + (FocusScale - 1) * Math.Max(0, 1 - Math.Abs(i - p));
+
+    /// <summary>项的外侧边离屏幕中央超过半屏宽的这个比例就开始淡出，碰到屏幕边时完全透明。</summary>
+    public const double FadeStart = 0.78;
+
+    /// <summary>
+    /// 第 i 项此刻的不透明度系数（0 ~ 1）：切换条没有面板，越靠近屏幕两端越淡；按外侧边算，碰到屏幕边时已经完全透明，
+    /// 滑出去的项不会在屏幕边（或与隔壁屏相接处）被硬切一刀。<paramref name="rect"/> 是它在切换条上的位置（<see cref="ItemRect"/>）。
+    /// </summary>
+    public double EdgeFade(RectD rect)
+    {
+        double outer = Math.Max(Area.CenterX - rect.Left, rect.Right - Area.CenterX);
+        return 1 - OverviewVisuals.SmoothStep(FadeStart, 1, outer / Math.Max(1, Area.Width / 2));
+    }
 
     /// <summary>选中项（离中心最近的一项）。</summary>
     public int Nearest(double p) => Count == 0 ? -1 : (int)Math.Clamp(Math.Round(p), 0, Count - 1);

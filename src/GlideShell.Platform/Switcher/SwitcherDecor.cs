@@ -11,8 +11,8 @@ namespace GlideShell.Platform.Switcher;
 /// <summary>
 /// 切换条的文字与装饰（合成层，与总览同一套画法）：选中框跟着连续位置在相邻两项之间滑动；
 /// 每个窗口的「程序图标 + 标题」在横带下部，按离中心的距离淡入淡出、随手指略微横移，手指在两项之间时两个标题交叉淡化。
-/// 背景是 Fluent 的「烟灰」层：半透明深色圆角面板 + 很淡的亮描边（横带窗口本身透明）。系统的模糊（亚克力）只给激活的窗口画，
-/// 切换条从不激活，所以不做模糊，后面的内容隐约透出来。
+/// 没有面板：整块屏轻轻变暗（与总览一致），缩略图带着窗口阴影浮在上面，越靠近屏幕两端越淡（见 <see cref="SwitcherLayout.EdgeFade"/>）。
+/// 之前是半透明深色圆角面板，缩略图滑出面板两端时露在外面，也不好看（用户反馈）。
 /// 线程：Prepare / HideAll 在 UI 线程；<see cref="Apply"/> 在渲染线程。
 /// </summary>
 internal sealed unsafe class SwitcherDecor
@@ -21,9 +21,10 @@ internal sealed unsafe class SwitcherDecor
     private const double RingGapDip = 4, RingStrokeDip = 3;
     private static readonly D2D.ColorF TextColor = new(0.95f, 0.95f, 0.97f, 1);
     private static readonly D2D.ColorF RingColor = new(0.42f, 0.67f, 1f, 1);
-    private static readonly D2D.ColorF PanelColor = new(0.09f, 0.09f, 0.1f, 0.88f); // 不模糊，透得太多后面的文字会显得乱
-    private static readonly D2D.ColorF PanelEdgeColor = new(1, 1, 1, 0.1f);
-    private const double PanelRadiusDip = 12;
+    private static readonly D2D.ColorF DimColor = new(0, 0, 0, 1);
+
+    /// <summary>切换条出现时整块屏变暗多少（缩略图与标题才不会混进后面的窗口里）。</summary>
+    private const double DimOpacity = 0.3;
 
     private sealed class Label(long id)
     {
@@ -41,32 +42,26 @@ internal sealed unsafe class SwitcherDecor
     private readonly OverlayComposition _branch;
     private readonly MonitorInfo _monitor;
     private readonly RectD _origin; // 横带窗口在屏幕上的位置（视觉坐标相对它）
-    private readonly RectD _band; // 横带（面板）在屏幕上的位置
     private readonly Dictionary<long, Label> _cache = []; // UI 线程，按窗口缓存
     private volatile Label?[] _labels = [];
     private volatile SwitcherScene _scene = SwitcherScene.Empty;
     private NineSlice? _ring;
     private readonly OverlayComposition _panelBranch;
-    private NineSlice? _panel, _panelEdge;
+    private NineSlice? _dim;
     private bool _renderPosted;
 
     /// <param name="origin">横带在屏幕上的位置（视觉坐标相对它）。</param>
     /// <param name="cardRadiusDip">窗口原尺寸下的圆角（DIP）：缩略图按自己的缩放缩小它，选中框与之同心。</param>
-    /// <param name="panelBranch">缩略图下面的一支：烟灰面板。</param>
-    /// <param name="band">横带（面板）在屏幕上的位置。</param>
-    public SwitcherDecor(DecorResources res, OverlayComposition branch, OverlayComposition panelBranch, MonitorInfo monitor, RectD origin, RectD band,
-        double cardRadiusDip)
+    /// <param name="panelBranch">缩略图下面的一支：变暗层。</param>
+    public SwitcherDecor(DecorResources res, OverlayComposition branch, OverlayComposition panelBranch, MonitorInfo monitor, RectD origin, double cardRadiusDip)
     {
-        _band = band;
         _res = res;
         _branch = branch;
         _panelBranch = panelBranch;
         _monitor = monitor;
         _origin = origin;
         CardRadiusDip = cardRadiusDip;
-        double r = PanelRadiusDip * monitor.DpiScale;
-        if (res.Shape(r, 0, PanelColor) is { } fill) _panel = NineSlice.Create(res.Backend, panelBranch.Root, fill);
-        if (res.Shape(r, Math.Max(1, Math.Round(monitor.DpiScale)), PanelEdgeColor) is { } edge) _panelEdge = NineSlice.Create(res.Backend, panelBranch.Root, edge);
+        if (res.Shape(0, 0, DimColor) is { } fill) _dim = NineSlice.Create(res.Backend, panelBranch.Root, fill);
     }
 
     private double _ringRadius = -1; // 建选中框用的圆角（物理像素）
@@ -131,8 +126,7 @@ internal sealed unsafe class SwitcherDecor
         lock (_res.Backend.Gate)
         {
             _ring?.Hide();
-            _panel?.Hide();
-            _panelEdge?.Hide();
+            _dim?.Hide();
             foreach (var l in _cache.Values)
             {
                 if (l.Text != 0) Dcomp.SetOpacity((void*)l.Text, 0);
@@ -151,7 +145,7 @@ internal sealed unsafe class SwitcherDecor
         int n = Math.Min(labels.Length, scene.Count);
         if (n == 0) return;
         double dpi = Dpi, p = frame.Position;
-        // 松手后选中的缩略图飞回窗口原位：面板、选中框、标题随之淡出
+        // 松手后选中的缩略图飞回窗口原位：变暗、选中框、标题随之淡出
         double appear = Math.Clamp(frame.Appear, 0, 1) * (frame.LaunchIndex >= 0 ? 1 - OverviewVisuals.SmoothStep(0, 0.6, frame.Launch) : 1);
         lock (_res.Backend.Gate)
         {
@@ -162,9 +156,7 @@ internal sealed unsafe class SwitcherDecor
             var rect = RectD.Lerp(layout.ItemRect(f, p), layout.ItemRect(g, p), c - f);
             double out_ = (RingGapDip + RingStrokeDip) * dpi;
             _ring?.Place(rect.Offset(-_origin.Left, -_origin.Top).Inflate(out_, out_), appear);
-            var band = _band.Offset(-_origin.Left, -_origin.Top);
-            _panel?.Place(band, appear);
-            _panelEdge?.Place(band, appear);
+            _dim?.Place(_monitor.WorkArea.Offset(-_origin.Left, -_origin.Top), appear * DimOpacity); // 只暗切换条所在的这块屏
 
             var box = layout.LabelRect(dpi).Offset(-_origin.Left, -_origin.Top);
             double iconPx = Math.Round(IconDip * dpi), gapPx = Math.Round(IconGapDip * dpi);
@@ -256,9 +248,8 @@ internal sealed unsafe class SwitcherDecor
         lock (_res.Backend.Gate)
         {
             _ring?.Remove(_branch.Root);
-            _panel?.Remove(_panelBranch.Root);
-            _panelEdge?.Remove(_panelBranch.Root);
+            _dim?.Remove(_panelBranch.Root);
         }
-        _ring = _panel = _panelEdge = null;
+        _ring = _dim = null;
     }
 }

@@ -40,6 +40,25 @@ public class SwitcherLayoutTests
     }
 
     [Fact]
+    public void Items_fade_out_towards_the_screen_edges_instead_of_being_cut_off()
+    {
+        var layout = Layout(6);
+        Assert.Equal(1, layout.EdgeFade(layout.ItemRect(0, 0)), 6); // 居中的不淡
+        double prev = 1;
+        for (int i = 1; i < 6; i++)
+        {
+            double f = layout.EdgeFade(layout.ItemRect(i, 0));
+            Assert.True(f <= prev, $"第 {i} 项比更靠里的还亮");
+            prev = f;
+        }
+        var touching = new RectD(Area.Right - 400, 600, 400, 300); // 外侧边碰到屏幕边：已经完全透明，不会被硬切
+        Assert.Equal(0, layout.EdgeFade(touching), 6);
+        Assert.Equal(1, layout.EdgeFade(new RectD(Area.CenterX + 300, 600, 400, 300)), 6); // 离边还远：不淡
+        var same = SwitcherLayout.Create(Enumerable.Repeat((1600.0, 1000.0), 5).ToList(), Area);
+        Assert.Equal(same.EdgeFade(same.ItemRect(2, 0)), same.EdgeFade(same.ItemRect(2, 4)), 6); // 左右对称
+    }
+
+    [Fact]
     public void Nearest_is_clamped_to_valid_items()
     {
         var layout = Layout(3);

@@ -10,11 +10,10 @@ using GlideShell.Platform.Ui;
 namespace GlideShell.Platform.Switcher;
 
 /// <summary>
-/// 窗口切换条的 Windows 实现（<see cref="ISwitcherHost"/>）：前台窗口所在显示器中部的一条横带
-/// （Windows 11 系统亚克力背景、圆角），窗口缩略图在其中随连续位置平移，选中项标题在下方。
-/// 横带之外不遮挡——背后是实时的桌面，和 Alt+Tab 一样。
-/// 共享缩略图可用时与总览同一套画法：缩略图是带窗口阴影的共享缩略图视觉，标题、程序图标与选中框在合成层里逐帧跟手
-/// （<see cref="SwitcherDecor"/>）；否则退回经典 DWM 缩略图 + GDI 标题。
+/// 窗口切换条的 Windows 实现（<see cref="ISwitcherHost"/>）：前台窗口所在显示器中部的一行窗口缩略图，随连续位置平移，选中项标题在下方。
+/// 共享缩略图可用时与总览同一套画法：整块屏轻轻变暗，缩略图是带窗口阴影的共享缩略图视觉、越靠近屏幕两端越淡，
+/// 标题、程序图标与选中框在合成层里逐帧跟手（<see cref="SwitcherDecor"/>）；
+/// 否则退回经典 DWM 缩略图 + GDI 标题，画在一条圆角横带里（系统亚克力背景，切换条不激活时实际是深灰）。
 /// </summary>
 public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 {
@@ -24,7 +23,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
     private volatile float _radiusPx;
     private readonly RenderLoop _render;
     private OverlayComposition? _composition; // 横带窗口的合成目标（共享缩略图模式）
-    private OverlayComposition? _panelRoot, _content, _decorRoot; // 从下往上：烟灰面板、缩略图、文字与选中框
+    private OverlayComposition? _panelRoot, _content, _decorRoot; // 从下往上：变暗层、缩略图、文字与选中框
     private OverlayComposition? _launchRoot; // 最上面：飞回中的窗口（不裁剪，可以飞到别的屏上）
     private nint _lifted; // 挂到 _launchRoot 上的窗口分组（0 = 没有）
     private volatile SharedThumbnailLayer? _layer;
@@ -163,7 +162,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
 
         var layout = SwitcherLayout.Create(windows.Select(w => (w.Source.Width, w.Source.Height)).ToList(), monitor.WorkArea, monitor.DpiScale);
         var bandRect = layout.BandRect(monitor.DpiScale);
-        // 合成层可用时横带窗口本身完全透明（没有 GDI 表面），背景是合成层里半透明的烟灰面板
+        // 合成层可用时横带窗口本身完全透明（没有 GDI 表面），合成层里整块屏轻轻变暗、缩略图浮在上面
         bool wantComposed = _shared?.Get() is not null && _shared.Decor(_ui) is not null;
         // 合成层模式下横带窗口铺满工作区；别的屏上也有窗口时连那几块屏一起铺上——选中的窗口松手后要飞回它在别的屏上的原位，
         // 只铺本屏的话飞到屏幕边上就被裁掉了（双屏真机）
@@ -232,7 +231,7 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
             _decor.Dispose();
             _decor = null;
         }
-        _decor ??= new SwitcherDecor(res, _decorRoot!, _panelRoot!, monitor, windowRect, bandRect, radiusDip);
+        _decor ??= new SwitcherDecor(res, _decorRoot!, _panelRoot!, monitor, windowRect, radiusDip);
         _decor.Prepare(scene);
         if (_rects.Length < scene.Count)
         {
@@ -269,13 +268,14 @@ public sealed unsafe class SwitcherPresenter : ISwitcherHost, IDisposable
                 for (int i = 0; i < n; i++)
                 {
                     _rects[i] = scene.Layout.ItemRect(i, frame.Position);
-                    _opacity[i] = frame.Appear;
+                    _opacity[i] = frame.Appear * scene.Layout.EdgeFade(_rects[i]); // 越靠近屏幕两端越淡
                     _active[i] = Math.Clamp(1 - Math.Abs(i - frame.Position), 0, 1); // 居中的那个用活动阴影
                     if (frame.LaunchIndex < 0) continue;
                     if (i == frame.LaunchIndex)
                     {
                         // 飞回：从切换条上的位置飞到窗口的真实位置与大小（落定时与窗口重合，撤层无跳变）
                         _rects[i] = RectD.Lerp(_rects[i], scene.Windows[i].Source, launch);
+                        _opacity[i] = frame.Appear; // 飞向别的屏上的原位时不能按离屏幕中央的距离淡掉
                         _active[i] = 1;
                     }
                     else _opacity[i] *= 1 - OverviewVisuals.SmoothStep(0, 0.6, launch);
