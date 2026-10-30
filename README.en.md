@@ -231,6 +231,10 @@ legacy/                  the old MissionFlow prototype (read-only reference, tag
 - [emoacht/RawInput.Touchpad](https://github.com/emoacht/RawInput.Touchpad) (MIT): the upstream approach for reading touchpads via Raw Input
 - During research we also looked at GestureSign, TouchpadGestures_Advanced, windows-expose-clone, GNOME Shell's workspace.js and others
 
+## Friends
+
+- [LINUX DO](https://linux.do/): a community for developers and tech enthusiasts (Chinese)
+
 ## License
 
 [MIT](LICENSE) © LiamZhaofor. Bundled third-party MIT code keeps its original copyright notices.

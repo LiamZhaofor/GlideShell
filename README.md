@@ -197,6 +197,10 @@ legacy/                  旧原型 MissionFlow（只读参考，tag missionflow-
 - [emoacht/RawInput.Touchpad](https://github.com/emoacht/RawInput.Touchpad)（MIT）：上游的 Raw Input 触摸板读取方案
 - 调研阶段参考了 GestureSign、TouchpadGestures_Advanced、windows-expose-clone、GNOME Shell workspace.js 等项目
 
+## 友情链接
+
+- [LINUX DO](https://linux.do/)：新的理想型社区
+
 ## License
 
 [MIT](LICENSE) © LiamZhaofor。所含第三方 MIT 代码保留其原始版权声明。
