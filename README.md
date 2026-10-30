@@ -1,5 +1,7 @@
 # GlideShell
 
+**简体中文** · [English](README.en.md)
+
 > 让 Windows 触摸板手势真正跟手：手指走多少，画面走多少；停住就停住，反向就倒退，松手才决定去留。
 
 **官网与使用教程**：<https://liamzhaofor.github.io/GlideShell/> · [下载最新版](https://github.com/LiamZhaofor/GlideShell/releases/latest)
