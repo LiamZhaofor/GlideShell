@@ -325,8 +325,8 @@ internal static class English
         ["{0}，已经是最新的（{1:HH:mm} 检查）"] = "{0}, up to date (checked at {1:HH:mm})",
         ["{0}。点「升级」自动下载、校验并安装，GlideShell 会自动重新启动，设置会保留"] =
             "{0}. Click “Upgrade” to download, verify and install it automatically. GlideShell restarts on its own and keeps your settings",
-        ["{0}。点「下载」打开下载页面，下载后双击「安装.cmd」即可升级，设置会保留"] =
-            "{0}. Click “Download” to open the download page, then double-click 安装.cmd (Install) in the package to upgrade. Your settings are kept",
+        ["{0}。点「下载」打开下载页面，下载后双击 Install.cmd 即可升级，设置会保留"] =
+            "{0}. Click “Download” to open the download page, then double-click Install.cmd in the package to upgrade. Your settings are kept",
         ["检查失败：{0}"] = "Check failed: {0}",
         ["{0}，还没有检查过"] = "{0}, not checked yet",
         ["所有设置都会回到刚安装时的样子（排除的程序和开机启动保留）。继续吗？"] =

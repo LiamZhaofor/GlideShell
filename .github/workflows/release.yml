@@ -56,7 +56,7 @@ jobs:
           $notes = "docs/release-notes/$version.md"
           if (-not (Test-Path $notes)) {
             $notes = Join-Path $env:RUNNER_TEMP "notes.md"
-            "（发布前在这里写更新说明。）`n`n## 安装`n`n下载 ``GlideShell-$version-win-x64.zip``，解压后双击「安装.cmd」（无需管理员）。" |
+            "（发布前在这里写更新说明。）`n`n## 安装`n`n下载 ``GlideShell-$version-win-x64.zip``，解压后双击 Install.cmd（无需管理员）。" |
               Set-Content -Encoding utf8 $notes
           }
           gh release create "${{ github.ref_name }}" $zip --draft --title "GlideShell $version" --notes-file $notes --verify-tag

@@ -2,7 +2,7 @@ namespace GlideShell.Core.Updates;
 
 public enum InstallKind
 {
-    /// <summary>发布包「安装.cmd」装的位置（%LOCALAPPDATA%\Programs\GlideShell）：一键升级，开始菜单与开机启动照旧。</summary>
+    /// <summary>发布包 Install.cmd 装的位置（%LOCALAPPDATA%\Programs\GlideShell）：一键升级，开始菜单与开机启动照旧。</summary>
     Standard,
 
     /// <summary>解压到别处直接运行：一键升级装回原处，不碰开始菜单（开机启动看原来指不指向这里）。</summary>

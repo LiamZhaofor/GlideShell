@@ -385,7 +385,7 @@ public sealed partial class SettingsWindow
             UpdateState.UpToDate => F("{0}，已经是最新的（{1:HH:mm} 检查）", current, st.CheckedAt),
             UpdateState.Available when oneClick => F("{0}。点「升级」自动下载、校验并安装，GlideShell 会自动重新启动，设置会保留", current),
             UpdateState.Available when _env.UpgradeUnavailable is { } why => $"{current}。{why}",
-            UpdateState.Available => F("{0}。点「下载」打开下载页面，下载后双击「安装.cmd」即可升级，设置会保留", current),
+            UpdateState.Available => F("{0}。点「下载」打开下载页面，下载后双击 Install.cmd 即可升级，设置会保留", current),
             UpdateState.Failed => F("检查失败：{0}", st.Error),
             _ => F("{0}，还没有检查过", current),
         };

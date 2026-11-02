@@ -70,11 +70,7 @@ public partial class LocalizationTests
     [Fact]
     public void Translations_contain_no_chinese()
     {
-        // 发布包里的文件名是中文的，译文照原样引用
-        var bad = English.Strings
-            .Where(kv => kv.Value.Replace("安装.cmd", "", StringComparison.Ordinal).Any(c => c is >= '一' and <= '鿿'))
-            .Select(kv => kv.Value)
-            .ToList();
+        var bad = English.Strings.Where(kv => kv.Value.Any(c => c is >= '\u4e00' and <= '\u9fff')).Select(kv => kv.Value).ToList();
         Assert.True(bad.Count == 0, "译文里还有中文：\n" + string.Join("\n", bad));
     }
 

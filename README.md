@@ -34,10 +34,10 @@ Windows 原生的多指手势大多是「识别到手势 → 播放一段固定�
 
 ## 安装
 
-从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-2.0.0-win-x64.zip`，解压后双击 **安装.cmd**。
+从 [Releases](https://github.com/LiamZhaofor/GlideShell/releases) 下载 `GlideShell-2.0.0-win-x64.zip`，解压后双击 **Install.cmd**。
 
 - 程序装到 `%LOCALAPPDATA%\Programs\GlideShell`，并添加开始菜单与开机启动，不需要管理员权限。
-- 卸载：双击 **卸载.cmd**。它会先退出程序、确认系统手势已还原，再删除程序。配置与日志会保留；要连同它们一起删除，运行 `uninstall.ps1 -Purge`。
+- 卸载：双击 **Uninstall.cmd**。它会先退出程序、确认系统手势已还原，再删除程序。配置与日志会保留；要连同它们一起删除，运行 `uninstall.ps1 -Purge`。
 - 程序没有正式签名，第一次运行时 Windows 可能提示「无法验证发布者」。
 
 升级：有新版本时托盘会提示，点「升级」就自动下载、核对 SHA-256、安装并重新启动，设置会保留（也可以 `GlideShell.exe --upgrade`）。手动重装也行：运行中的 GlideShell 会先正常退出，再被替换。
