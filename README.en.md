@@ -37,7 +37,7 @@ Most native Windows multi-finger gestures work as "recognize a gesture → play 
 
 ## Install
 
-Download `GlideShell-2.0.0-win-x64.zip` from [Releases](https://github.com/LiamZhaofor/GlideShell/releases), extract it, and double-click **Install.cmd**.
+Download `GlideShell-2.1.0-win-x64.zip` from [Releases](https://github.com/LiamZhaofor/GlideShell/releases), extract it, and double-click **Install.cmd**.
 
 - The app is installed to `%LOCALAPPDATA%\Programs\GlideShell`, with a Start menu entry and startup at sign-in. No administrator rights are needed.
 - To uninstall, double-click **Uninstall.cmd**. It exits the app first, confirms the system gestures have been restored, and then removes the app. Settings and logs are kept; to delete them too, run `uninstall.ps1 -Purge`.
