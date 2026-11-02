@@ -89,6 +89,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nav-links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
 .nav-links a { color: var(--text-2); font-size: 15px; }
 .nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--text); text-decoration: none; }
+/* 语言切换：小号描边胶囊，和导航文字区分开 */
+.nav-links a.lang-switch { font-size: 13px; padding: 3px 10px; white-space: nowrap; flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; }
+.nav-links a.lang-switch:hover { border-color: var(--text-2); }
 .theme-toggle {
   border: 1px solid var(--line); background: var(--card); color: var(--text-2);
   width: 34px; height: 34px; border-radius: 10px; cursor: pointer; display: grid; place-items: center;

@@ -87,7 +87,7 @@ run GlideShell.exe --restore-native.
 
 Requirements: Windows 11 and a precision touchpad. The app isn't code-signed, so Windows may say it
 "can't verify the publisher" the first time it runs.
-User guide (Chinese): https://liamzhaofor.github.io/GlideShell/guide.html
+User guide: https://liamzhaofor.github.io/GlideShell/en/guide.html
 "@, $utf8Bom)
 
 $zip = Join-Path $root "artifacts/$name.zip"

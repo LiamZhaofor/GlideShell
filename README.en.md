@@ -4,7 +4,7 @@
 
 > Touchpad gestures on Windows that truly follow your fingers: the screen moves exactly as far as your fingers do. Stop and it stops, reverse and it rewinds, and nothing is decided until you lift.
 
-**Website and user guide** (Chinese): <https://liamzhaofor.github.io/GlideShell/> · [Download the latest release](https://github.com/LiamZhaofor/GlideShell/releases/latest)
+**Website and user guide**: <https://liamzhaofor.github.io/GlideShell/en/> · [Download the latest release](https://github.com/LiamZhaofor/GlideShell/releases/latest)
 
 > The app's interface (settings, tray menu, notifications) is available in English and Simplified Chinese. It follows your Windows display language; you can change it under Settings → Home → 语言 / Language.
 

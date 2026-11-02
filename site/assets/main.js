@@ -2,6 +2,7 @@
 (() => {
   "use strict";
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const en = document.documentElement.lang.startsWith("en"); // 英文站（/en/）
 
   // ---------- 主题：跟随系统，可手动切换（记住选择） ----------
   const root = document.documentElement;
@@ -11,7 +12,7 @@
   const sun = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>';
   const moon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7Z"/></svg>';
   document.querySelectorAll(".theme-toggle").forEach(btn => {
-    const paint = () => { btn.innerHTML = isDark() ? sun : moon; btn.setAttribute("aria-label", isDark() ? "切换到浅色" : "切换到深色"); };
+    const paint = () => { btn.innerHTML = isDark() ? sun : moon; btn.setAttribute("aria-label", en ? (isDark() ? "Switch to light theme" : "Switch to dark theme") : (isDark() ? "切换到浅色" : "切换到深色")); };
     paint();
     btn.addEventListener("click", () => {
       root.dataset.theme = isDark() ? "light" : "dark";
@@ -42,7 +43,7 @@
     else if (dir === "horizontal") arrows = arrow(78, 82, 44, 82) + arrow(82, 82, 116, 82);
     else if (dir === "left") arrows = arrow(110, 82, 50, 82);
     else if (dir === "right") arrows = arrow(50, 82, 110, 82);
-    el.innerHTML = `<svg viewBox="0 0 160 103" role="img" aria-label="${n} 指手势示意">${dots}${arrows}</svg>`;
+    el.innerHTML = `<svg viewBox="0 0 160 103" role="img" aria-label="${en ? `${n}-finger gesture` : `${n} 指手势示意`}">${dots}${arrows}</svg>`;
   });
 
   // ---------- 进场动画 ----------

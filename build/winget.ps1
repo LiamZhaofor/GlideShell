@@ -83,7 +83,7 @@ PublisherUrl: https://github.com/LiamZhaofor
 PublisherSupportUrl: https://github.com/$repo/issues
 Author: LiamZhaofor
 PackageName: GlideShell
-PackageUrl: https://liamzhaofor.github.io/GlideShell/
+PackageUrl: https://liamzhaofor.github.io/GlideShell/en/
 License: MIT
 LicenseUrl: https://github.com/$repo/blob/main/LICENSE
 Copyright: Copyright (c) 2026 LiamZhaofor
@@ -104,7 +104,7 @@ Tags:
 ReleaseNotesUrl: https://github.com/$repo/releases/tag/$tag
 Documentations:
 - DocumentLabel: User guide
-  DocumentUrl: https://liamzhaofor.github.io/GlideShell/guide.html
+  DocumentUrl: https://liamzhaofor.github.io/GlideShell/en/guide.html
 ManifestType: defaultLocale
 ManifestVersion: $schema
 "@

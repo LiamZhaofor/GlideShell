@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>User guide — GlideShell</title>
+  <meta name="description" content="GlideShell user guide: installing, every gesture, the window overview, desktop strip, show desktop, switching windows (including Alt+Tab) and desktops, mouse button gestures, hot corners, settings and troubleshooting.">
+  <meta name="theme-color" content="#4f6cf0">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="alternate" hreflang="zh-CN" href="https://liamzhaofor.github.io/GlideShell/guide.html">
+  <link rel="alternate" hreflang="en" href="https://liamzhaofor.github.io/GlideShell/en/guide.html">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="../assets/logo.svg" alt="">GlideShell</a>
+      <nav class="nav-links" aria-label="Main">
+        <a class="hide-sm" href="./#features">Features</a>
+        <a href="guide.html" aria-current="page">Guide</a>
+        <a class="hide-sm" href="./#download">Download</a>
+        <a href="https://github.com/LiamZhaofor/GlideShell" rel="noopener">GitHub</a>
+        <a class="lang-switch" href="../guide.html" hreflang="zh-CN" lang="zh-CN">中文</a>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap doc">
+    <aside class="toc" aria-label="Contents">
+      <p>Contents</p>
+      <ol>
+        <li><a href="#before">Before you start</a></li>
+        <li><a href="#install">Install and upgrade</a></li>
+        <li><a href="#first">First steps</a></li>
+        <li><a href="#gestures">Gestures at a glance</a></li>
+        <li><a href="#overview">Window overview</a></li>
+        <li><a href="#spaces">Desktop strip</a></li>
+        <li><a href="#app-view">App windows view</a></li>
+        <li><a href="#show-desktop">Show desktop</a></li>
+        <li><a href="#switcher">Switching windows</a></li>
+        <li><a href="#desktops">Switching desktops</a></li>
+        <li><a href="#mouse">Mouse button gestures</a></li>
+        <li><a href="#corners">Hot corners</a></li>
+        <li><a href="#settings">Settings</a></li>
+        <li><a href="#exclude">Excluded apps and pausing</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#uninstall">Uninstall</a></li>
+      </ol>
+    </aside>
+
+    <article class="article">
+      <h1>User guide</h1>
+      <p class="lead">From installing to knowing every gesture. It takes about ten minutes to read; if you're in a hurry, "First steps" and "Gestures at a glance" are enough to get going.</p>
+
+      <h2 id="before">Before you start</h2>
+      <p>GlideShell needs:</p>
+      <ul>
+        <li><strong>Windows 11</strong> (developed and tested on 24H2; Windows 10 isn't supported yet).</li>
+        <li><strong>A precision touchpad</strong>: open Windows Settings → Bluetooth &amp; devices → Touchpad. If the top of the page says "Your PC has a precision touchpad", you're good to go. Almost every laptop from recent years has one.</li>
+      </ul>
+      <div class="callout tip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M11 12h1v5h1"/></svg>
+        <p>GlideShell only takes over the multi-finger gestures it implements and the three-finger tap (middle click). Two-finger scrolling, zooming and the rest stay with Windows.</p>
+      </div>
+      <p>The interface (settings, tray menu, notifications) is in English or Simplified Chinese. It follows your Windows display language, and you can change it under Settings → Home → 语言 / Language.</p>
+
+      <h3 id="hardware">Verified hardware</h3>
+      <p>These are the computers GlideShell has actually been verified on. Most precision touchpads not listed here work too; nobody has confirmed them yet.</p>
+      <table>
+        <thead><tr><th>Computer / touchpad</th><th>Reporting</th><th>Result</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr><td>ASUS laptop (touchpad VID 2808 / PID 0218, 5 contacts)</td><td>Parallel</td><td>All gestures work; 150% 165 Hz built-in screen + 125% 200 Hz external screen</td><td>Dev machine</td></tr>
+        </tbody>
+      </table>
+      <p>Using a different computer? Whether it works well or not, please file a <a href="https://github.com/LiamZhaofor/GlideShell/issues/new?template=touchpad.yml" rel="noopener">touchpad compatibility report</a> and it will be added to this table.</p>
+
+      <h2 id="install">Install and upgrade</h2>
+      <ol>
+        <li>Open <a href="https://github.com/LiamZhaofor/GlideShell/releases/latest" rel="noopener">GitHub Releases</a> and download <code>GlideShell-&lt;version&gt;-win-x64.zip</code>.</li>
+        <li>Extract it anywhere and double-click <strong>Install.cmd</strong> inside.</li>
+        <li>Once installed, GlideShell starts automatically and its icon appears in the tray (bottom right of the taskbar).</li>
+      </ol>
+      <p>GlideShell is installed to <code>%LOCALAPPDATA%\Programs\GlideShell</code> with a Start menu entry and startup at sign-in. <strong>No administrator rights are needed</strong> at any point.</p>
+      <div class="callout warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.01"/></svg>
+        <p>The app isn't code-signed yet, so the first time it runs Windows may show "Windows protected your PC" or say it can't verify the publisher. Click <strong>More info → Run anyway</strong>. GlideShell is fully open source, so you can also build it yourself.</p>
+      </div>
+      <p><strong>Upgrading</strong>: when a new version is out, GlideShell notifies you in the tray. Click the notification, "Upgrade to x.y.z…" in the tray menu, or "Upgrade" under Settings → About, and it downloads the new version from GitHub, checks the file is intact (SHA-256), installs it and restarts, keeping your settings. You can also download it manually and double-click Install.cmd to install over the old version.</p>
+      <p>The update check asks GitHub for the latest version number once a day and sends nothing else. If you don't want it, turn off "Check for updates automatically" under Settings → About, and GlideShell never goes online; you can still check manually there at any time.</p>
+
+      <h2 id="first">First steps</h2>
+      <p>There's nothing to set up. Just try it:</p>
+      <ol>
+        <li><strong>Swipe up with three fingers</strong> on the touchpad: all windows spread out with your fingers. That's the window overview.</li>
+        <li><strong>Stop</strong> halfway and the picture stops too. <strong>Swipe back</strong> and it rewinds.</li>
+        <li><strong>Lift</strong>: past halfway or fast enough, it opens; otherwise it closes again.</li>
+        <li>Once it's open, <strong>click a window</strong> and it flies back into place and comes to the front.</li>
+      </ol>
+      <p><strong>Tray icon</strong>: left-click to open or close the window overview. The right-click menu has settings, pause (hands every gesture straight back to Windows), sensitivity and exit.</p>
+      <div class="callout tip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M11 12h1v5h1"/></svg>
+        <p>Launching GlideShell again from the Start menu opens the settings window.</p>
+      </div>
+
+      <h2 id="gestures">Gestures at a glance</h2>
+      <div class="figure-row">
+        <div class="card"><span class="pad" data-fingers="3" data-dir="vertical"></span><div><b>Three-finger up / down</b><span>Up: window overview<br>Down: only the current app's windows</span></div></div>
+        <div class="card"><span class="pad" data-fingers="3" data-dir="horizontal"></span><div><b>Three-finger left / right</b><span>Switch between windows</span></div></div>
+        <div class="card"><span class="pad" data-fingers="4" data-dir="vertical"></span><div><b>Four-finger up / down</b><span>Down: show desktop<br>Up: bring windows back / open the overview</span></div></div>
+        <div class="card"><span class="pad" data-fingers="4" data-dir="horizontal"></span><div><b>Four-finger left / right</b><span>Switch virtual desktops</span></div></div>
+      </div>
+      <table>
+        <thead><tr><th>Gesture</th><th>Default</th><th>With "Three-finger drag" on</th></tr></thead>
+        <tbody>
+          <tr><td>Three-finger up / down</td><td>Up: overview; down: app windows view</td><td>Drag as if holding the left button</td></tr>
+          <tr><td>Three-finger left / right</td><td>Switch windows</td><td>Drag as if holding the left button</td></tr>
+          <tr><td>Four-finger up / down</td><td>Down: show desktop; up: bring windows back (opens the overview when the desktop isn't showing)</td><td>Window overview</td></tr>
+          <tr><td>Four-finger left / right</td><td>Switch virtual desktops</td><td>Switch virtual desktops</td></tr>
+          <tr><td>Three-finger tap</td><td colspan="2">Middle click (open links in a new tab, close tabs)</td></tr>
+        </tbody>
+      </table>
+      <p>Every gesture <strong>follows your fingers</strong>: the picture's position is set by your fingers, so you can stop and go back. On release, "how far + how fast" decides whether it completes or cancels, just like on a Mac. What each gesture does can be changed in <a href="#settings">settings</a>, or set to "System default" to hand it back to Windows.</p>
+
+      <h2 id="overview">Window overview</h2>
+      <p><strong>Open</strong>: swipe up with three fingers. You can also click the tray icon, press <span class="kbd">Ctrl</span> + <span class="kbd">Alt</span> + <span class="kbd">O</span>, or use a <a href="#corners">hot corner</a> or a <a href="#mouse">mouse gesture</a>.</p>
+      <p><strong>Close</strong>: swipe down with three fingers (it follows your fingers too), press <span class="kbd">Esc</span>, or click empty space.</p>
+      <h3>Pick a window</h3>
+      <ul>
+        <li>Click a window, or rest the pointer on one (a blue frame appears) and then swipe down with three fingers or press <span class="kbd">Enter</span>.</li>
+        <li>Three-finger left / right swipes, the arrow keys and <span class="kbd">Tab</span> / <span class="kbd">Shift</span>+<span class="kbd">Tab</span> all move the selection.</li>
+        <li>When the overview closes, the selected window flies back first and grows slightly to show it will be in front.</li>
+      </ul>
+      <h3>Close a window</h3>
+      <p>Rest the pointer on a window and an "×" appears in its top-left corner. Click it to close the window, and the others move up to fill the gap. If the app asks something like "Save changes?", the overview closes and switches to that dialog so you can see the question.</p>
+      <h3>See only one app's windows</h3>
+      <p>Click the title row under a window (app icon + title) and the overview switches to the <a href="#app-view">app windows view</a> for that app; click the title row again to switch back. Neither closes the overview.</p>
+
+      <h2 id="spaces">Desktop strip</h2>
+      <p>With two or more virtual desktops, the desktop strip appears at the top of the overview:</p>
+      <ul>
+        <li><strong>Switch desktops</strong>: move the pointer to the top and the desktop names expand into live thumbnails. Click another desktop and it zooms in and switches.</li>
+        <li><strong>Move a window</strong>: press and drag a window onto a desktop at the top and release; the window moves to that desktop. Dropping it on "+" creates a new desktop and moves it there.</li>
+        <li><strong>Add a desktop</strong>: click "+" at the end of the strip.</li>
+        <li><strong>Remove a desktop</strong>: rest the pointer on a desktop and an "×" appears to the right of its name; click it. The desktop's windows merge into a neighboring desktop.</li>
+        <li><strong>Paging</strong>: swipe left or right with four fingers inside the overview to stay in the overview and slide sideways to the neighboring desktop's page, with its windows already laid out.</li>
+      </ul>
+
+      <h2 id="app-view">App windows view</h2>
+      <p><strong>Swipe down with three fingers</strong> when the overview isn't open: only the current app's windows are tiled (like App Exposé on a Mac), minimized windows sit in their own row at the bottom, and other apps' windows fade out in place. Swipe up with three fingers to close it, or click a window to switch to it.</p>
+      <p>If you don't need it, turn off "Show only the current app's windows" under Settings → Overview &amp; desktops.</p>
+
+      <h2 id="show-desktop">Show desktop</h2>
+      <p><strong>Swipe down with four fingers</strong>: every window slides off the screen edges with your fingers, revealing the desktop. <strong>Swipe up with four fingers</strong>: the windows slide back into place in their original stacking order.</p>
+      <p>When the desktop isn't being shown, a four-finger swipe up opens the window overview (same as on a Mac).</p>
+      <div class="callout tip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M11 12h1v5h1"/></svg>
+        <p>Show desktop actually minimizes the windows, so you can also bring them back one by one from the taskbar. GlideShell has no permission to move apps running as administrator out of the way.</p>
+      </div>
+
+      <h2 id="switcher">Switching windows (three-finger left / right, Alt+Tab)</h2>
+      <p>Swipe left or right with three fingers and a row of window thumbnails appears in the middle of the screen, panning with your fingers; the one in the center has a blue selection frame. Lift and the selected window flies from the switcher back to its place and comes to the front. Swipe back to the first window before lifting and nothing switches.</p>
+      <p>When the overview is already open, three-finger left / right swipes move the selection inside the overview instead.</p>
+      <h3>Alt+Tab</h3>
+      <p><span class="kbd">Alt</span> + <span class="kbd">Tab</span> on the keyboard uses the same switcher:</p>
+      <ul>
+        <li><strong>Hold <span class="kbd">Alt</span></strong> and press <span class="kbd">Tab</span> to select the next window (<span class="kbd">Shift</span> + <span class="kbd">Tab</span> for the previous one; <span class="kbd">←</span> <span class="kbd">→</span> work too, and it wraps around at the ends).</li>
+        <li><strong>Release <span class="kbd">Alt</span></strong>: the selected window flies back to its place and comes to the front. <span class="kbd">Esc</span> cancels and <span class="kbd">Enter</span> switches right away.</li>
+        <li><strong>A quick tap</strong> of Alt+Tab switches straight back to the previous window without showing the switcher (same as Windows).</li>
+        <li><strong>With the mouse</strong>: while holding <span class="kbd">Alt</span>, move the pointer over a card to select it (the switcher stays put and only the selection frame moves), click a card to switch to it, or click empty space to cancel.</li>
+        <li><strong>Close a window</strong>: press <span class="kbd">Delete</span> to close the selected window. Its card disappears from the switcher and the selection moves to the next one. If the app asks something like "Save changes?", GlideShell switches to it so you can answer.</li>
+      </ul>
+      <p>While GlideShell is paused, an excluded app is in front, or it's paused for full screen, Alt+Tab is Windows' own. If you don't want it, turn it off under Settings → Overview &amp; desktops → Keyboard.</p>
+
+      <h2 id="desktops">Switching desktops (four-finger left / right)</h2>
+      <p>Swipe left or right with four fingers and the neighboring desktop slides in with your fingers; past halfway or fast enough, it switches. With no neighboring desktop, it rubber-bands back.</p>
+      <p><span class="kbd">Ctrl</span> + <span class="kbd">Win</span> + <span class="kbd">←</span> / <span class="kbd">→</span> on the keyboard uses the same animation (repeated presses chain); with the overview open it pages the overview instead. If you don't like it, turn it off in settings to hand it back to Windows.</p>
+
+      <h2 id="mouse">Mouse button gestures</h2>
+      <p>When you're not on the touchpad, you can do the same with a mouse (inspired by Mac Mouse Fix). <strong>Hold the Back side button and drag</strong>:</p>
+      <ul>
+        <li><strong>Left / right</strong>: switch desktops, with the desktop following the pointer (dragging one screen width switches exactly one desktop).</li>
+        <li><strong>Up</strong>: open the window overview.</li>
+        <li><strong>Down</strong>: show only the current app's windows; with the overview open, close it.</li>
+      </ul>
+      <p>A plain <strong>click</strong> of the side button (without dragging) is still Back. Under Settings → Mouse &amp; hot corners you can switch to the Forward button or the middle button, adjust the sensitivity, or turn it off.</p>
+
+      <h2 id="corners">Hot corners</h2>
+      <p>Rest the pointer in a screen corner for a moment (about 0.1 s) to trigger the action you set: window overview, app windows or show desktop. All are off by default.</p>
+      <p>Choose them with the buttons in the four corners of the screen diagram under Settings → Mouse &amp; hot corners. They don't trigger in full screen, while paused, or with an excluded app in front.</p>
+
+      <h2 id="settings">Settings</h2>
+      <p>Right-click the tray icon → <strong>Settings…</strong>, or launch GlideShell again from the Start menu. Changes <strong>apply immediately</strong>; there's no save button.</p>
+      <table>
+        <thead><tr><th>Page</th><th>What you can do</th></tr></thead>
+        <tbody>
+          <tr><td>Home</td><td>See what each gesture does now; start at sign-in, pause in full screen, and the interface language.</td></tr>
+          <tr><td>Touchpad gestures</td><td>Who handles each gesture; three-finger drag; three-finger tap = middle click; sensitivity (High / Standard / Low), with "Fine-tune" for how far each gesture travels and the drag pointer speed.</td></tr>
+          <tr><td>Overview &amp; desktops</td><td>App windows view, group by app, dim background, window corner radius, Alt+Tab and keyboard desktop switching.</td></tr>
+          <tr><td>Mouse &amp; hot corners</td><td>The hold-and-drag button and its sensitivity; the actions for the four corners.</td></tr>
+          <tr><td>Excluded apps</td><td>Which apps keep Windows' own gestures while they're in front.</td></tr>
+          <tr><td>Diagnostics</td><td>Compatibility checks one by one (touchpad, system gesture takeover, virtual desktops, shared thumbnails and more); create a diagnostic report.</td></tr>
+          <tr><td>About</td><td>Version, automatic and manual update checks, config file, log, reset to defaults.</td></tr>
+        </tbody>
+      </table>
+      <p>The settings window works entirely from the keyboard too: <span class="kbd">Tab</span> to move, <span class="kbd">Space</span> / <span class="kbd">Enter</span> to activate, <span class="kbd">←</span> <span class="kbd">→</span> to adjust sliders, <span class="kbd">Esc</span> to close.</p>
+      <h3>Advanced: the config file</h3>
+      <p>Less common options such as spring parameters live in the config file <code>%APPDATA%\GlideShell\config.json</code> (comments are allowed, and changes apply as soon as you save). Every option is described in the <a href="https://github.com/LiamZhaofor/GlideShell/blob/main/docs/CONFIG.md" rel="noopener">config reference</a> (in Chinese).</p>
+
+      <h2 id="exclude">Excluded apps and pausing</h2>
+      <ul>
+        <li><strong>Excluded apps</strong>: with remote desktop, virtual machines, or games and drawing apps that handle gestures themselves in front, you may prefer Windows' own gestures. Add them under Settings → Excluded apps (pick from running apps or type the process name; Remote Desktop is <code>mstsc</code>).</li>
+        <li><strong>Pause in full screen</strong>: on by default; gestures are left to Windows while a game, video or presentation is full screen.</li>
+        <li><strong>Pause</strong>: right-click the tray icon → Pause to hand every gesture straight back to Windows; click it again to resume.</li>
+      </ul>
+
+      <h2 id="troubleshooting">Troubleshooting</h2>
+      <h3>Gestures don't respond</h3>
+      <ul>
+        <li>Make sure you have a precision touchpad (see <a href="#before">Before you start</a>).</li>
+        <li>Right-click the tray icon and check whether GlideShell is paused.</li>
+        <li>Check whether the app in front is in Excluded apps, or is full screen.</li>
+        <li>Check whether that gesture is set to "System default" in settings.</li>
+      </ul>
+      <h3>System gestures weren't restored after exiting</h3>
+      <p>Normally they're restored on exit, pause, uninstall and even after a crash. If that ever fails, run:</p>
+      <pre><code>"%LOCALAPPDATA%\Programs\GlideShell\GlideShell.exe" --restore-native</code></pre>
+      <h3>The overview doesn't cover the Start menu, or some windows won't come to the front</h3>
+      <p>The release package is the standard-privilege build. Its overlay sits below system UI (Start menu, notification center), and it can't bring apps running as administrator to the front or minimize them. If you need that, build the UIAccess version from source as described in the <a href="https://github.com/LiamZhaofor/GlideShell/blob/main/README.en.md#build-from-source" rel="noopener">README</a>.</p>
+      <h3>A desktop name appears at the bottom of the screen when switching desktops</h3>
+      <p>That hint is drawn by Windows itself, and there's currently no way to hide it from outside.</p>
+      <h3>Reporting a problem</h3>
+      <p>Right-click the tray icon → <strong>Create diagnostic report</strong> (or "Create" under Settings → Diagnostics). It writes the version, system, touchpad, displays, compatibility checks, config and the recent log to a text file, copies it to the clipboard and opens it in Notepad. Have a look, then <a href="https://github.com/LiamZhaofor/GlideShell/issues/new/choose" rel="noopener">open an issue on GitHub</a> (choose "Bug report"), paste the report, and describe what you did and what you saw. Reports and logs stay on your computer; GlideShell never uploads them.</p>
+      <p>After GlideShell exits unexpectedly, it mentions it once in the tray the next time it starts, and clicking the notification creates a diagnostic report.</p>
+
+      <h2 id="uninstall">Uninstall</h2>
+      <p>Double-click <strong>Uninstall.cmd</strong> in the package. It exits GlideShell, confirms the system gestures are restored, then removes the program, the Start menu entry and startup at sign-in.</p>
+      <p>Your settings (<code>%APPDATA%\GlideShell</code>) and logs are kept in case you reinstall; to remove them too, run <code>uninstall.ps1 -Purge</code>.</p>
+
+      <div class="next">
+        <a href="./">← Back to home</a>
+        <a href="https://github.com/LiamZhaofor/GlideShell/releases/latest" rel="noopener">Download the latest release →</a>
+      </div>
+    </article>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      <span>© 2026 LiamZhaofor · MIT license</span>
+      <span><a href="./">Home</a> · <a href="https://github.com/LiamZhaofor/GlideShell" rel="noopener">GitHub</a> · <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">Report an issue</a></span>
+    </div>
+  </footer>
+  <script src="../assets/main.js"></script>
+</body>
+</html>
