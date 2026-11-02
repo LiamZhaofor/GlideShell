@@ -691,3 +691,13 @@ legacy/
 
 - Windows 10。
 - 新的跟手视图（如启动台）：和现有手势容易冲突，2.0 时已定。
+
+### 10.5 2.1 进展（2026-11-03）
+
+- **CI**（`.github/workflows/ci.yml`）：每次推送（只改 Markdown 或 `site/` 的除外）与 PR，在 windows-latest 上编译整个解决方案（警告即错误、AOT / 裁剪分析）并跑全部测试。首次运行：312 通过、1 跳过（运行机没有触摸板，`PlatformInputTests` 按设计跳过），测试本身不到 1 秒。
+- **发版流水线**（`release.yml`）：推 `v*` tag → 核对 tag 与 `Directory.Build.props` 的版本一致 → 测试 → `package.ps1 -Aot` → 建**草稿** Release 并附发布包。草稿不会被升级检测看到，核对说明后在 GitHub 上点发布才通知用户。说明取 `docs/release-notes/<版本>.md`，没有就放占位文字。手动运行 = 试跑（不建 Release，发布包存为构建产物）。试跑结果：运行机上 NativeAOT 打包成功（exe 6.1 MB、zip 2.8 MB，版本信息带提交号），zip 里中文文件名的编码与本机打的包一致。
+- **winget**（`winget.yml`）：Release 正式发布后生成清单并存为构建产物；仓库机密 `WINGET_TOKEN` 存在时才用 wingetcreate 向 microsoft/winget-pkgs 提 PR（要等 #464006 合并、包已存在之后再配）。`winget.ps1` 在没有 winget 的机器上跳过本地校验。
+- **Issue 模板**：问题反馈、触摸板兼容报告（新标签 `touchpad`）、功能建议，中英双语，前两个必须附诊断报告。
+- **官网**：使用教程「开始之前」下加「已验证的硬件」表，链接到触摸板兼容报告模板；「想反馈问题」改为链接到模板选择页。
+
+新的发版流程：改版本号、写 `docs/release-notes/<版本>.md` → 提交、快进合并 main → 推 tag → 等流水线建好草稿 → 核对后发布 → 本机重装 UIAccess 版。
