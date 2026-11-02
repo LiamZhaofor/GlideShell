@@ -1,11 +1,13 @@
 # 推 v* tag：核对版本号 → 测试 → NativeAOT 打包 → 建「草稿」Release 并附上发布包。
 # 草稿不会被升级检测看到（/releases/latest 不含草稿）；核对说明后在 GitHub 上点发布，用户才会收到通知。
 # 说明取 docs/release-notes/<版本>.md，没有就留一段占位文字，发布前补上。
+# 手动运行（workflow_dispatch）= 试跑：只测试和打包，发布包存为构建产物，不建 Release。
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -28,7 +30,7 @@ jobs:
         shell: pwsh
         run: |
           $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} 与 Directory.Build.props 的版本 $version 不一致" }
+          if ("${{ github.ref_type }}" -eq "tag" -and "v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} 与 Directory.Build.props 的版本 $version 不一致" }
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: 测试
@@ -38,7 +40,15 @@ jobs:
         shell: pwsh
         run: pwsh build/package.ps1 -Aot
 
+      - name: 保存发布包（试跑）
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlideShell-${{ steps.version.outputs.version }}-win-x64
+          path: artifacts/GlideShell-${{ steps.version.outputs.version }}-win-x64.zip
+
       - name: 建草稿 Release
+        if: github.ref_type == 'tag'
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
