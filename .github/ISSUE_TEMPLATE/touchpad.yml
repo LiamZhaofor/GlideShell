@@ -1,0 +1,51 @@
+name: 触摸板兼容报告 / Touchpad compatibility report
+description: 告诉我们 GlideShell 在你的触摸板上表现如何（好用也欢迎报）/ Tell us how GlideShell works on your touchpad (working reports welcome too)
+labels: [touchpad]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GlideShell 目前只在一台 ASUS 触摸板上完整验证过。你的报告会写进官网的「已验证硬件」表，帮别人判断能不能用。
+
+        GlideShell has only been fully verified on one ASUS touchpad. Your report goes into the "verified hardware" table on the website.
+  - type: input
+    id: laptop
+    attributes:
+      label: 电脑型号 / Laptop model
+      placeholder: 例如 / e.g. ASUS Zenbook 14 UM3406
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: 整体表现 / Overall
+      options:
+        - 都正常 / Everything works
+        - 部分手势有问题 / Some gestures misbehave
+        - 基本不能用 / Mostly unusable
+    validations:
+      required: true
+  - type: checkboxes
+    id: works
+    attributes:
+      label: 哪些正常 / What works
+      options:
+        - label: 三指上滑总览 / Three-finger up: overview
+        - label: 三指下滑应用窗口 / Three-finger down: app windows
+        - label: 三指横滑切换窗口 / Three-finger sideways: switch windows
+        - label: 四指横滑切桌面 / Four-finger sideways: switch desktops
+        - label: 四指下滑显示桌面 / Four-finger down: show desktop
+        - label: 三指轻点中键 / Three-finger tap: middle click
+  - type: textarea
+    id: notes
+    attributes:
+      label: 问题描述 / What goes wrong
+      description: 例如四指常被认成三指、起步慢、轻点没反应 / e.g. four fingers detected as three, slow start, taps ignored
+  - type: textarea
+    id: report
+    attributes:
+      label: 诊断报告 / Diagnostic report
+      description: 设置 → 诊断 →「生成诊断报告」，粘贴到这里 / Settings → 诊断 (Diagnostics) → 生成诊断报告 (Create diagnostic report), paste here
+      render: text
+    validations:
+      required: true

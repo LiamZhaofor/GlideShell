@@ -61,6 +61,16 @@
         <p>GlideShell 只接管它实现了的几个多指手势和三指轻点（鼠标中键）；双指滚动、缩放这些照旧由 Windows 处理。</p>
       </div>
 
+      <h3 id="hardware">已验证的硬件</h3>
+      <p>下面是实际验证过的电脑。没列出来的精确式触摸板大多也能用，只是还没人确认过。</p>
+      <table>
+        <thead><tr><th>电脑 / 触摸板</th><th>报告方式</th><th>验证结果</th><th>来源</th></tr></thead>
+        <tbody>
+          <tr><td>ASUS 笔记本（触摸板 VID 2808 / PID 0218，5 点）</td><td>并行</td><td>全部手势正常；150% 165Hz 内屏 + 125% 200Hz 外接屏</td><td>开发机</td></tr>
+        </tbody>
+      </table>
+      <p>用的是别的电脑？不管好不好用，都欢迎提一份<a href="https://github.com/LiamZhaofor/GlideShell/issues/new?template=touchpad.yml" rel="noopener">触摸板兼容报告</a>，会加进这张表。</p>
+
       <h2 id="install">安装与升级</h2>
       <ol>
         <li>打开 <a href="https://github.com/LiamZhaofor/GlideShell/releases/latest" rel="noopener">GitHub Releases</a>，下载 <code>GlideShell-版本号-win-x64.zip</code>。</li>
@@ -216,7 +226,7 @@
       <h3>切换桌面时屏幕底部出现桌面名</h3>
       <p>这是 Windows 自己画的提示，目前没有办法从外部隐藏。</p>
       <h3>想反馈问题</h3>
-      <p>托盘右键 → <strong>生成诊断报告</strong>（或「设置 → 诊断」里的「生成」）。它会把版本、系统、触摸板、显示器、兼容自检结果、配置和最近的日志写成一个文本文件，复制到剪贴板并用记事本打开。看一眼没问题，就贴到 <a href="https://github.com/LiamZhaofor/GlideShell/issues" rel="noopener">GitHub Issues</a> 里，再说明一下你做了什么、看到了什么。报告和日志只保存在本机，GlideShell 不会上传。</p>
+      <p>托盘右键 → <strong>生成诊断报告</strong>（或「设置 → 诊断」里的「生成」）。它会把版本、系统、触摸板、显示器、兼容自检结果、配置和最近的日志写成一个文本文件，复制到剪贴板并用记事本打开。看一眼没问题，就<a href="https://github.com/LiamZhaofor/GlideShell/issues/new/choose" rel="noopener">在 GitHub 上提一个 Issue</a>（选「问题反馈」），把报告贴进去，再说明一下你做了什么、看到了什么。报告和日志只保存在本机，GlideShell 不会上传。</p>
       <p>GlideShell 意外退出后，下次启动会在托盘提示一次，点提示也能直接生成诊断报告。</p>
 
       <h2 id="uninstall">卸载</h2>

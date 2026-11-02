@@ -1,0 +1,47 @@
+# Release 正式发布后：按发布包生成 winget 清单，作为构建产物保存。
+# 仓库机密 WINGET_TOKEN（有 public_repo 权限的个人令牌）存在时，再用 wingetcreate 向 microsoft/winget-pkgs 提交 PR；
+# 不配置就只生成清单，需要时手动提交。
+name: winget
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号（如 2.1.0）
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成清单
+        id: manifest
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "release") { "${{ github.event.release.tag_name }}".TrimStart("v") } else { "${{ inputs.version }}" }
+          pwsh build/winget.ps1 -Version $version
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winget-${{ steps.manifest.outputs.version }}
+          path: artifacts/winget/${{ steps.manifest.outputs.version }}
+
+      - name: 提交到 winget-pkgs
+        if: env.WINGET_TOKEN != ''
+        shell: pwsh
+        run: |
+          $version = "${{ steps.manifest.outputs.version }}"
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe submit --token $env:WINGET_TOKEN --prtitle "New version: LiamZhaofor.GlideShell version $version" "artifacts/winget/$version"

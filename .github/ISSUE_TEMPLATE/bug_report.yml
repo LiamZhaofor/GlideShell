@@ -1,0 +1,39 @@
+name: 问题反馈 / Bug report
+description: 手势不灵、画面出错、崩溃等 / Gestures misbehave, rendering glitches, crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！最有用的是**诊断报告**：设置 → 诊断 →「生成诊断报告」（或托盘菜单、`GlideShell.exe --diagnostics`），它会被复制到剪贴板，直接粘贴到下面即可。报告只在你本机生成，里面可能有程序名和窗口标题，粘贴前可以删掉不想公开的部分。
+
+        Thanks! The most useful thing is a **diagnostic report**: Settings → 诊断 (Diagnostics) → 生成诊断报告 (Create diagnostic report), or the tray menu, or `GlideShell.exe --diagnostics`. It is copied to your clipboard; paste it below. It may contain app names and window titles, so feel free to remove anything you don't want to share.
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你做了什么手势或操作，期望看到什么，实际看到什么 / What you did, what you expected, what you saw
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 每次都会出现吗？/ Does it happen every time?
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: report
+    attributes:
+      label: 诊断报告 / Diagnostic report
+      description: 粘贴「生成诊断报告」的内容 / Paste the output of "Create diagnostic report"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图或录屏 / Screenshots or recording
+      description: 画面问题附一段录屏最有帮助 / A screen recording helps most for visual issues

@@ -1,0 +1,53 @@
+# 推 v* tag：核对版本号 → 测试 → NativeAOT 打包 → 建「草稿」Release 并附上发布包。
+# 草稿不会被升级检测看到（/releases/latest 不含草稿）；核对说明后在 GitHub 上点发布，用户才会收到通知。
+# 说明取 docs/release-notes/<版本>.md，没有就留一段占位文字，发布前补上。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: 核对版本号
+        id: version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} 与 Directory.Build.props 的版本 $version 不一致" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: 测试
+        run: dotnet test GlideShell.slnx -c Release
+
+      - name: 打包（NativeAOT）
+        shell: pwsh
+        run: pwsh build/package.ps1 -Aot
+
+      - name: 建草稿 Release
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $zip = "artifacts/GlideShell-$version-win-x64.zip"
+          $notes = "docs/release-notes/$version.md"
+          if (-not (Test-Path $notes)) {
+            $notes = Join-Path $env:RUNNER_TEMP "notes.md"
+            "（发布前在这里写更新说明。）`n`n## 安装`n`n下载 ``GlideShell-$version-win-x64.zip``，解压后双击「安装.cmd」（无需管理员）。" |
+              Set-Content -Encoding utf8 $notes
+          }
+          gh release create "${{ github.ref_name }}" $zip --draft --title "GlideShell $version" --notes-file $notes --verify-tag
+          (Get-FileHash $zip -Algorithm SHA256).Hash

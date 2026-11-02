@@ -1,0 +1,38 @@
+# 每次推送与 PR：编译整个解决方案（警告即错误、AOT / 裁剪分析）并跑全部测试
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: [site/**, '**.md']
+  pull_request:
+    paths-ignore: [site/**, '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: 编译
+        run: dotnet build GlideShell.slnx -c Release
+      - name: 测试
+        run: dotnet test GlideShell.slnx -c Release --no-build

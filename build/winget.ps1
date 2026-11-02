@@ -134,5 +134,7 @@ ManifestVersion: $schema
 "@
 
 "清单：$out（$asset，SHA-256 $sha）"
+# GitHub 的运行机上不一定装着 winget：没有就跳过本地校验（winget-pkgs 的流水线还会再校验一遍）
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Warning "没有 winget，跳过 winget validate"; return }
 winget validate --manifest $out
 if ($LASTEXITCODE -ne 0) { throw "winget validate 没有通过" }

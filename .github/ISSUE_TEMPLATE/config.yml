@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用教程 / User guide
+    url: https://liamzhaofor.github.io/GlideShell/guide.html
+    about: 手势、设置、常见问题 / Gestures, settings and FAQ

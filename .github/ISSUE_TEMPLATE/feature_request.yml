@@ -1,0 +1,16 @@
+name: 功能建议 / Feature request
+description: 想要的新功能或改进 / A new feature or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题 / What problem would this solve
+      description: 先说场景，再说想法 / Describe the situation first, then the idea
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 希望怎么做 / What you'd like
+      description: 如果 macOS 或其他工具里有类似的做法，也可以说说 / Mention similar behavior in macOS or other tools if any
