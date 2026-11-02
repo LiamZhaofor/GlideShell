@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using GlideShell.Core.Input;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Input;
 
@@ -55,7 +56,7 @@ public sealed unsafe class PtpInputThread : IDisposable
             throw new InvalidOperationException("一个进程只能有一条 PtpInputThread");
         _thread = new Thread(ThreadMain) { IsBackground = true, Name = "GlideShell.Input", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
-        if (!_ready.Wait(TimeSpan.FromSeconds(5))) _startError ??= "输入线程启动超时";
+        if (!_ready.Wait(TimeSpan.FromSeconds(5))) _startError ??= T("输入线程启动超时");
         if (_startError is not null)
         {
             Dispose();
@@ -99,13 +100,13 @@ public sealed unsafe class PtpInputThread : IDisposable
                 const int ErrorClassAlreadyExists = 1410; // 同一进程里重启输入线程时窗口类还在
                 if (User32.RegisterClassExW(&wc) == 0 && Marshal.GetLastPInvokeError() != ErrorClassAlreadyExists)
                 {
-                    _startError = $"RegisterClassEx 失败（{Marshal.GetLastPInvokeError()}）";
+                    _startError = F("RegisterClassEx 失败（{0}）", Marshal.GetLastPInvokeError());
                     return;
                 }
                 _hwnd = User32.CreateWindowExW(0, cls, null, 0, 0, 0, 0, 0, User32.HWND_MESSAGE, 0, instance, 0);
                 if (_hwnd == 0)
                 {
-                    _startError = $"CreateWindowEx 失败（{Marshal.GetLastPInvokeError()}）";
+                    _startError = F("CreateWindowEx 失败（{0}）", Marshal.GetLastPInvokeError());
                     return;
                 }
 
@@ -119,7 +120,7 @@ public sealed unsafe class PtpInputThread : IDisposable
                 };
                 if (!User32.RegisterRawInputDevices(&rid, 1, (uint)sizeof(User32.RAWINPUTDEVICE)))
                 {
-                    _startError = $"RegisterRawInputDevices 失败（{Marshal.GetLastPInvokeError()}）";
+                    _startError = F("RegisterRawInputDevices 失败（{0}）", Marshal.GetLastPInvokeError());
                     User32.DestroyWindow(_hwnd);
                     _hwnd = 0;
                     return;

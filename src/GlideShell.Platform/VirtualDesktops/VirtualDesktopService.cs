@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.VirtualDesktops;
 
@@ -55,7 +56,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
     public bool Available { get; private set; }
 
     /// <summary>布局名或不可用的原因（日志 / 诊断用）。</summary>
-    public string Status { get; private set; } = "未启动";
+    public string Status { get; private set; } = T("未启动");
 
     public DesktopState State => _state;
 
@@ -196,7 +197,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         }
         catch (Exception ex)
         {
-            Status = $"初始化异常：{ex.Message}";
+            Status = F("初始化异常：{0}", ex.Message);
             Available = false;
         }
         _log($"虚拟桌面：{Status}");
@@ -222,13 +223,13 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         _layout = VirtualDesktopLayout.ForBuild(build);
         if (_layout is null)
         {
-            Status = $"系统构建 {build} 没有适配的接口布局";
+            Status = F("系统构建 {0} 没有适配的接口布局", build);
             return false;
         }
         int? methods = ProxyCheck.MethodCount(_layout.IidManagerInternal);
         if (methods != _layout.ManagerInternalMethodCount)
         {
-            Status = $"接口自检失败：代理里方法数 {methods?.ToString() ?? "（未登记）"}，{_layout.Name} 布局应为 {_layout.ManagerInternalMethodCount}";
+            Status = F("接口自检失败：代理里方法数 {0}，{1} 布局应为 {2}", methods?.ToString() ?? T("（未登记）"), _layout.Name, _layout.ManagerInternalMethodCount);
             return false;
         }
 
@@ -237,24 +238,24 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         int hr = Ole32.CoCreateInstance(&clsid, 0, 0x4 /* CLSCTX_LOCAL_SERVER */, &iidSp, &sp);
         if (hr < 0)
         {
-            Status = $"连接 explorer 失败 0x{hr:X8}";
+            Status = F("连接 explorer 失败 0x{0:X8}", hr);
             return false;
         }
         _shell = (nint)sp;
         hr = QueryService(_shell, VirtualDesktopLayout.SidManagerInternal, _layout.IidManagerInternal, out _manager);
         if (hr < 0)
         {
-            Status = $"QueryService(IVirtualDesktopManagerInternal) 失败 0x{hr:X8}";
+            Status = F("QueryService(IVirtualDesktopManagerInternal) 失败 0x{0:X8}", hr);
             return false;
         }
         if (!ReadState())
         {
-            Status = "接口自检失败：桌面数与桌面列表不一致";
+            Status = T("接口自检失败：桌面数与桌面列表不一致");
             return false;
         }
         _sink = NotificationSink.TryRegister(this, _shell, _layout, out string? sinkProblem);
         string? viewProblem = ConnectViews();
-        Status = $"{_layout.Name} 布局，{_state.Count} 个桌面" + (sinkProblem is null ? "" : $"（{sinkProblem}）") + (viewProblem is null ? "" : $"（{viewProblem}）");
+        Status = F("{0} 布局，{1} 个桌面", _layout.Name, _state.Count) + (sinkProblem is null ? "" : $"（{sinkProblem}）") + (viewProblem is null ? "" : $"（{viewProblem}）");
         return true;
     }
 
@@ -266,11 +267,11 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         if (methods != layout.ApplicationViewCollectionMethodCount)
         {
             CanMoveWindows = false;
-            return $"不能移动窗口：视图集合方法数 {methods?.ToString() ?? "（未登记）"}，应为 {layout.ApplicationViewCollectionMethodCount}";
+            return F("不能移动窗口：视图集合方法数 {0}，应为 {1}", methods?.ToString() ?? T("（未登记）"), layout.ApplicationViewCollectionMethodCount);
         }
         int hr = QueryService(_shell, layout.IidApplicationViewCollection, layout.IidApplicationViewCollection, out _views);
         CanMoveWindows = hr >= 0;
-        return hr < 0 ? $"不能移动窗口：QueryService(IApplicationViewCollection) 失败 0x{hr:X8}" : null;
+        return hr < 0 ? F("不能移动窗口：QueryService(IApplicationViewCollection) 失败 0x{0:X8}", hr) : null;
     }
 
     private bool EnsureConnected()
@@ -323,7 +324,7 @@ public sealed unsafe class VirtualDesktopService : IDisposable
                 Guid id = GetId(d);
                 ids.Add(id);
                 string name = GetName(d);
-                names.Add(name.Length > 0 ? name : $"桌面 {i + 1}");
+                names.Add(name.Length > 0 ? name : F("桌面 {0}", i + 1));
                 fresh[id] = d;
             }
         }
@@ -436,7 +437,7 @@ internal sealed unsafe class NotificationSink : IDisposable
         var sink = new NotificationSink(service);
         if (VirtualDesktopService.QueryService(shell, VirtualDesktopLayout.SidNotificationService, layout.IidNotificationService, out sink._notificationService) < 0)
         {
-            problem = "切换通知不可用";
+            problem = T("切换通知不可用");
             return null;
         }
         sink._self = GCHandle.Alloc(sink);
@@ -448,7 +449,7 @@ internal sealed unsafe class NotificationSink : IDisposable
         int hr = ((delegate* unmanaged<nint, nint, uint*, int>)VirtualDesktopService.Slot(sink._notificationService, 3))(sink._notificationService, (nint)sink._obj, &cookie);
         if (hr < 0)
         {
-            problem = $"注册切换通知失败 0x{hr:X8}";
+            problem = F("注册切换通知失败 0x{0:X8}", hr);
             VirtualDesktopService.Release(sink._notificationService);
             sink._self.Free();
             return null;

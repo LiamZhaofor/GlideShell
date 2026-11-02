@@ -3,6 +3,8 @@ using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Platform.Native;
 using GlideShell.Platform.Ui.Settings;
+using GlideShell.Core.Localization;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Ui;
 
@@ -73,7 +75,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         _canvas = UiCanvas.Create();
         var area = TargetArea();
         Create("GlideShell.Settings", Style, 0, (int)area.Left + 40, (int)area.Top + 40, 100, 100);
-        User32.SetWindowTextW(Handle, "GlideShell 设置");
+        User32.SetWindowTextW(Handle, T("GlideShell 设置"));
         AllowShellMessages(Handle);
         _dpi = Math.Max(96, User32.GetDpiForWindow(Handle));
         ApplyTheme();
@@ -116,6 +118,13 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
     /// <summary>当前编辑中的模型（测试与诊断用）。</summary>
     public SettingsModel Model => _model;
+
+    /// <summary>展开所有可展开的卡片（截图用）。</summary>
+    public void ExpandAll()
+    {
+        _expanded.UnionWith(["fine", "ovAdv"]);
+        Relayout();
+    }
 
     /// <summary>当前页（测试与截图用）。</summary>
     public int Page
@@ -219,37 +228,67 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
             User32.RECT rc;
             User32.GetClientRect(Handle, &rc);
             if (!_canvas.Begin(rc.Right, rc.Bottom)) return;
-            var t = _theme;
-            double s = S;
-            if (!_mica) _canvas.Fill(new RectD(0, 0, rc.Right, rc.Bottom), 0, t.Background);
-
-            // 左上角：程序名
-            _canvas.Text("GlideShell", new RectD(24 * s, 18 * s, NavWidthDip * s - 40 * s, 22 * s), new UiFont(FluentTheme.Font, 14 * s, 600), t.TextPrimary, UiAlign.Left, false);
-            _canvas.Text("触摸板手势设置", new RectD(24 * s, 40 * s, NavWidthDip * s - 40 * s, 18 * s), new UiFont(FluentTheme.Font, 12 * s), t.TextSecondary, UiAlign.Left, false);
-            foreach (var it in _nav) PaintItem(it);
-
-            var content = ContentArea;
-            _canvas.PushClip(content);
-            foreach (var it in _items)
-            {
-                var r = OnScreen(it);
-                if (r.Bottom < content.Top - 4 * s || r.Top > content.Bottom + 4 * s) continue;
-                PaintItem(it);
-            }
-            // 滚动条（内容超出时，细细一条）
-            if (_contentHeight > content.Height + 1)
-            {
-                double track = content.Height - 8 * s, k = content.Height / _contentHeight;
-                double barH = Math.Max(32 * s, track * k), barY = 4 * s + (track - barH) * (_scroll / (_contentHeight - content.Height));
-                _canvas.Fill(new RectD(content.Right - 7 * s, barY, 3 * s, barH), 1.5 * s, t.TextTertiary);
-            }
-            _canvas.PopClip();
+            Draw(rc, opaque: !_mica);
             _canvas.Present(hdc);
         }
         finally
         {
             User32.EndPaint(Handle, &ps);
         }
+    }
+
+    /// <summary>
+    /// 离屏截图（开发时检查布局，例如英文界面的文字放不放得下）：把当前页整页画出来存成 BMP。
+    /// 窗口不必显示；内容比窗口高时先把窗口拉高到放得下整页。
+    /// </summary>
+    public bool Snapshot(string path)
+    {
+        if (_canvas is null) return false;
+        User32.RECT rc;
+        User32.GetClientRect(Handle, &rc);
+        if (_contentHeight > rc.Bottom)
+        {
+            User32.RECT wr;
+            User32.GetWindowRect(Handle, &wr);
+            int extra = (int)Math.Ceiling(_contentHeight) - rc.Bottom;
+            User32.SetWindowPos(Handle, 0, wr.Left, wr.Top, wr.Right - wr.Left, wr.Bottom - wr.Top + extra, User32.SWP_NOZORDER | User32.SWP_NOACTIVATE);
+            Relayout();
+            User32.GetClientRect(Handle, &rc);
+        }
+        if (!_canvas.Begin(rc.Right, rc.Bottom)) return false;
+        Draw(rc, opaque: true);
+        _canvas.SaveBitmap(path);
+        return true;
+    }
+
+    private void Draw(User32.RECT rc, bool opaque)
+    {
+        var t = _theme;
+        double s = S;
+        var canvas = _canvas!;
+        if (opaque) canvas.Fill(new RectD(0, 0, rc.Right, rc.Bottom), 0, t.Background);
+
+        // 左上角：程序名
+        canvas.Text("GlideShell", new RectD(24 * s, 18 * s, NavWidthDip * s - 40 * s, 22 * s), new UiFont(FluentTheme.Font, 14 * s, 600), t.TextPrimary, UiAlign.Left, false);
+        canvas.Text(T("触摸板手势设置"), new RectD(24 * s, 40 * s, NavWidthDip * s - 40 * s, 18 * s), new UiFont(FluentTheme.Font, 12 * s), t.TextSecondary, UiAlign.Left, false);
+        foreach (var it in _nav) PaintItem(it);
+
+        var content = ContentArea;
+        canvas.PushClip(content);
+        foreach (var it in _items)
+        {
+            var r = OnScreen(it);
+            if (r.Bottom < content.Top - 4 * s || r.Top > content.Bottom + 4 * s) continue;
+            PaintItem(it);
+        }
+        // 滚动条（内容超出时，细细一条）
+        if (_contentHeight > content.Height + 1)
+        {
+            double track = content.Height - 8 * s, k = content.Height / _contentHeight;
+            double barH = Math.Max(32 * s, track * k), barY = 4 * s + (track - barH) * (_scroll / (_contentHeight - content.Height));
+            canvas.Fill(new RectD(content.Right - 7 * s, barY, 3 * s, barH), 1.5 * s, t.TextTertiary);
+        }
+        canvas.PopClip();
     }
 
     private void PaintItem(Item it)
@@ -507,11 +546,22 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         if (!_savePending) return;
         _savePending = false;
         var problems = _env.Save(_model);
-        if (problems.Count > 0 && Handle != 0)
-        {
-            _problems = problems;
-            Relayout();
-        }
+        if (Handle == 0) return;
+        if (problems.Count > 0) _problems = problems;
+        if (problems.Count > 0 | ApplyLanguage()) Relayout();
+    }
+
+    private UiLanguage _shownLanguage = L.Language;
+
+    /// <summary>保存后界面语言变了（设置里换了语言）：窗口标题、编辑框提示跟着换，返回 true 让调用方重新布局。</summary>
+    private bool ApplyLanguage()
+    {
+        if (L.Language == _shownLanguage) return false;
+        _shownLanguage = L.Language;
+        User32.SetWindowTextW(Handle, T("GlideShell 设置"));
+        if (_edit != 0)
+            fixed (char* hint = T("例如 mstsc")) User32.SendMessageW(_edit, 0x1501 /* EM_SETCUEBANNER */, 1, (nint)hint);
+        return true;
     }
 
     // ---------- 「输入进程名」编辑框 ----------
@@ -528,7 +578,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
             fixed (char* cls = "EDIT")
                 _edit = User32.CreateWindowExW(0, cls, null, User32.WS_CHILD | User32.WS_TABSTOP | 0x0080 /* ES_AUTOHSCROLL */, 0, 0, 10, 10, Handle, 900,
                     Kernel32.GetModuleHandleW(null), 0);
-            fixed (char* hint = "例如 mstsc") User32.SendMessageW(_edit, 0x1501 /* EM_SETCUEBANNER */, 1, (nint)hint);
+            fixed (char* hint = T("例如 mstsc")) User32.SendMessageW(_edit, 0x1501 /* EM_SETCUEBANNER */, 1, (nint)hint);
         }
         if (_editFont != 0) Gdi32.DeleteObject(_editFont);
         _editFont = Gdi32.CreateFontW(-(int)Math.Round(14 * S), 0, 0, 0, Gdi32.FW_NORMAL, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");

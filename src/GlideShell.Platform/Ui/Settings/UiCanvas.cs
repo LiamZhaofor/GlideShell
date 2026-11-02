@@ -116,6 +116,30 @@ internal sealed unsafe partial class UiCanvas : IDisposable
         BitBlt(hdc, 0, 0, _w, _h, _dc, 0, 0, 0x00CC0020 /* SRCCOPY */);
     }
 
+    /// <summary>结束这一帧并存成 32 位 BMP（开发时离屏检查布局用）。</summary>
+    public void SaveBitmap(string path)
+    {
+        if (!_drawing) return;
+        _drawing = false;
+        D2D.EndDraw(_target);
+        int rowBytes = _w * 4, imageBytes = rowBytes * _h;
+        using var file = new BinaryWriter(File.Create(path));
+        file.Write((ushort)0x4D42);              // "BM"
+        file.Write(54 + imageBytes);
+        file.Write(0);
+        file.Write(54);
+        file.Write(40);                          // BITMAPINFOHEADER
+        file.Write(_w);
+        file.Write(-_h);                         // 自上而下
+        file.Write((ushort)1);
+        file.Write((ushort)32);
+        file.Write(0);
+        file.Write(imageBytes);
+        file.Write(0L);
+        file.Write(0L);
+        for (int y = 0; y < _h; y++) file.Write(new ReadOnlySpan<byte>(_bits + (long)y * _dibW * 4, rowBytes));
+    }
+
     public void Fill(RectD r, double radius, D2D.ColorF color)
     {
         if (!_drawing || color.A <= 0 || r.Width <= 0 || r.Height <= 0) return;

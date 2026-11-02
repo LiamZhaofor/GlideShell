@@ -1,3 +1,4 @@
+using static GlideShell.Core.Localization.L;
 namespace GlideShell.Platform.Diagnostics;
 
 public enum CheckLevel
@@ -20,9 +21,9 @@ public sealed record CompatCheck(string Name, CheckLevel Level, string Detail)
 {
     public string LevelText => Level switch
     {
-        CheckLevel.Ok => "正常",
-        CheckLevel.Warning => "注意",
-        CheckLevel.Unavailable => "不可用",
-        _ => "说明",
+        CheckLevel.Ok => T("正常"),
+        CheckLevel.Warning => T("注意"),
+        CheckLevel.Unavailable => T("不可用"),
+        _ => T("说明"),
     };
 }

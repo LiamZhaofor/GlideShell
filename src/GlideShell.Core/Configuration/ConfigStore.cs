@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using GlideShell.Core.Serialization;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Core.Configuration;
 
@@ -17,12 +18,12 @@ public static class ConfigStore
             var config = JsonSerializer.Deserialize(json, CoreJson.Config) ?? new GlideShellConfig();
             var (sanitized, problems) = config.Sanitize();
             if (config.Version > GlideShellConfig.CurrentVersion)
-                problems = [.. problems, $"配置版本 {config.Version} 比本程序支持的 {GlideShellConfig.CurrentVersion} 新，未知字段已忽略"];
+                problems = [.. problems, F("配置版本 {0} 比本程序支持的 {1} 新，未知字段已忽略", config.Version, GlideShellConfig.CurrentVersion)];
             return (sanitized, problems);
         }
         catch (JsonException ex)
         {
-            return (new GlideShellConfig(), [$"配置文件格式错误（第 {ex.LineNumber + 1} 行）：{ex.Message}，已使用默认配置"]);
+            return (new GlideShellConfig(), [F("配置文件格式错误（第 {0} 行）：{1}，已使用默认配置", ex.LineNumber + 1, ex.Message)]);
         }
     }
 
@@ -35,11 +36,11 @@ public static class ConfigStore
         }
         catch (IOException ex)
         {
-            return (new GlideShellConfig(), [$"读取配置失败：{ex.Message}，已使用默认配置"]);
+            return (new GlideShellConfig(), [F("读取配置失败：{0}，已使用默认配置", ex.Message)]);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return (new GlideShellConfig(), [$"读取配置失败：{ex.Message}，已使用默认配置"]);
+            return (new GlideShellConfig(), [F("读取配置失败：{0}，已使用默认配置", ex.Message)]);
         }
     }
 

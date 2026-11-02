@@ -5,6 +5,7 @@ using GlideShell.Core.Gestures;
 using GlideShell.Core.Input;
 using GlideShell.Core.Tracing;
 using GlideShell.Tools.PtpProbe;
+using GlideShell.Core.Localization;
 using static GlideShell.Tools.PtpProbe.Native;
 
 // PtpProbe：精确式触摸板（PTP）的只读探针与 S1 轨迹录制工具。不读写任何系统设置。
@@ -20,6 +21,7 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   thumbnails  缩略图后端自检：屏幕左下角显示约 1 秒的测试小窗，确认共享缩略图视觉（--classic 为经典缩略图）真的画得出来
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
+//   settings-shot  离屏画出设置窗口的每一页（中文、英文各一套）存成 BMP，检查文字放不放得下；不显示窗口、不碰配置
 Console.OutputEncoding = Encoding.UTF8;
 
 string command = args.Length > 0 ? args[0] : "describe";
@@ -46,6 +48,7 @@ return command switch
     "scenarios" => ListScenarios(),
     "update" => UpdateCheck(args.Length > 1 ? args[1] : null),
     "selftest" => SelfTest(),
+    "settings-shot" => SettingsShot(Option(args, "--out") ?? Path.Combine("artifacts", "settings-shot")),
     _ => Usage(),
 };
 
@@ -77,6 +80,8 @@ static int Usage()
           PtpProbe scenarios               列出录制场景
           PtpProbe update [当前版本]        按 GlideShell 的升级检测查一次 GitHub 上的最新版本（默认当作 0.0.0）
           PtpProbe selftest                自检原始输入管道
+          PtpProbe settings-shot [--out 目录]
+                                           离屏画出设置窗口每一页（中文、英文各一套）存成 BMP（默认 artifacts/settings-shot）
         """);
     return 2;
 }
@@ -430,6 +435,50 @@ static int UpdateCheck(string? current)
     Console.WriteLine($"当前 {checker.Current.ToString(3)} → {result?.State}，最新 {result?.Latest?.Tag ?? "-"}，页面 {checker.PageUrl}，" +
                       $"耗时 {sw.ElapsedMilliseconds}ms{(result?.Error is { } e ? "，错误：" + e : "")}");
     return result is { State: GlideShell.Platform.Updates.UpdateState.UpToDate or GlideShell.Platform.Updates.UpdateState.Available } ? 0 : 1;
+}
+
+static int SettingsShot(string outDir)
+{
+    Directory.CreateDirectory(outDir);
+    using var ui = new GlideShell.Platform.Ui.UiThread();
+    var model = GlideShell.Core.Configuration.SettingsModel.FromConfig(new GlideShell.Core.Configuration.GlideShellConfig(), autostart: true) with
+    {
+        ExcludedProcesses = ["mstsc", "vmconnect"],
+    };
+    foreach (var language in new[] { GlideShell.Core.Localization.UiLanguage.Chinese, GlideShell.Core.Localization.UiLanguage.English })
+    {
+        GlideShell.Core.Localization.L.Language = language;
+        // 自检各项用最长的几种说法，看最挤的情况
+        var checks = new List<GlideShell.Platform.Diagnostics.CompatCheck>
+        {
+            new(L.T("触摸板"), GlideShell.Platform.Diagnostics.CheckLevel.Warning, L.F("每份报文 {0} 个触点槽，可能是混合报告模式（这种模式只有单元测试，还没在真机上验证）", 2)),
+            new(L.T("系统手势接管"), GlideShell.Platform.Diagnostics.CheckLevel.Warning, L.T("设置已写入，但 Explorer 还没生效（可能两边都会响应）；重启资源管理器或注销后生效")),
+            new(L.T("虚拟桌面接口"), GlideShell.Platform.Diagnostics.CheckLevel.Ok, L.F("{0} 布局，{1} 个桌面", "24H2", 3)),
+            new(L.T("渲染 · 切桌面"), GlideShell.Platform.Diagnostics.CheckLevel.Ok, L.F("最近一次 {0} 帧，晚到 {1} 帧，最长间隔 {2:F1}ms（刷新周期 {3:F2}ms）", 412, 0, 6.1, 6.06)),
+        };
+        var env = new GlideShell.Platform.Ui.SettingsEnvironment(
+            DesktopsAvailable: true,
+            RunningApps: () => [],
+            Save: _ => [],
+            OpenConfigFile: () => { },
+            Version: "2.1.0",
+            OpenLogs: () => { },
+            UpdateStatus: () => new GlideShell.Platform.Updates.UpdateStatus(GlideShell.Platform.Updates.UpdateState.UpToDate, CheckedAt: DateTime.Now),
+            CheckUpdates: () => { },
+            Compatibility: () => checks,
+            CreateDiagnosticReport: () => { });
+        var window = GlideShell.Platform.Ui.SettingsWindow.CreateHidden(ui, model, env);
+        window.ExpandAll();
+        string tag = language == GlideShell.Core.Localization.UiLanguage.English ? "en" : "zh";
+        for (int page = 0; page < 7; page++)
+        {
+            window.Page = page;
+            string path = Path.Combine(outDir, $"{tag}-{page}.bmp");
+            Console.WriteLine(window.Snapshot(path) ? path : $"第 {page} 页截图失败");
+        }
+        window.Dispose();
+    }
+    return 0;
 }
 
 static int BarGeometry(int count)

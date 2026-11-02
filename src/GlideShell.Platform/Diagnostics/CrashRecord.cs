@@ -1,3 +1,4 @@
+using static GlideShell.Core.Localization.L;
 namespace GlideShell.Platform.Diagnostics;
 
 /// <summary>
@@ -55,7 +56,7 @@ public static class CrashRecord
         try
         {
             foreach (var path in new[] { PendingPath, ShownPath })
-                if (File.Exists(path)) return $"{File.ReadAllText(path).TrimEnd()}（记录时间 {File.GetLastWriteTime(path):yyyy-MM-dd HH:mm}）";
+                if (File.Exists(path)) return F("{0}（记录时间 {1:yyyy-MM-dd HH:mm}）", File.ReadAllText(path).TrimEnd(), File.GetLastWriteTime(path));
         }
         catch (IOException)
         {

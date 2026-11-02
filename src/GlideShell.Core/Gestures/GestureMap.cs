@@ -1,3 +1,4 @@
+using static GlideShell.Core.Localization.L;
 namespace GlideShell.Core.Gestures;
 
 /// <summary>GlideShell 接管的动作。没有绑定的手势一律留给系统。</summary>
@@ -67,21 +68,21 @@ public sealed record GestureMap(IReadOnlyList<GestureBinding> Bindings)
     {
         var problems = new List<string>();
         foreach (var g in Bindings.GroupBy(b => (b.Fingers, b.Axis)).Where(g => g.Count() > 1))
-            problems.Add($"{g.Key.Fingers} 指{AxisName(g.Key.Axis)}绑定了多个动作：{string.Join("、", g.Select(b => b.Action))}");
+            problems.Add(F("{0} 指{1}绑定了多个动作：{2}", g.Key.Fingers, AxisName(g.Key.Axis), string.Join("、", g.Select(b => b.Action))));
         foreach (var b in Bindings.Where(b => b.Fingers is < 3 or > 5))
-            problems.Add($"{b.Fingers} 指不支持（1–2 指留给系统的指针、滚动和缩放）");
+            problems.Add(F("{0} 指不支持（1–2 指留给系统的指针、滚动和缩放）", b.Fingers));
         if (threeFingerDrag)
             foreach (var b in Bindings.Where(b => b.Fingers == 3 && b.Action is not (GestureAction.None or GestureAction.Drag)))
-                problems.Add($"已开启三指拖移，三指{AxisName(b.Axis)}不能再绑定 {b.Action}");
+                problems.Add(F("已开启三指拖移，三指{0}不能再绑定 {1}", AxisName(b.Axis), b.Action));
         foreach (var b in Bindings.Where(b => b.Action == GestureAction.Drag && b.Fingers != 3))
-            problems.Add($"拖移只支持三指（现在绑在了 {b.Fingers} 指上）");
+            problems.Add(F("拖移只支持三指（现在绑在了 {0} 指上）", b.Fingers));
         // 切换窗口 / 桌面是横向排列的，只跟随左右位移
         foreach (var b in Bindings.Where(b => b.Action is GestureAction.SwitchWindows or GestureAction.SwitchDesktops && b.Axis == GestureAxis.Vertical))
-            problems.Add($"{b.Action} 只支持左右滑动（现在绑在了 {b.Fingers} 指上下）");
+            problems.Add(F("{0} 只支持左右滑动（现在绑在了 {1} 指上下）", b.Action, b.Fingers));
         foreach (var b in Bindings.Where(b => b.Action == GestureAction.ShowDesktop && b.Axis == GestureAxis.Horizontal))
-            problems.Add($"{b.Action} 只支持上下滑动（现在绑在了 {b.Fingers} 指左右）");
+            problems.Add(F("{0} 只支持上下滑动（现在绑在了 {1} 指左右）", b.Action, b.Fingers));
         return problems;
     }
 
-    private static string AxisName(GestureAxis axis) => axis == GestureAxis.Vertical ? "上下" : "左右";
+    private static string AxisName(GestureAxis axis) => axis == GestureAxis.Vertical ? T("上下") : T("左右");
 }

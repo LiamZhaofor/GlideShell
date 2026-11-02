@@ -4,6 +4,7 @@ using GlideShell.Core.Overview;
 using GlideShell.Platform.Native;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Overview;
 
@@ -37,7 +38,7 @@ internal sealed unsafe class DecorResources : IDisposable
     {
         if (backend is null || !backend.CanDrawShadows)
         {
-            status = "没有共享缩略图视觉或 D3D11：标题用 GDI 画";
+            status = T("没有共享缩略图视觉或 D3D11：标题用 GDI 画");
             return null;
         }
         var canvas = DecorCanvas.TryCreate(out status);

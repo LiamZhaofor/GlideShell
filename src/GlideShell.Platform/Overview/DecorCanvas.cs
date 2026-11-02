@@ -1,6 +1,7 @@
 using System.Globalization;
 using GlideShell.Core.Overview;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Overview;
 
@@ -70,11 +71,11 @@ internal sealed unsafe class DecorCanvas : IDisposable
             if (target != null) D2D.Release(target);
             if (dwrite != null) D2D.Release(dwrite);
             if (d2d != null) D2D.Release(d2d);
-            status = $"Direct2D / DirectWrite 不可用 0x{hr:X8}";
+            status = F("Direct2D / DirectWrite 不可用 0x{0:X8}", hr);
             return null;
         }
         D2D.SetTextAntialiasMode(target, D2D.TEXT_ANTIALIAS_MODE_GRAYSCALE); // 透明底上不能用 ClearType
-        status = "Direct2D / DirectWrite 可用";
+        status = T("Direct2D / DirectWrite 可用");
         return new DecorCanvas(d2d, dwrite, target, brush, dc);
     }
 

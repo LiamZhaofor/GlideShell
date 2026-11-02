@@ -3,6 +3,7 @@ using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
 using GlideShell.Platform.Updates;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell;
 
@@ -30,8 +31,8 @@ internal sealed partial class AppHost
     /// <summary>不能一键升级时给用户的一句话（能的话为 null）。</summary>
     private string? UpgradeUnavailableReason => _installKind switch
     {
-        InstallKind.WinGet => $"这是用 winget 装的：在终端里运行 {WinGetUpgradeCommand} 升级",
-        InstallKind.ProgramFiles => "这是装在 Program Files 的 UIAccess 版（从源码构建）：发布包是普通权限版，覆盖会丢掉 UIAccess，请按 README 重新构建安装",
+        InstallKind.WinGet => F("这是用 winget 装的：在终端里运行 {0} 升级", WinGetUpgradeCommand),
+        InstallKind.ProgramFiles => T("这是装在 Program Files 的 UIAccess 版（从源码构建）：发布包是普通权限版，覆盖会丢掉 UIAccess，请按 README 重新构建安装"),
         _ => null,
     };
 
@@ -40,10 +41,10 @@ internal sealed partial class AppHost
     {
         if (_updates.Status is not { State: UpdateState.Available, Latest: { } latest }) return null;
         string v = latest.Version.ToString(3);
-        if (Upgrader.Status.Busy) return new TrayMenuItem($"正在升级到 {v}…", Enabled: false);
-        if (CanOneClickUpgrade) return new TrayMenuItem($"升级到 {v}…", () => StartUpgrade(confirm: true));
-        if (_installKind == InstallKind.WinGet) return new TrayMenuItem($"用 winget 升级到 {v}…", () => StartUpgrade(confirm: false));
-        return new TrayMenuItem($"下载新版本 {v}…", OpenUpdatePage);
+        if (Upgrader.Status.Busy) return new TrayMenuItem(F("正在升级到 {0}…", v), Enabled: false);
+        if (CanOneClickUpgrade) return new TrayMenuItem(F("升级到 {0}…", v), () => StartUpgrade(confirm: true));
+        if (_installKind == InstallKind.WinGet) return new TrayMenuItem(F("用 winget 升级到 {0}…", v), () => StartUpgrade(confirm: false));
+        return new TrayMenuItem(F("下载新版本 {0}…", v), OpenUpdatePage);
     }
 
     /// <summary>
@@ -58,15 +59,15 @@ internal sealed partial class AppHost
             if (_installKind == InstallKind.WinGet)
             {
                 bool copied = SystemInfo.CopyToClipboard(_ui.Handle, WinGetUpgradeCommand);
-                _tray?.ShowBalloon("用 winget 升级", copied ? $"升级命令已复制：{WinGetUpgradeCommand}，粘贴到终端里运行即可。" : $"在终端里运行：{WinGetUpgradeCommand}");
+                _tray?.ShowBalloon(T("用 winget 升级"), copied ? F("升级命令已复制：{0}，粘贴到终端里运行即可。", WinGetUpgradeCommand) : F("在终端里运行：{0}", WinGetUpgradeCommand));
             }
             else OpenUpdatePage();
             return;
         }
         if (Upgrader.Status.Busy) return;
         string v = latest.Version.ToString(3);
-        if (confirm && !Dialogs.Confirm(_ui.Handle, $"升级到 GlideShell {v}？\n\n会从 GitHub 下载新版本、校验后安装，GlideShell 会退出并自动重新启动，设置会保留。",
-                "升级 GlideShell")) return;
+        if (confirm && !Dialogs.Confirm(_ui.Handle, F("升级到 GlideShell {0}？\n\n会从 GitHub 下载新版本、校验后安装，GlideShell 会退出并自动重新启动，设置会保留。", v),
+                T("升级 GlideShell"))) return;
         bool autostart = Autostart.IsEnabled(_exePath);
         string destination = AppContext.BaseDirectory.TrimEnd('\\');
         Log.Info($"升级：开始升级到 {v}（{_installKind}，装到 {destination}，开机启动 {(autostart ? "保留" : "不开")}）");
@@ -80,15 +81,15 @@ internal sealed partial class AppHost
         if (_tray is not null)
             _tray.Tooltip = status.Stage switch
             {
-                UpgradeStage.Downloading => $"GlideShell：正在下载新版本 {status.Progress * 100:0}%",
-                UpgradeStage.Verifying => "GlideShell：正在校验新版本",
-                UpgradeStage.Installing => "GlideShell：正在安装新版本",
-                _ => _paused ? "GlideShell（已暂停，使用系统手势）" : "GlideShell",
+                UpgradeStage.Downloading => F("GlideShell：正在下载新版本 {0:0}%", status.Progress * 100),
+                UpgradeStage.Verifying => T("GlideShell：正在校验新版本"),
+                UpgradeStage.Installing => T("GlideShell：正在安装新版本"),
+                _ => _paused ? T("GlideShell（已暂停，使用系统手势）") : "GlideShell",
             };
         switch (status.Stage)
         {
             case UpgradeStage.Failed:
-                _tray?.ShowBalloon("升级失败", $"{status.Error}。可以在设置里再试一次，点这里打开下载页面手动安装。", warning: true, onClick: OpenUpdatePage);
+                _tray?.ShowBalloon(T("升级失败"), F("{0}。可以在设置里再试一次，点这里打开下载页面手动安装。", status.Error), warning: true, onClick: OpenUpdatePage);
                 break;
             case UpgradeStage.Installing:
                 _ui.PostDelayed(UpgradeStallMs, () =>

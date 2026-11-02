@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Diagnostics;
 
@@ -18,7 +19,7 @@ public static unsafe partial class SystemInfo
             if (int.TryParse(build, out int b) && b >= 22000) product = product.Replace("Windows 10", "Windows 11");
             string display = key?.GetValue("DisplayVersion") as string ?? "";
             string ubr = key?.GetValue("UBR") is int u ? $".{u}" : "";
-            return $"{product} {display}（内部版本 {build}{ubr}）".Replace("  ", " ");
+            return F("{0} {1}（内部版本 {2}{3}）", product, display, build, ubr).Replace("  ", " ");
         }
         catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {

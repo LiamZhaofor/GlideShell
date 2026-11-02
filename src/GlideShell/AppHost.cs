@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using GlideShell.Core.Configuration;
 using GlideShell.Core.Desktops;
 using GlideShell.Core.Gestures;
@@ -17,6 +18,8 @@ using GlideShell.Platform.Switcher;
 using GlideShell.Platform.Ui;
 using GlideShell.Platform.Updates;
 using GlideShell.Platform.VirtualDesktops;
+using GlideShell.Core.Localization;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell;
 
@@ -148,9 +151,9 @@ internal sealed partial class AppHost
         WatchConfig();
         _presenter.WarmUp();
         if (_simulate is not null) StartSimulation(_simulate);
-        if (inputProblem is not null) _tray.ShowBalloon("GlideShell 收不到触摸板输入", inputProblem, warning: true);
+        if (inputProblem is not null) _tray.ShowBalloon(T("GlideShell 收不到触摸板输入"), inputProblem, warning: true);
         else if (_simulate is null && NoticeLastCrash()) { } // 上次异常退出：这条提示比欢迎重要
-        else if (_firstRun && _simulate is null) _tray.ShowBalloon("GlideShell 已在后台运行", Welcome(_activeMap));
+        else if (_firstRun && _simulate is null) _tray.ShowBalloon(T("GlideShell 已在后台运行"), Welcome(_activeMap));
 
         _ui.Run();
         Shutdown();
@@ -222,7 +225,7 @@ internal sealed partial class AppHost
         try
         {
             _input.Start();
-            if (_input.Devices.Count == 0) return "没有找到精确式触摸板（PTP）。接入后会自动识别。";
+            if (_input.Devices.Count == 0) return T("没有找到精确式触摸板（PTP）。接入后会自动识别。");
             foreach (var d in _input.Devices)
                 Log.Info($"触摸板 VID={d.VendorId:X4} PID={d.ProductId:X4}：{d.Geometry.X.SizeMm:F1}×{d.Geometry.Y.SizeMm:F1}mm，{d.Geometry.ContactSlots} 槽");
             return null;
@@ -458,7 +461,7 @@ internal sealed partial class AppHost
             }
             foreach (var m in result.Messages) Log.Info($"系统手势（重试 {attempt}）：{m}");
             if (attempt < MaxAttempts) RetryVerify(attempt + 1, generation);
-            else _tray?.ShowBalloon("系统手势未能立即切换", "已写入设置，重启资源管理器后生效。详见日志。", warning: true);
+            else _tray?.ShowBalloon(T("系统手势未能立即切换"), T("已写入设置，重启资源管理器后生效。详见日志。"), warning: true);
         });
     }
 
@@ -476,7 +479,7 @@ internal sealed partial class AppHost
         // 暂停 = 一键退回 Windows 原生手势；恢复 = 重新接管
         if (paused) RestoreNativeGestures();
         else TakeOverNativeGestures();
-        if (_tray is not null) _tray.Tooltip = paused ? "GlideShell（已暂停，使用系统手势）" : "GlideShell";
+        if (_tray is not null) _tray.Tooltip = paused ? T("GlideShell（已暂停，使用系统手势）") : "GlideShell";
         Log.Info(paused ? "已暂停：系统手势已还原" : "已恢复接管");
     }
 
@@ -527,14 +530,22 @@ internal sealed partial class AppHost
         var lines = map.Bindings
             .Where(b => b.Action != GestureAction.None)
             .OrderBy(b => b.Fingers).ThenByDescending(b => b.Axis == GestureAxis.Vertical)
-            .Select(b => $"{FingerName(b.Fingers)}{(b.Axis == GestureAxis.Vertical ? "上下" : "左右")}滑：{SettingsModel.ActionLabel(b.Action)}")
+            .Select(b => F("{0}：{1}", GestureName(b.Fingers, b.Axis), SettingsModel.ActionLabel(b.Action)))
             .Distinct()
             .ToList();
-        lines.Add("其他手势照旧由 Windows 处理。右键托盘图标可以设置或暂停。");
+        lines.Add(T("其他手势照旧由 Windows 处理。右键托盘图标可以设置或暂停。"));
         return string.Join("\n", lines);
     }
 
-    private static string FingerName(int fingers) => fingers switch { 3 => "三指", 4 => "四指", 5 => "五指", _ => $"{fingers} 指" };
+    private static string GestureName(int fingers, GestureAxis axis) => (fingers, axis) switch
+    {
+        (3, GestureAxis.Vertical) => T("三指上下滑"),
+        (3, _) => T("三指左右滑"),
+        (4, GestureAxis.Vertical) => T("四指上下滑"),
+        (4, _) => T("四指左右滑"),
+        (_, GestureAxis.Vertical) => F("{0} 指上下滑", fingers),
+        _ => F("{0} 指左右滑", fingers),
+    };
 
     private void LoadConfig()
     {
@@ -555,6 +566,7 @@ internal sealed partial class AppHost
             }
         }
         _config = config;
+        L.Language = L.Resolve(config.Language, CultureInfo.CurrentUICulture.Name);
     }
 
     private void WatchConfig()
@@ -589,6 +601,8 @@ internal sealed partial class AppHost
         if (!_paused && mapChanged) TakeOverNativeGestures();
         _hotCorners?.Refresh();
         UpdateMouseGestures();
+        if (cfg.Language != old.Language && _tray is not null && !Upgrader.Status.Busy)
+            _tray.Tooltip = _paused ? T("GlideShell（已暂停，使用系统手势）") : "GlideShell";
         Log.Info("配置已重载");
     }
 
@@ -599,9 +613,9 @@ internal sealed partial class AppHost
         var cfg = _config;
         string? lastApp = _foreground?.Current.ProcessName is { Length: > 0 } name && !name.Equals("explorer", StringComparison.OrdinalIgnoreCase) ? name : null;
         var sensitivity = SensitivityPreset.All
-            .Select(p => new TrayMenuItem(p.Label, () => UpdateConfig(p.ApplyTo), Checked: p.Matches(cfg)))
+            .Select(p => new TrayMenuItem(p.Name, () => UpdateConfig(p.ApplyTo), Checked: p.Matches(cfg)))
             .ToList();
-        string? current = SensitivityPreset.Of(cfg)?.Label;
+        string? current = SensitivityPreset.Of(cfg)?.Name;
         // 三指拖移、四指切桌面两个开关与设置窗口走同一个模型，两边的说法永远一致
         var desktopSlot = SettingsModel.SlotOf(4, GestureAxis.Horizontal);
         bool desktopsOn = SettingsModel.FromConfig(cfg).ActionAt(desktopSlot) == GestureAction.SwitchDesktops;
@@ -609,7 +623,7 @@ internal sealed partial class AppHost
         // 不使用手势的程序：最近的前台程序可一键加入；已排除的逐个点击即恢复
         var excluded = new List<TrayMenuItem>();
         if (lastApp is not null && !cfg.IsExcluded(lastApp))
-            excluded.Add(new($"在 {lastApp} 中不使用手势", () => UpdateConfig(c => c with { ExcludedProcesses = [.. c.ExcludedProcesses, lastApp] })));
+            excluded.Add(new(F("在 {0} 中不使用手势", lastApp), () => UpdateConfig(c => c with { ExcludedProcesses = [.. c.ExcludedProcesses, lastApp] })));
         if (cfg.ExcludedProcesses.Count > 0)
         {
             if (excluded.Count > 0) excluded.Add(TrayMenuItem.Separator);
@@ -619,33 +633,33 @@ internal sealed partial class AppHost
                     ExcludedProcesses = c.ExcludedProcesses.Where(p => !p.Equals(app, StringComparison.OrdinalIgnoreCase)).ToList(),
                 }), Checked: true));
             excluded.Add(TrayMenuItem.Separator);
-            excluded.Add(new("全部恢复", () => UpdateConfig(c => c with { ExcludedProcesses = [] })));
+            excluded.Add(new(T("全部恢复"), () => UpdateConfig(c => c with { ExcludedProcesses = [] })));
         }
-        if (excluded.Count == 0) excluded.Add(new("（没有）", Enabled: false));
+        if (excluded.Count == 0) excluded.Add(new(T("（没有）"), Enabled: false));
 
         var update = UpgradeMenuItem() is { } upgradeItem ? new List<TrayMenuItem> { upgradeItem, TrayMenuItem.Separator } : [];
 
         return
         [
             .. update,
-            new("打开总览\tCtrl+Alt+O", () => _overview.Toggle(HostClock.NowUs())),
-            new("暂停（使用 Windows 原生手势）", () => SetPaused(!_paused), Checked: _paused),
-            new("设置…", OpenSettings),
+            new(T("打开总览\tCtrl+Alt+O"), () => _overview.Toggle(HostClock.NowUs())),
+            new(T("暂停（使用 Windows 原生手势）"), () => SetPaused(!_paused), Checked: _paused),
+            new(T("设置…"), OpenSettings),
             TrayMenuItem.Separator,
-            new("三指拖移（总览改为四指上滑）", () => UpdateConfig(c => SettingsModel.FromConfig(c).WithThreeFingerDrag(!c.ThreeFingerDrag).ApplyTo(c).Config),
+            new(T("三指拖移（总览改为四指上滑）"), () => UpdateConfig(c => SettingsModel.FromConfig(c).WithThreeFingerDrag(!c.ThreeFingerDrag).ApplyTo(c).Config),
                 Checked: cfg.ThreeFingerDrag),
-            new("四指左右滑切换虚拟桌面", () => UpdateConfig(c => SettingsModel.FromConfig(c)
+            new(T("四指左右滑切换虚拟桌面"), () => UpdateConfig(c => SettingsModel.FromConfig(c)
                     .WithAction(desktopSlot, desktopsOn ? GestureAction.None : GestureAction.SwitchDesktops).ApplyTo(c).Config),
                 Checked: desktopsOn && _virtualDesktops.Available, Enabled: _virtualDesktops.Available),
-            new(current is null ? "灵敏度：自定义" : $"灵敏度：{current}", Children: sensitivity),
-            new(cfg.ExcludedProcesses.Count > 0 ? $"不使用手势的程序（{cfg.ExcludedProcesses.Count}）" : "不使用手势的程序", Children: excluded),
-            new("全屏时暂停手势", () => UpdateConfig(c => c with { PauseInFullscreen = !c.PauseInFullscreen }), Checked: cfg.PauseInFullscreen),
+            new(current is null ? T("灵敏度：自定义") : F("灵敏度：{0}", current), Children: sensitivity),
+            new(cfg.ExcludedProcesses.Count > 0 ? F("不使用手势的程序（{0}）", cfg.ExcludedProcesses.Count) : T("不使用手势的程序"), Children: excluded),
+            new(T("全屏时暂停手势"), () => UpdateConfig(c => c with { PauseInFullscreen = !c.PauseInFullscreen }), Checked: cfg.PauseInFullscreen),
             TrayMenuItem.Separator,
-            new("开机启动", () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
-            new("打开日志目录", () => OpenPath(Log.DefaultDirectory)),
-            new("生成诊断报告", CreateDiagnosticReport),
+            new(T("开机启动"), () => Autostart.Set(_exePath, !Autostart.IsEnabled(_exePath)), Checked: Autostart.IsEnabled(_exePath)),
+            new(T("打开日志目录"), () => OpenPath(Log.DefaultDirectory)),
+            new(T("生成诊断报告"), CreateDiagnosticReport),
             TrayMenuItem.Separator,
-            new("退出", () => _ui.Quit()),
+            new(T("退出"), () => _ui.Quit()),
         ];
     }
 
@@ -692,8 +706,8 @@ internal sealed partial class AppHost
                     break;
                 }
                 if (_updates.MarkNotified(latest.Version) && !manual)
-                    _tray?.ShowBalloon($"GlideShell {version} 可以更新了",
-                        CanOneClickUpgrade ? "点这里升级（自动下载、校验并安装）。托盘菜单里也有「升级」。" : "点这里打开下载页面。托盘菜单里也有「下载新版本」。",
+                    _tray?.ShowBalloon(F("GlideShell {0} 可以更新了", version),
+                        CanOneClickUpgrade ? T("点这里升级（自动下载、校验并安装）。托盘菜单里也有「升级」。") : T("点这里打开下载页面。托盘菜单里也有「下载新版本」。"),
                         onClick: () => StartUpgrade(confirm: true));
                 break;
             case UpdateState.UpToDate:
@@ -741,7 +755,7 @@ internal sealed partial class AppHost
         }
         catch (IOException ex)
         {
-            return [$"保存配置失败：{ex.Message}"];
+            return [F("保存配置失败：{0}", ex.Message)];
         }
         if (model.Autostart != Autostart.IsEnabled(_exePath)) Autostart.Set(_exePath, model.Autostart);
         _lastConfigReloadUs = 0;

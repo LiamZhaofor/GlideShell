@@ -24,6 +24,9 @@ public sealed class SharedThumbnailSource : IDisposable
     /// <summary>合成层装饰的探测结果（还没用到过为 null）。</summary>
     public string? DecorStatus { get; private set; }
 
+    /// <summary>合成层装饰已经建好（<see cref="DecorStatus"/> 不为 null 时才有意义）。</summary>
+    public bool DecorAvailable => _decor is not null;
+
     /// <summary>本次运行已改用经典缩略图（探测失败或某处注册失败）。</summary>
     public bool Unavailable => _unavailable;
 

@@ -1,18 +1,26 @@
 using GlideShell.Core.Gestures;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Core.Configuration;
 
 /// <summary>设置窗口里可以配置的一个手势位置（几指、哪个方向）。</summary>
-public readonly record struct GestureSlot(int Fingers, GestureAxis Axis, string Label);
+public readonly record struct GestureSlot(int Fingers, GestureAxis Axis, string Label)
+{
+    /// <summary>按当前界面语言显示的名字。</summary>
+    public string Name => T(Label);
+}
 
 /// <summary>灵敏度预设：同时调整滑动阈值和各动作的行程（越灵敏，手指走得越短）。</summary>
 public sealed record SensitivityPreset(string Label, double SlopMm, double OverviewTravelMm, double MmPerWindow, double DesktopTravelMm)
 {
+    /// <summary>按当前界面语言显示的名字（<see cref="Label"/> 是中文原文）。</summary>
+    public string Name => T(Label);
+
     public static IReadOnlyList<SensitivityPreset> All { get; } =
     [
-        new("高", 1.5, 24, 18, 45),
-        new("标准", 2.0, 30, 22, 55),
-        new("低", 3.0, 38, 28, 68),
+        new(N("高"), 1.5, 24, 18, 45),
+        new(N("标准"), 2.0, 30, 22, 55),
+        new(N("低"), 3.0, 38, 28, 68),
     ];
 
     public GlideShellConfig ApplyTo(GlideShellConfig c) => c with
@@ -38,10 +46,10 @@ public sealed record SettingsModel
     /// <summary>界面里可配置的四个位置。5 指手势只能在配置文件里写。</summary>
     public static IReadOnlyList<GestureSlot> Slots { get; } =
     [
-        new(3, GestureAxis.Vertical, "三指上下滑"),
-        new(3, GestureAxis.Horizontal, "三指左右滑"),
-        new(4, GestureAxis.Vertical, "四指上下滑"),
-        new(4, GestureAxis.Horizontal, "四指左右滑"),
+        new(3, GestureAxis.Vertical, N("三指上下滑")),
+        new(3, GestureAxis.Horizontal, N("三指左右滑")),
+        new(4, GestureAxis.Vertical, N("四指上下滑")),
+        new(4, GestureAxis.Horizontal, N("四指左右滑")),
     ];
 
     /// <summary>与 <see cref="Slots"/> 同序。<see cref="GestureAction.None"/> = 留给系统。</summary>
@@ -72,15 +80,28 @@ public sealed record SettingsModel
     public MouseDragButton MouseButton { get; init; }
     public double MouseSensitivity { get; init; }
 
+    /// <summary>界面语言选项：<see cref="Localization.L.Auto"/>（跟随系统）、"zh-CN"、"en"。</summary>
+    public string Language { get; init; } = Localization.L.Auto;
+
+    public static IReadOnlyList<string> LanguageChoices { get; } = [Localization.L.Auto, "zh-CN", "en"];
+
+    /// <summary>语言选项的名字，不翻译：「跟随系统」两种语言都写上，选错了语言也认得出来。</summary>
+    public static string LanguageLabel(string language) => language switch
+    {
+        "zh-CN" => "简体中文",
+        "en" => "English",
+        _ => "跟随系统 / Follow system",
+    };
+
     public static IReadOnlyList<MouseDragButton> MouseButtonChoices { get; } =
         [MouseDragButton.None, MouseDragButton.Back, MouseDragButton.Forward, MouseDragButton.Middle];
 
     public static string MouseButtonLabel(MouseDragButton b) => b switch
     {
-        MouseDragButton.Back => "侧键：后退",
-        MouseDragButton.Forward => "侧键：前进",
-        MouseDragButton.Middle => "中键（按下滚轮）",
-        _ => "不使用",
+        MouseDragButton.Back => T("侧键：后退"),
+        MouseDragButton.Forward => T("侧键：前进"),
+        MouseDragButton.Middle => T("中键（按下滚轮）"),
+        _ => T("不使用"),
     };
 
     /// <summary>开机启动不在配置文件里（是注册表 Run 项），由宿主读写。</summary>
@@ -88,27 +109,28 @@ public sealed record SettingsModel
 
     public static string ActionLabel(GestureAction action) => action switch
     {
-        GestureAction.Overview => "窗口总览",
-        GestureAction.SwitchWindows => "切换窗口",
-        GestureAction.SwitchDesktops => "切换虚拟桌面",
-        GestureAction.Drag => "三指拖移",
-        GestureAction.ShowDesktop => "显示桌面（上滑总览）",
-        _ => "系统默认（不接管）",
+        GestureAction.Overview => T("窗口总览"),
+        GestureAction.SwitchWindows => T("切换窗口"),
+        GestureAction.SwitchDesktops => T("切换虚拟桌面"),
+        GestureAction.Drag => T("三指拖移"),
+        GestureAction.ShowDesktop => T("显示桌面（上滑总览）"),
+        _ => T("系统默认（不接管）"),
     };
 
     /// <summary>某个位置可选的动作。开启三指拖移后三指两个方向固定为拖移。</summary>
     public static string HotCornerLabel(HotCornerAction action) => action switch
     {
-        HotCornerAction.Overview => "窗口总览",
-        HotCornerAction.AppWindows => "应用窗口",
-        HotCornerAction.ShowDesktop => "显示桌面",
-        _ => "无",
+        HotCornerAction.Overview => T("窗口总览"),
+        HotCornerAction.AppWindows => T("应用窗口"),
+        HotCornerAction.ShowDesktop => T("显示桌面"),
+        _ => T("无"),
     };
 
     public static IReadOnlyList<HotCornerAction> HotCornerChoices { get; } =
         [HotCornerAction.None, HotCornerAction.Overview, HotCornerAction.AppWindows, HotCornerAction.ShowDesktop];
 
-    public static IReadOnlyList<string> HotCornerNames { get; } = ["左上角", "右上角", "左下角", "右下角"];
+    /// <summary>四个角的名字（按当前界面语言，每次现取）。</summary>
+    public static IReadOnlyList<string> HotCornerNames => [T("左上角"), T("右上角"), T("左下角"), T("右下角")];
 
     public SettingsModel WithHotCorner(int corner, HotCornerAction action)
     {
@@ -155,6 +177,7 @@ public sealed record SettingsModel
             CornerRadius = c.Overview.CornerRadius,
             MouseButton = c.Mouse.Button,
             MouseSensitivity = c.Mouse.Sensitivity,
+            Language = c.Language,
         };
     }
 
@@ -239,6 +262,7 @@ public sealed record SettingsModel
             Drag = c.Drag with { PixelsPerMm = DragPixelsPerMm, Acceleration = DragAcceleration },
             ExcludedProcesses = [.. ExcludedProcesses],
             Updates = c.Updates with { Check = CheckUpdates },
+            Language = Language,
         };
         return updated.Sanitize();
     }

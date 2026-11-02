@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Updates;
 
@@ -20,7 +21,7 @@ internal static unsafe class WinHttpClient
     public static int Get(string url, string agent, string headers, Stream output, long maxBytes, Action<long>? progress = null)
     {
         var uri = new Uri(url);
-        if (uri.Scheme != Uri.UriSchemeHttps) throw new IOException("只支持 https");
+        if (uri.Scheme != Uri.UriSchemeHttps) throw new IOException(T("只支持 https"));
         nint session = 0, connect = 0, request = 0;
         try
         {
@@ -46,7 +47,7 @@ internal static unsafe class WinHttpClient
                     if (!WinHttp.WinHttpReadData(request, p, (uint)chunk.Length, &read)) throw new Win32Exception();
                 if (read == 0) break;
                 total += read;
-                if (total > maxBytes) throw new IOException("回复太大");
+                if (total > maxBytes) throw new IOException(T("回复太大"));
                 output.Write(chunk, 0, (int)read);
                 progress?.Invoke(total);
             }
@@ -63,11 +64,11 @@ internal static unsafe class WinHttpClient
     /// <summary>常见的 WinHTTP 错误码换成一句话（系统的错误文字对 WinHTTP 的码大多是「未知错误」）。</summary>
     public static string Describe(int code) => code switch
     {
-        12002 => "连接超时",
-        12007 => "找不到服务器（没有联网？）",
-        12029 => "连不上 GitHub",
-        12030 => "连接被中断",
-        12038 or 12044 or 12045 or 12057 or 12175 => "安全连接失败",
-        _ => $"网络错误 {code}",
+        12002 => T("连接超时"),
+        12007 => T("找不到服务器（没有联网？）"),
+        12029 => T("连不上 GitHub"),
+        12030 => T("连接被中断"),
+        12038 or 12044 or 12045 or 12057 or 12175 => T("安全连接失败"),
+        _ => F("网络错误 {0}", code),
     };
 }

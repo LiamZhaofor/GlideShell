@@ -1,4 +1,5 @@
 using System.Text;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Diagnostics;
 
@@ -12,8 +13,8 @@ public sealed class DiagnosticReport
 
     public DiagnosticReport(string version)
     {
-        _text.AppendLine($"GlideShell 诊断报告 · 版本 {version} · {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        _text.AppendLine("这份报告只保存在本机，GlideShell 不会上传。日志里可能有程序名、窗口标题、虚拟桌面名，贴到 Issue 之前请看一眼。");
+        _text.AppendLine(F("GlideShell 诊断报告 · 版本 {0} · {1:yyyy-MM-dd HH:mm:ss}", version, DateTime.Now));
+        _text.AppendLine(T("这份报告只保存在本机，GlideShell 不会上传。日志里可能有程序名、窗口标题、虚拟桌面名，贴到 Issue 之前请看一眼。"));
     }
 
     public DiagnosticReport Section(string title, IEnumerable<string> lines)
@@ -26,12 +27,12 @@ public sealed class DiagnosticReport
             _text.AppendLine(line);
             any = true;
         }
-        if (!any) _text.AppendLine("（无）");
+        if (!any) _text.AppendLine(T("（无）"));
         return this;
     }
 
     public DiagnosticReport Checks(IEnumerable<CompatCheck> checks)
-        => Section("兼容自检", checks.Select(c => $"[{c.LevelText}] {c.Name}：{c.Detail}"));
+        => Section(T("兼容自检"), checks.Select(c => $"[{c.LevelText}] {c.Name}：{c.Detail}"));
 
     public override string ToString() => _text.ToString();
 
@@ -42,9 +43,9 @@ public sealed class DiagnosticReport
     public string Save()
     {
         Directory.CreateDirectory(DirectoryPath);
-        string path = Path.Combine(DirectoryPath, $"GlideShell-诊断-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        string path = Path.Combine(DirectoryPath, $"GlideShell-report-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         File.WriteAllText(path, ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)); // 带 BOM：记事本一定按 UTF-8 打开
-        foreach (var old in Directory.GetFiles(DirectoryPath, "GlideShell-诊断-*.txt").Order(StringComparer.Ordinal).SkipLast(10))
+        foreach (var old in Directory.GetFiles(DirectoryPath, "GlideShell-*.txt").OrderBy(File.GetLastWriteTimeUtc).SkipLast(10))
         {
             try
             {

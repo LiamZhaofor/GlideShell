@@ -2,6 +2,7 @@ using System.Numerics;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Overview;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Overview;
 
@@ -100,7 +101,7 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
         {
             if (context != null) Dcomp.Release(context);
             if (d3d != null) Dcomp.Release(d3d);
-            status = $"创建 DirectComposition 设备失败 0x{hr:X8}";
+            status = F("创建 DirectComposition 设备失败 0x{0:X8}", hr);
             return null;
         }
         if (context == null && d3d != null)
@@ -108,7 +109,7 @@ internal sealed unsafe class SharedThumbnailBackend : IDisposable
             Dcomp.Release(d3d);
             d3d = null;
         }
-        status = context != null ? "共享缩略图视觉可用（dwmapi#147 + DirectComposition + 窗口阴影）" : "共享缩略图视觉可用（没有 D3D11，不画窗口阴影）";
+        status = context != null ? T("共享缩略图视觉可用（dwmapi#147 + DirectComposition + 窗口阴影）") : T("共享缩略图视觉可用（没有 D3D11，不画窗口阴影）");
         return new SharedThumbnailBackend(device, d3d, context);
     }
 

@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using GlideShell.Core.Gestures;
 using GlideShell.Core.Motion;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Core.Configuration;
 
@@ -197,6 +198,9 @@ public sealed record GlideShellConfig
     /// <summary>升级检测。</summary>
     public UpdatesConfig Updates { get; set; } = new();
 
+    /// <summary>界面语言："auto"（跟随系统：系统界面是中文就用中文，否则英文）、"zh-CN"、"en"。日志始终是中文。</summary>
+    public string Language { get; set; } = Localization.L.Auto;
+
     [JsonIgnore] // 计算值，不写进配置文件
     public GestureMap EffectiveMap => Bindings is { Count: > 0 } b
         ? new GestureMap(b)
@@ -210,7 +214,7 @@ public sealed record GlideShellConfig
         {
             if (double.IsFinite(v) && v >= min && v <= max) return v;
             double fixedValue = double.IsFinite(v) ? Math.Clamp(v, min, max) : min;
-            problems.Add($"{name}={v} 超出范围 [{min}, {max}]，已改为 {fixedValue}");
+            problems.Add(F("{0}={1} 超出范围 [{2}, {3}]，已改为 {4}", name, v, min, max, fixedValue));
             return fixedValue;
         }
         SpringConfig FixSpring(SpringConfig s, string name) => s with
@@ -241,14 +245,25 @@ public sealed record GlideShellConfig
             if (mapProblems.Count > 0)
             {
                 problems.AddRange(mapProblems);
-                problems.Add("手势映射有冲突，已改用默认映射");
+                problems.Add(T("手势映射有冲突，已改用默认映射"));
                 bindings = null;
             }
         }
 
+        string language = Language?.ToLowerInvariant() switch
+        {
+            "auto" => Localization.L.Auto,
+            "zh-cn" or "zh" => "zh-CN",
+            "en" or "en-us" => "en",
+            _ => Localization.L.Auto,
+        };
+        if (language == Localization.L.Auto && !string.Equals(Language, Localization.L.Auto, StringComparison.OrdinalIgnoreCase))
+            problems.Add(F("Language={0} 不认识（可以是 auto、zh-CN、en），已改为跟随系统", Language));
+
         var config = this with
         {
             Version = CurrentVersion,
+            Language = language,
             Recognition = recognition,
             Bindings = bindings,
             Overview = Overview with

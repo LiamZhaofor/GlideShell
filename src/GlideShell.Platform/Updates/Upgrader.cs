@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using GlideShell.Core.Updates;
 using GlideShell.Platform.Diagnostics;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Updates;
 
@@ -79,19 +80,19 @@ public sealed class Upgrader
                         lastReported = received;
                         Report(new(UpgradeStage.Downloading, Math.Clamp((double)received / package.Size, 0, 1)));
                     });
-                    if (code != 200) throw new IOException($"下载失败：GitHub 返回 HTTP {code}");
+                    if (code != 200) throw new IOException(F("下载失败：GitHub 返回 HTTP {0}", code));
                 }
 
                 Report(new(UpgradeStage.Verifying, 1));
                 var info = new FileInfo(zip);
-                if (info.Length != package.Size) throw new IOException($"下载的大小不对（{info.Length} / {package.Size} 字节）");
+                if (info.Length != package.Size) throw new IOException(F("下载的大小不对（{0} / {1} 字节）", info.Length, package.Size));
                 string sha;
                 using (var stream = File.OpenRead(zip)) sha = Convert.ToHexStringLower(SHA256.HashData(stream));
-                if (sha != package.Sha256) throw new IOException("下载的文件校验不通过（SHA-256 与 GitHub 给出的不一致），没有安装");
+                if (sha != package.Sha256) throw new IOException(T("下载的文件校验不通过（SHA-256 与 GitHub 给出的不一致），没有安装"));
                 string unpacked = Path.Combine(dir, "package");
                 ZipFile.ExtractToDirectory(zip, unpacked);
                 string script = Path.Combine(unpacked, "install.ps1");
-                if (!File.Exists(script) || !File.Exists(Path.Combine(unpacked, "GlideShell.exe"))) throw new IOException("发布包里缺少安装脚本或程序");
+                if (!File.Exists(script) || !File.Exists(Path.Combine(unpacked, "GlideShell.exe"))) throw new IOException(T("发布包里缺少安装脚本或程序"));
 
                 Report(new(UpgradeStage.Installing, 1));
                 Log.Info($"升级：{package.Name} 已下载并校验（SHA-256 {sha[..12]}…），运行安装脚本装到 {destination}");
@@ -114,7 +115,7 @@ public sealed class Upgrader
     {
         if (_status.Stage != UpgradeStage.Installing) return;
         Volatile.Write(ref _running, 0);
-        _status = new(UpgradeStage.Failed, 0, "安装脚本没有完成，详见日志目录里的 upgrade.log");
+        _status = new(UpgradeStage.Failed, 0, T("安装脚本没有完成，详见日志目录里的 upgrade.log"));
     }
 
     /// <summary>Windows PowerShell（系统自带）运行新版本的 install.ps1，输出写到 upgrade.log；隐藏窗口，不等它结束。</summary>

@@ -6,7 +6,7 @@
 
 **Website and user guide** (Chinese): <https://liamzhaofor.github.io/GlideShell/> · [Download the latest release](https://github.com/LiamZhaofor/GlideShell/releases/latest)
 
-> The app's interface (tray menu, settings, notifications) is currently in Simplified Chinese only.
+> The app's interface (settings, tray menu, notifications) is available in English and Simplified Chinese. It follows your Windows display language; you can change it under Settings → Home → 语言 / Language.
 
 Most native Windows multi-finger gestures work as "recognize a gesture → play a fixed animation". GlideShell reads raw contacts from the precision touchpad (PTP) directly and rebuilds multitasking on its own composition layer, modeled on macOS Mission Control:
 
@@ -44,7 +44,7 @@ Download `GlideShell-2.0.0-win-x64.zip` from [Releases](https://github.com/LiamZ
 - The app is not code-signed, so Windows may warn that it "can't verify the publisher" the first time it runs.
 
 Upgrading:
-- When a new version is out, the tray shows a notification. Click "升级" (Upgrade) and GlideShell downloads it, verifies the SHA-256, installs it, and restarts, keeping your settings. `GlideShell.exe --upgrade` does the same.
+- When a new version is out, the tray shows a notification. Click "Upgrade" and GlideShell downloads it, verifies the SHA-256, installs it, and restarts, keeping your settings. `GlideShell.exe --upgrade` does the same.
 - Reinstalling by hand also works: a running GlideShell exits cleanly before it is replaced.
 
 ## Usage
@@ -112,12 +112,12 @@ Once running, GlideShell sits in the notification area of the taskbar. It only t
 - **Log**: `%LOCALAPPDATA%\GlideShell\logs\glideshell.log`.
 - **Update check and one-click upgrade**:
   - **Check**: by default, GlideShell asks GitHub once a day for the latest stable release. It only fetches the version number and sends nothing else. When there is a new version, the tray notifies you once.
-  - **Upgrade**: click the notification, the tray menu item "升级到 x.y.z…" (Upgrade to x.y.z…), or "升级" (Upgrade) under About in settings. GlideShell then downloads the release package from GitHub, checks its size and SHA-256 (the digest GitHub reports), runs the package's install script to install in place, and restarts. It never upgrades on its own.
+  - **Upgrade**: click the notification, the tray menu item "Upgrade to x.y.z…", or "Upgrade" under About in settings. GlideShell then downloads the release package from GitHub, checks its size and SHA-256 (the digest GitHub reports), runs the package's install script to install in place, and restarts. It never upgrades on its own.
   - **UIAccess builds**: a UIAccess build installed from source into Program Files does not use one-click upgrade, because the release package is the standard-privilege build.
   - **Turning it off**: you can turn off the automatic check under About in settings (after which GlideShell never goes online) or check manually.
 - **Diagnostics**:
-  - The "诊断" (Diagnostics) page in settings lists compatibility self-checks one by one: touchpad and report mode, whether the system gesture takeover is in effect, the virtual desktop interface, shared thumbnails, UIAccess, keyboard/mouse hooks, late frames in the last render, and the update check.
-  - "生成诊断报告" (Create diagnostic report) writes the version, system, displays, self-check results, config and the last 300 log lines to a text file, copies it to the clipboard, and opens it in Notepad. It stays on your machine, ready to paste into an issue. The tray menu and `GlideShell.exe --diagnostics` can create it too.
+  - The Diagnostics page in settings lists compatibility self-checks one by one: touchpad and report mode, whether the system gesture takeover is in effect, the virtual desktop interface, shared thumbnails, UIAccess, keyboard/mouse hooks, late frames in the last render, and the update check.
+  - "Create diagnostic report" writes the version, system, displays, self-check results, config and the last 300 log lines to a text file, copies it to the clipboard, and opens it in Notepad. It stays on your machine, ready to paste into an issue. The tray menu and `GlideShell.exe --diagnostics` can create it too.
   - After an abnormal exit, GlideShell mentions it once on the next start.
 - **Emergency restore**: if the system gestures somehow weren't restored, run `GlideShell.exe --restore-native`. `GlideShell.exe --quit` asks a running instance to exit cleanly.
 
@@ -155,7 +155,7 @@ Design notes, measurements from each stage, and the roadmap are in **[docs/ROADM
 ## Known limitations
 
 - **Hardware and displays**
-  - Fully verified on one machine only (an ASUS precision touchpad in parallel report mode). Hybrid report mode, where each report carries only some of the fingers and which is common on other brands, is covered by unit tests only. If you hit problems on another touchpad, please attach a diagnostic report from Settings → 诊断 (Diagnostics).
+  - Fully verified on one machine only (an ASUS precision touchpad in parallel report mode). Hybrid report mode, where each report carries only some of the fingers and which is common on other brands, is covered by unit tests only. If you hit problems on another touchpad, please attach a diagnostic report from Settings → Diagnostics.
   - Multiple monitors were verified with real gestures on a 150% + 125% (165 Hz + 200 Hz) dual-monitor setup; other combinations haven't been tested yet.
   - Window shadows were measured to match the system at 125% / 150% / 175%; 100% hasn't been measured yet.
   - Windows 10 isn't supported yet.
@@ -166,7 +166,7 @@ Design notes, measurements from each stage, and the roadmap are in **[docs/ROADM
 - **Behavior and cost**
   - Removing the current desktop, or the desktop the overview was opened from, in the desktop strip closes the overview (it doesn't re-layout in place).
   - Show desktop really minimizes the windows. Windows pulled back are restored to where they were before being minimized.
-  - With mouse button gestures on, moving the mouse costs some CPU. The low-level mouse hook makes Windows switch to GlideShell once per mouse event, so the cost scales with the polling rate: about 1% of one core at 1000 Hz and about 8% at 8000 Hz. If you don't use them, choose "不用" (None) in settings.
+  - With mouse button gestures on, moving the mouse costs some CPU. The low-level mouse hook makes Windows switch to GlideShell once per mouse event, so the cost scales with the polling rate: about 1% of one core at 1000 Hz and about 8% at 8000 Hz. If you don't use them, choose "Off" under Settings → Mouse & hot corners.
   - The app windows view groups windows by app (Store apps by app identity), so all windows from the same program count together.
   - When switching desktops, Windows itself shows a desktop-name hint at the bottom of the screen. Explorer draws it inside existing UI, so it can't be suppressed.
 

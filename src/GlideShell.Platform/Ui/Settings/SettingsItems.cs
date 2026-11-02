@@ -1,5 +1,6 @@
 using GlideShell.Core.Geometry;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Ui.Settings;
 
@@ -182,7 +183,7 @@ internal static class ItemPainter
             {
                 bool on = it.On?.Invoke() == true;
                 // 「开 / 关」文字在开关左边（Windows 11 设置的样子）
-                c.Text(on ? "开" : "关", new RectD(r.Left, r.Top, r.Width - 52 * s, r.Height), body, text, UiAlign.Right);
+                c.Text(on ? T("开") : T("关"), new RectD(r.Left, r.Top, r.Width - 52 * s, r.Height), body, text, UiAlign.Right);
                 var pill = new RectD(r.Right - 40 * s, r.CenterY - 10 * s, 40 * s, 20 * s);
                 double a = Math.Clamp(anim, 0, 1);
                 var fill = Mix(hover ? t.ControlHover : t.Control, it.Enabled ? t.Accent : t.TextTertiary, a);

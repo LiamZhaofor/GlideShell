@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using GlideShell.Core.Updates;
 using GlideShell.Platform.Native;
+using static GlideShell.Core.Localization.L;
 
 namespace GlideShell.Platform.Updates;
 
@@ -98,9 +99,9 @@ public sealed unsafe class UpdateChecker
         {
             var (code, body) = Get($"/repos/{Repository}/releases/latest");
             if (code == 404) return new UpdateStatus(UpdateState.UpToDate, null, now); // 还没有任何正式版本
-            if (code is 403 or 429) return new UpdateStatus(UpdateState.Failed, null, now, "GitHub 暂时限制了查询次数，稍后再试");
-            if (code != 200) return new UpdateStatus(UpdateState.Failed, null, now, $"GitHub 返回 HTTP {code}");
-            if (ReleaseInfo.Parse(body) is not { } latest) return new UpdateStatus(UpdateState.Failed, null, now, "看不懂 GitHub 的回复");
+            if (code is 403 or 429) return new UpdateStatus(UpdateState.Failed, null, now, T("GitHub 暂时限制了查询次数，稍后再试"));
+            if (code != 200) return new UpdateStatus(UpdateState.Failed, null, now, F("GitHub 返回 HTTP {0}", code));
+            if (ReleaseInfo.Parse(body) is not { } latest) return new UpdateStatus(UpdateState.Failed, null, now, T("看不懂 GitHub 的回复"));
             return new UpdateStatus(latest.IsNewerThan(Current) ? UpdateState.Available : UpdateState.UpToDate, latest, now);
         }
         catch (Win32Exception ex)
