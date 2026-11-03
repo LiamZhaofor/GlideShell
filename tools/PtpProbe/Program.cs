@@ -62,7 +62,8 @@ static int Usage()
           PtpProbe analyze <文件或目录>     分析轨迹；目录会额外输出 S1 结论草稿
           PtpProbe replay <文件或目录> [--slop 3] [--settle 40] [--tap-ms 250] [--tap-move 2]
                                            把轨迹跑过 GlideShell 手势识别器，打印识别出的手势（可调参数对比）
-          PtpProbe live [同上参数]          实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出
+          PtpProbe live [同上参数] [--seconds N]
+                                           实时识别：用 GlideShell 的输入线程 + 识别器打印手势，Enter 退出（--seconds：跑 N 秒）
           PtpProbe calibrate <目录> [--apply] [--fixtures]
                                            S1 校准：给出识别参数建议并按场景回放验证；--apply 写进 GlideShell 配置，
                                            --fixtures 把轨迹复制到 tests/GlideShell.Tests/Traces 作为回放测试夹具
@@ -269,6 +270,13 @@ static int Live(string[] args)
     input.Start();
     foreach (var d in input.Devices)
         Console.WriteLine($"   触摸板 VID={d.VendorId:X4} PID={d.ProductId:X4}：{d.Geometry.X.SizeMm:F1}×{d.Geometry.Y.SizeMm:F1}mm，{d.Geometry.ContactSlots} 个触点槽");
+    // --seconds N：在后台跑 N 秒（让用户做手势的同时记录识别结果）
+    if (int.TryParse(Option(args, "--seconds"), out int seconds))
+    {
+        Console.WriteLine($"实时识别中（三指及以上手势会打印出来），{seconds} 秒后退出。");
+        Thread.Sleep(TimeSpan.FromSeconds(seconds));
+        return 0;
+    }
     Console.WriteLine("实时识别中（三指及以上手势会打印出来），按 Enter 退出。");
     if (Console.IsInputRedirected) Thread.Sleep(1500); // 非交互运行（自检）时只跑一下就退出
     else Console.ReadLine();
