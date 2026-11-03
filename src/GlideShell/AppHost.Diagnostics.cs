@@ -1,5 +1,6 @@
 using GlideShell.Core.Configuration;
 using GlideShell.Platform.Diagnostics;
+using GlideShell.Platform.Input;
 using GlideShell.Platform.Overview;
 using GlideShell.Platform.Shell;
 using GlideShell.Platform.Ui;
@@ -64,6 +65,17 @@ internal sealed partial class AppHost
             ? new(T("鼠标钩子"), CheckLevel.Info, T("鼠标按键手势没开，不装钩子"))
             : new(T("鼠标钩子"), _mouseGestures?.Hooked == true ? CheckLevel.Ok : CheckLevel.Warning,
                 _mouseGestures?.Hooked == true ? F("已安装（{0}）", SettingsModel.MouseButtonLabel(cfg.Mouse.Button)) : T("没装上：鼠标按键手势用不了")));
+
+        // 三指轻点 = 中键：识别了几次、SendInput 失败几次；钩子装着时再看补发的中键有没有进系统的输入流
+        int taps = Volatile.Read(ref _middleClicks), tapFailures = Volatile.Read(ref _middleClickFailures);
+        if (!cfg.ThreeFingerTapMiddleClick)
+            checks.Add(new(T("三指轻点 = 中键"), CheckLevel.Info, T("关掉了，三指轻点交给 Windows")));
+        else
+        {
+            string detail = F("本次运行识别 {0} 次，发送失败 {1} 次", taps, tapFailures);
+            if (_mouseGestures?.Hooked == true) detail += F("；鼠标钩子看到 {0} 次", MouseButtonGestures.MarkedMiddleSeen);
+            checks.Add(new(T("三指轻点 = 中键"), tapFailures > 0 ? CheckLevel.Warning : taps > 0 ? CheckLevel.Ok : CheckLevel.Info, detail));
+        }
 
         foreach (var (name, stats, period) in new[]
                  {

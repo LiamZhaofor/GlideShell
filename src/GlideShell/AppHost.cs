@@ -68,6 +68,7 @@ internal sealed partial class AppHost
     private FileSystemWatcher? _configWatcher;
     private long _lastConfigReloadUs;
     private int _takeoverGeneration; // UI 线程
+    private int _middleClicks, _middleClickFailures; // 三指轻点发出的中键（输入线程写，诊断页读）
     private bool _firstRun; // 启动时还没有配置文件
     private readonly string? _simulate;
 
@@ -198,10 +199,19 @@ internal sealed partial class AppHost
     {
         if (e.Kind == GestureKind.Tap)
         {
-            if (e.Fingers == 3 && _config.ThreeFingerTapMiddleClick && !_paused && _simulate is null) MouseButtonGestures.SendClick(MouseDragButton.Middle);
+            if (e.Fingers == 3 && _config.ThreeFingerTapMiddleClick && !_paused && _simulate is null) SendMiddleClick();
             return;
         }
         _router.OnGesture(e);
+    }
+
+    /// <summary>三指轻点 → 中键（输入线程）。每次都计数；发送失败写日志，诊断页能看到「识别了几次、失败几次」。</summary>
+    private void SendMiddleClick()
+    {
+        Interlocked.Increment(ref _middleClicks);
+        if (MouseButtonGestures.SendClick(MouseDragButton.Middle, out int error)) return;
+        int failures = Interlocked.Increment(ref _middleClickFailures);
+        Log.Warn($"三指轻点：中键没有发出去（SendInput 错误 {error}，本次运行第 {failures} 次）");
     }
 
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>

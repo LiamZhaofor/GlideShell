@@ -111,7 +111,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
-            if (msg.message == WmApp) SendClick((MouseDragButton)(int)msg.wParam);
+            if (msg.message == WmApp) SendClick((MouseDragButton)(int)msg.wParam, out _);
             else if (msg.message == WmInput) OnRawInput(msg.lParam);
             else if (msg.message == WmRawOn) SetRawInput(true);
             else if (msg.message == WmRawOff) SetRawInput(false);
@@ -178,10 +178,19 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         return User32.CallNextHookEx(0, code, wParam, lParam);
     }
 
+    private static int s_markedMiddleSeen;
+
+    /// <summary>钩子装着时，看到的自己补发的中键按下次数（诊断用：发出去的中键确实进了系统的输入流）。</summary>
+    public static int MarkedMiddleSeen => Volatile.Read(ref s_markedMiddleSeen);
+
     /// <summary>钩子回调：返回 true 吞掉这次事件。</summary>
     private bool OnMouse(uint message, MsLlHookStruct* m)
     {
-        if ((m->Flags & LlmhfInjected) != 0 && m->ExtraInfo == Marker) return false; // 自己补发的点击
+        if ((m->Flags & LlmhfInjected) != 0 && m->ExtraInfo == Marker) // 自己补发的点击
+        {
+            if (message == WmMButtonDown) Interlocked.Increment(ref s_markedMiddleSeen);
+            return false;
+        }
         long now = HostClock.NowUs();
         if (_held != MouseDragButton.None)
         {
@@ -250,8 +259,10 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
     /// <summary>
     /// 发一次点击（按下 + 松开），带标记让钩子放行：按键手势没拖开时补发原来的点击，三指轻点的中键也用它
     /// （按住中键拖动的手势开着时，不带标记的中键会被钩子当成真的按下）。
+    /// 返回 false 表示 SendInput 没把两个事件都送进去（<paramref name="error"/> 是 Win32 错误码）。
+    /// 被 UIPI 拦下时 SendInput 不报错，只能靠钩子看到的计数（<see cref="MarkedMiddleSeen"/>）旁证。
     /// </summary>
-    public static void SendClick(MouseDragButton button)
+    public static bool SendClick(MouseDragButton button, out int error)
     {
         var inputs = stackalloc MouseInput[2];
         (uint downFlag, uint upFlag, uint data) = button switch
@@ -262,7 +273,9 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         };
         inputs[0] = new MouseInput { Type = 0, Flags = downFlag, MouseData = data, ExtraInfo = Marker };
         inputs[1] = new MouseInput { Type = 0, Flags = upFlag, MouseData = data, ExtraInfo = Marker };
-        SendInput(2, inputs, sizeof(MouseInput));
+        uint sent = SendInput(2, inputs, sizeof(MouseInput));
+        error = sent == 2 ? 0 : Marshal.GetLastPInvokeError();
+        return sent == 2;
     }
 
     public void Dispose()
@@ -279,7 +292,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool PostThreadMessageW(uint threadId, uint message, nint wParam, nint lParam);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     private static partial uint SendInput(uint count, MouseInput* inputs, int size);
 
     [LibraryImport("user32.dll")]
