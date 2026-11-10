@@ -35,6 +35,8 @@
         <li><a href="#first">First steps</a></li>
         <li><a href="#gestures">Gestures at a glance</a></li>
         <li><a href="#overview">Window overview</a></li>
+        <li><a href="#tray-apps">Background apps bar</a></li>
+        <li><a href="#search">Searching for apps</a></li>
         <li><a href="#spaces">Desktop strip</a></li>
         <li><a href="#app-view">App windows view</a></li>
         <li><a href="#show-desktop">Show desktop</a></li>
@@ -136,6 +138,31 @@
       <h3>See only one app's windows</h3>
       <p>Click the title row under a window (app icon + title) and the overview switches to the <a href="#app-view">app windows view</a> for that app; click the title row again to switch back. Neither closes the overview.</p>
 
+      <h2 id="tray-apps">Background apps bar</h2>
+      <p>When the overview is open, a row of background apps runs along the bottom: the tray apps that have no visible window (chat apps, cloud sync, small utilities).</p>
+      <ul>
+        <li><strong>Click</strong> one to do what clicking its tray icon does. If the app opens a window, the window grows out of the icon and flies into place as the overview closes.</li>
+        <li><strong>Right-click</strong> shows the app's tray menu right there in the overview, next to the pointer, without closing the overview first. Choose Exit and the app fades out of the bar.</li>
+        <li><strong>Hide apps</strong> under Settings → Overview &amp; desktops → Choose which apps to show (their tray icons stay as they are). To drop the whole bar, turn off "Show background apps at the bottom".</li>
+      </ul>
+
+      <h2 id="search">Searching for apps</h2>
+      <p><strong>In the overview</strong>: with the overview open, just start typing. A search box appears and searches the apps in your Start menu.</p>
+      <ul>
+        <li>Matches the start of any word in the name, e.g. <code>vsc</code> → Visual Studio Code, <code>code</code> → Visual Studio Code too. Chinese names also match their pinyin or its initials. Apps you open often come first.</li>
+        <li><span class="kbd">↑</span> <span class="kbd">↓</span> or <span class="kbd">Tab</span> to choose, <span class="kbd">Enter</span> to open, <span class="kbd">Esc</span> to go back to the windows. Hover a row to select it and click to open.</li>
+      </ul>
+      <p><strong>Anywhere</strong>: press <span class="kbd">Alt</span> + <span class="kbd">Space</span> and the search box pops up on its own, without the overview. With nothing typed it lists the apps you opened from it, most recent first. Press <span class="kbd">Esc</span>, press <span class="kbd">Alt</span> + <span class="kbd">Space</span> again or click outside to close it. It does nothing while a full-screen game or video is in front; the keys go to them as usual.</p>
+      <ul>
+        <li><strong>Change the shortcut</strong> under Settings → Overview &amp; desktops → Shortcut to open search: click the box and press the new combination (it needs Ctrl, Alt or Win; F1–F24 also work on their own). Press <span class="kbd">Backspace</span> in the box to clear it and use no shortcut.</li>
+        <li><strong>Add apps by hand</strong>: for programs that aren't in the Start menu (portable apps, scripts), click "Browse…" under "Apps added by hand" on the same page and pick an exe, shortcut or batch file. They show up in search from then on.</li>
+        <li>To turn search off entirely (shortcut included), switch off "Type to search apps" on the same page.</li>
+      </ul>
+      <div class="callout warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.01"/></svg>
+        <p>Alt+Space normally opens the Windows window menu (Restore, Move, Size…). While the search shortcut is on, it belongs to GlideShell. If you need the window menu, pick a different shortcut for search.</p>
+      </div>
+
       <h2 id="spaces">Desktop strip</h2>
       <p>With two or more virtual desktops, the desktop strip appears at the top of the overview:</p>
       <ul>
@@ -159,7 +186,7 @@
       </div>
 
       <h2 id="switcher">Switching windows (three-finger left / right, Alt+Tab)</h2>
-      <p>Swipe left or right with three fingers and a row of window thumbnails appears in the middle of the screen, panning with your fingers; the one in the center has a blue selection frame. Lift and the selected window flies from the switcher back to its place and comes to the front. Swipe back to the first window before lifting and nothing switches.</p>
+      <p>Swipe left or right with three fingers and a row of window thumbnails appears in the middle of the screen, panning with your fingers; the one in the center has a blue selection frame. Lift and the selected window flies from the switcher back to its place and comes to the front. Swipe back to the first window before lifting and nothing switches; the switcher just fades out.</p>
       <p>When the overview is already open, three-finger left / right swipes move the selection inside the overview instead.</p>
       <h3>Alt+Tab</h3>
       <p><span class="kbd">Alt</span> + <span class="kbd">Tab</span> on the keyboard uses the same switcher:</p>
@@ -196,7 +223,7 @@
         <tbody>
           <tr><td>Home</td><td>See what each gesture does now; start at sign-in, pause in full screen, and the interface language.</td></tr>
           <tr><td>Touchpad gestures</td><td>Who handles each gesture; three-finger drag; three-finger tap = middle click; sensitivity (High / Standard / Low), with "Fine-tune" for how far each gesture travels and the drag pointer speed.</td></tr>
-          <tr><td>Overview &amp; desktops</td><td>App windows view, group by app, dim background, window corner radius, Alt+Tab and keyboard desktop switching.</td></tr>
+          <tr><td>Overview &amp; desktops</td><td>App windows view, group by app, dim background, window corner radius, background apps bar, app search (shortcut, apps added by hand), Alt+Tab and keyboard desktop switching.</td></tr>
           <tr><td>Mouse &amp; hot corners</td><td>The hold-and-drag button and its sensitivity; the actions for the four corners.</td></tr>
           <tr><td>Excluded apps</td><td>Which apps keep Windows' own gestures while they're in front.</td></tr>
           <tr><td>Diagnostics</td><td>Compatibility checks one by one (touchpad, system gesture takeover, virtual desktops, shared thumbnails and more); create a diagnostic report.</td></tr>
@@ -229,6 +256,8 @@
       <p>The release package is the standard-privilege build. Its overlay sits below system UI (Start menu, notification center), and it can't bring apps running as administrator to the front or minimize them. If you need that, build the UIAccess version from source as described in the <a href="https://github.com/LiamZhaofor/GlideShell/blob/main/README.en.md#build-from-source" rel="noopener">README</a>.</p>
       <h3>A desktop name appears at the bottom of the screen when switching desktops</h3>
       <p>That hint is drawn by Windows itself, and there's currently no way to hide it from outside.</p>
+      <h3>Alt+Space no longer opens the window menu</h3>
+      <p>Alt+Space now opens <a href="#search">app search</a>. Change or clear it under Settings → Overview &amp; desktops → Shortcut to open search and the Windows window menu comes back.</p>
       <h3>Reporting a problem</h3>
       <p>Right-click the tray icon → <strong>Create diagnostic report</strong> (or "Create" under Settings → Diagnostics). It writes the version, system, touchpad, displays, compatibility checks, config and the recent log to a text file, copies it to the clipboard and opens it in Notepad. Have a look, then <a href="https://github.com/LiamZhaofor/GlideShell/issues/new/choose" rel="noopener">open an issue on GitHub</a> (choose "Bug report"), paste the report, and describe what you did and what you saw. Reports and logs stay on your computer; GlideShell never uploads them.</p>
       <p>After GlideShell exits unexpectedly, it mentions it once in the tray the next time it starts, and clicking the notification creates a diagnostic report.</p>

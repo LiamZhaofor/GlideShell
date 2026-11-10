@@ -35,6 +35,8 @@
         <li><a href="#first">第一次使用</a></li>
         <li><a href="#gestures">手势一览</a></li>
         <li><a href="#overview">窗口总览</a></li>
+        <li><a href="#tray-apps">后台程序栏</a></li>
+        <li><a href="#search">搜索并打开程序</a></li>
         <li><a href="#spaces">桌面条与多桌面</a></li>
         <li><a href="#app-view">应用窗口视图</a></li>
         <li><a href="#show-desktop">显示桌面</a></li>
@@ -136,6 +138,31 @@
       <h3>只看某个程序的窗口</h3>
       <p>点窗口下面的标题行（程序图标 + 标题），总览会换成只显示这个程序窗口的<a href="#app-view">应用窗口视图</a>；再点一次标题行换回来，都不用收起。</p>
 
+      <h2 id="tray-apps">后台程序栏</h2>
+      <p>打开总览时，底部有一排后台程序：托盘里那些没有可见窗口的程序（聊天软件、同步盘、各种小工具）。</p>
+      <ul>
+        <li><strong>点一下</strong>：和单击它的托盘图标一样。程序打开了窗口的话，窗口从图标处长大、飞到它的位置，总览同时收起。</li>
+        <li><strong>右键</strong>：就在总览里、鼠标旁边弹出它的托盘菜单，不用先收起总览。菜单里选了「退出」，它会从栏里淡出。</li>
+        <li><strong>隐藏某些程序</strong>：在「设置 → 总览与桌面 → 选择显示哪些程序」里关掉它（托盘图标照旧）；整栏都不要就关掉「底部显示后台程序」。</li>
+      </ul>
+
+      <h2 id="search">搜索并打开程序</h2>
+      <p><strong>在总览里</strong>：总览开着时直接打字，就会弹出搜索框，搜的是开始菜单里的程序。</p>
+      <ul>
+        <li>拼音全拼、首字母、英文单词开头都能找到：<code>wx</code>、<code>weixin</code> → 微信，<code>vsc</code> → Visual Studio Code，<code>jsq</code> → 计算器。常用的排在前面。</li>
+        <li><span class="kbd">↑</span> <span class="kbd">↓</span> 或 <span class="kbd">Tab</span> 选择，<span class="kbd">Enter</span> 打开，<span class="kbd">Esc</span> 回到窗口；鼠标移到哪一行就选中哪一行，点一下打开。</li>
+      </ul>
+      <p><strong>在任何地方</strong>：按 <span class="kbd">Alt</span> + <span class="kbd">Space</span>，直接弹出搜索框（不打开总览）。还没输入时列出最近从这里打开过的程序，最近的在最上面。按 <span class="kbd">Esc</span>、再按一次 <span class="kbd">Alt</span> + <span class="kbd">Space</span> 或点外面就收起。全屏游戏、视频在前台时不响应，按键照常交给它们。</p>
+      <ul>
+        <li><strong>换快捷键</strong>：「设置 → 总览与桌面 → 打开搜索的快捷键」，点一下框再按下新的组合（要带 Ctrl、Alt 或 Win；F1–F24 可以单独用）。在框里按 <span class="kbd">Backspace</span> 清除，就是不用快捷键。</li>
+        <li><strong>手动添加程序</strong>：开始菜单里没有的（免安装的绿色软件、脚本），在同一页「手动添加的程序」里点「浏览…」，选 exe、快捷方式或批处理，之后就能搜到、打开。</li>
+        <li>整个搜索功能（包括快捷键）不要的话，关掉同一页的「打字搜索程序」。</li>
+      </ul>
+      <div class="callout warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.01"/></svg>
+        <p>Alt+Space 原本是 Windows 打开窗口菜单（还原、移动、大小……）的快捷键，开着搜索快捷键时它归 GlideShell。需要窗口菜单的话，把搜索换成别的快捷键。</p>
+      </div>
+
       <h2 id="spaces">桌面条与多桌面</h2>
       <p>有两个以上虚拟桌面时，总览顶部会显示桌面条：</p>
       <ul>
@@ -159,7 +186,7 @@
       </div>
 
       <h2 id="switcher">切换窗口（三指左右滑 / Alt+Tab）</h2>
-      <p>三指左右滑，屏幕中央出现一排窗口缩略图，跟着手指平移，居中的那个带蓝色选中框。松手后选中的窗口从切换条飞回它的位置并切到前台。往回滑到最开始的窗口再松手，就什么也不切换。</p>
+      <p>三指左右滑，屏幕中央出现一排窗口缩略图，跟着手指平移，居中的那个带蓝色选中框。松手后选中的窗口从切换条飞回它的位置并切到前台。往回滑到最开始的窗口再松手，就什么也不切换，切换条直接淡出。</p>
       <p>总览已经打开时，三指左右滑改为在总览里移动选中项。</p>
       <h3>Alt+Tab</h3>
       <p>键盘的 <span class="kbd">Alt</span> + <span class="kbd">Tab</span> 也换成了同一个切换条：</p>
@@ -196,7 +223,7 @@
         <tbody>
           <tr><td>首页</td><td>看看每个手势现在做什么；开机启动、全屏时暂停、界面语言。</td></tr>
           <tr><td>触摸板手势</td><td>每个手势交给谁；三指拖移；三指轻点 = 鼠标中键；灵敏度（高 / 标准 / 低），「细调」里可以分别调各手势要滑多远、拖移的指针速度。</td></tr>
-          <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、Alt+Tab 与键盘切换桌面。</td></tr>
+          <tr><td>总览与桌面</td><td>应用窗口视图、按程序分组、背景变暗、窗口圆角、后台程序栏、程序搜索（快捷键、手动添加的程序）、Alt+Tab 与键盘切换桌面。</td></tr>
           <tr><td>鼠标与触发角</td><td>按住拖动的键与灵敏度；四个角的触发动作。</td></tr>
           <tr><td>排除的程序</td><td>哪些程序在前台时不接管手势。</td></tr>
           <tr><td>诊断</td><td>逐项查看兼容自检（触摸板、系统手势接管、虚拟桌面、共享缩略图等）；生成诊断报告。</td></tr>
@@ -229,6 +256,8 @@
       <p>发布包是普通权限版，覆盖层排在系统界面（开始菜单、通知中心）下面，以管理员身份运行的程序也不能被它切到前台或最小化。需要的话可以按 <a href="https://github.com/LiamZhaofor/GlideShell#从源码构建" rel="noopener">README</a> 从源码构建 UIAccess 版。</p>
       <h3>切换桌面时屏幕底部出现桌面名</h3>
       <p>这是 Windows 自己画的提示，目前没有办法从外部隐藏。</p>
+      <h3>按 Alt+Space 不再弹出窗口菜单</h3>
+      <p>Alt+Space 现在用来打开<a href="#search">程序搜索</a>。在「设置 → 总览与桌面 → 打开搜索的快捷键」里换一个组合或清空，Windows 的窗口菜单就回来了。</p>
       <h3>想反馈问题</h3>
       <p>托盘右键 → <strong>生成诊断报告</strong>（或「设置 → 诊断」里的「生成」）。它会把版本、系统、触摸板、显示器、兼容自检结果、配置和最近的日志写成一个文本文件，复制到剪贴板并用记事本打开。看一眼没问题，就<a href="https://github.com/LiamZhaofor/GlideShell/issues/new/choose" rel="noopener">在 GitHub 上提一个 Issue</a>（选「问题反馈」），把报告贴进去，再说明一下你做了什么、看到了什么。报告和日志只保存在本机，GlideShell 不会上传。</p>
       <p>GlideShell 意外退出后，下次启动会在托盘提示一次，点提示也能直接生成诊断报告。</p>
