@@ -29,7 +29,8 @@ public sealed record SettingsEnvironment(
     Action? CreateDiagnosticReport = null,
     Func<Updates.UpgradeStatus>? UpgradeStatus = null,
     Action? StartUpgrade = null,
-    string? UpgradeUnavailable = null);
+    string? UpgradeUnavailable = null,
+    Func<IReadOnlyList<Shell.TrayAppChoice>>? TrayApps = null);
 
 /// <summary>
 /// 设置窗口：Windows 11「设置」的样子——Mica 背景、左侧导航、右侧一页页圆角卡片（图标 + 标题 + 一句说明 + 右侧控件），
@@ -122,7 +123,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
     /// <summary>展开所有可展开的卡片（截图用）。</summary>
     public void ExpandAll()
     {
-        _expanded.UnionWith(["fine", "ovAdv"]);
+        _expanded.UnionWith(["fine", "ovAdv", "trayPick", "searchApps"]);
         Relayout();
     }
 
@@ -132,6 +133,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         get => _page;
         set
         {
+            StopRecording();
             _page = Math.Clamp(value, 0, PageCount - 1);
             _scroll = 0;
             Relayout();
@@ -237,6 +239,8 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         }
     }
 
+    private bool _snapshotting; // 离屏截图：窗口可以拉得比屏幕高
+
     /// <summary>
     /// 离屏截图（开发时检查布局，例如英文界面的文字放不放得下）：把当前页整页画出来存成 BMP。
     /// 窗口不必显示；内容比窗口高时先把窗口拉高到放得下整页。
@@ -246,6 +250,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
         if (_canvas is null) return false;
         User32.RECT rc;
         User32.GetClientRect(Handle, &rc);
+        _snapshotting = true;
         if (_contentHeight > rc.Bottom)
         {
             User32.RECT wr;
@@ -343,6 +348,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
     private void OnMouseDown(double x, double y)
     {
         var it = HitTest(x, y);
+        if (_recording is not null && it?.Key != _recording) StopRecording(); // 点了别处：不录了
         _pressed = it?.Key;
         _keyboardFocus = false;
         User32.SetFocus(Handle);
@@ -610,6 +616,9 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
     {
         switch (msg)
         {
+            case 0x0006 /* WM_ACTIVATE */ when (wParam & 0xFFFF) == 0:
+                StopRecording(); // 切到别的窗口：不再录快捷键
+                return null;
             case 0x0006 /* WM_ACTIVATE */ when (wParam & 0xFFFF) != 0:
                 // UIAccess 版：任务栏（普通权限）能激活这个窗口，但把它提到最上层的那一步被消息隔离拦掉了——
                 // 窗口成了前台却压在别的窗口下面，再点任务栏按钮就被当成「最小化活动窗口」。自己提到最上层
@@ -628,6 +637,11 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
                 var min = (User32.POINT*)(lParam + 24); // MINMAXINFO.ptMinTrackSize
                 min->X = (int)(MinWidth * S);
                 min->Y = (int)(MinHeight * S);
+                if (_snapshotting)
+                {
+                    var max = (User32.POINT*)(lParam + 32); // MINMAXINFO.ptMaxTrackSize：离屏截长页时窗口要能比屏幕高
+                    max->Y = 30000;
+                }
                 return 0;
             }
             case 0x0200 /* WM_MOUSEMOVE */:
@@ -684,6 +698,7 @@ public sealed unsafe partial class SettingsWindow : NativeWindow
 
     protected override void OnDestroyed()
     {
+        StopRecording();
         SaveNow(); // 还没写的改动现在写
         if (ReferenceEquals(s_current, this)) s_current = null;
         if (_editFont != 0) Gdi32.DeleteObject(_editFont);

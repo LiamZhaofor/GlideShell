@@ -11,8 +11,15 @@ public enum NavigationDirection
     Down,
 }
 
-/// <summary>一块显示器的总览区域（工作区，不含任务栏）与 DPI 缩放；<paramref name="Bar"/> 非空时顶部有桌面条，窗口平铺在它下面。</summary>
-public readonly record struct OverviewArea(RectD WorkArea, double DpiScale, DesktopBarGeometry? Bar = null);
+/// <summary>
+/// 一块显示器的总览区域（工作区，不含任务栏）与 DPI 缩放；<paramref name="Bar"/> 非空时顶部有桌面条，窗口平铺在它下面。
+/// <paramref name="BottomInset"/>：底部给后台程序栏让出的高度（有桌面条时由桌面条的几何带着，两者要一致）。
+/// </summary>
+public readonly record struct OverviewArea(RectD WorkArea, double DpiScale, DesktopBarGeometry? Bar = null, double BottomInset = 0)
+{
+    /// <summary>窗口平铺的范围（桌面条收起时）。</summary>
+    public RectD Content => Bar?.ContentArea ?? RectD.FromEdges(WorkArea.Left, WorkArea.Top, WorkArea.Right, WorkArea.Bottom - BottomInset);
+}
 
 /// <summary>
 /// 一次总览会话的静态场景：参与的窗口（Z 序，最上层在前）与各自的平铺位。
@@ -274,7 +281,7 @@ public sealed class OverviewScene
                         sources[k] = sources[k].Offset(cx - sources[k].CenterX, cy - sources[k].CenterY);
                 }
             }
-            var content = area.Bar?.ContentArea ?? area.WorkArea;
+            var content = area.Content;
             var shelf = members.Select(m => m.w.IsMinimized).ToArray();
             LayoutSlot[] laid;
             if (context.MinimizedShelf && shelf.Any(x => x) && shelf.Any(x => !x))

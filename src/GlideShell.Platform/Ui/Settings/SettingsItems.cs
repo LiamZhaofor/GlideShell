@@ -49,6 +49,9 @@ internal enum ItemKind
 
     /// <summary>输入框的外框（里面是系统的编辑框）。</summary>
     EditBox,
+
+    /// <summary>快捷键：显示当前的组合键，点一下进入录制（按下新的组合键）。</summary>
+    Hotkey,
 }
 
 /// <summary>
@@ -89,6 +92,10 @@ internal sealed class Item(ItemKind kind, string key)
 
     public Action? Click { get; init; }
 
+    /// <summary>快捷键框里显示的文字、是否正在录制。</summary>
+    public Func<string>? Label { get; init; }
+    public Func<bool>? Active { get; init; }
+
     /// <summary>卡片右边的控件（与卡片一起布局，单独参与命中与焦点）。</summary>
     public Item? Control { get; set; }
 
@@ -98,7 +105,7 @@ internal sealed class Item(ItemKind kind, string key)
 
     /// <summary>能获得键盘焦点、能点。</summary>
     public bool Interactive => Enabled && Kind is ItemKind.Nav or ItemKind.Toggle or ItemKind.Dropdown or ItemKind.Slider or ItemKind.Segmented
-        or ItemKind.Button or ItemKind.AccentButton or ItemKind.Expander or ItemKind.Corner;
+        or ItemKind.Button or ItemKind.AccentButton or ItemKind.Expander or ItemKind.Corner or ItemKind.Hotkey;
 
     /// <summary>分段控件（屏幕上在 <paramref name="r"/>）里第 <paramref name="i"/> 段的矩形。</summary>
     public RectD Segment(RectD r, int i)
@@ -212,6 +219,19 @@ internal static class ItemPainter
                 c.Text(label, new RectD(r.Left + 11 * s, r.Top, r.Width - 40 * s, r.Height), font, text);
                 c.Text(FluentTheme.Icons.ChevronDown, new RectD(r.Right - 30 * s, r.Top, 20 * s, r.Height), new UiFont(FluentTheme.IconFont, 10 * s),
                     t.TextSecondary, UiAlign.Center);
+                if (focus) FocusRing(c, t, s, r, radius);
+                break;
+            }
+            case ItemKind.Hotkey:
+            {
+                bool recording = it.Active?.Invoke() == true;
+                c.Fill(r, radius, recording ? t.Control : pressed ? t.ControlPressed : hover ? t.ControlHover : t.Control);
+                if (recording) c.Stroke(r, radius, 2 * s, t.Accent);
+                else c.Stroke(r, radius, 1, t.ControlStroke);
+                c.Text(it.Label?.Invoke() ?? "", new RectD(r.Left + 11 * s, r.Top, r.Width - 40 * s, r.Height), body,
+                    recording ? t.TextSecondary : text);
+                c.Text(FluentTheme.Icons.Keyboard, new RectD(r.Right - 32 * s, r.Top, 22 * s, r.Height), new UiFont(FluentTheme.IconFont, 14 * s),
+                    recording ? t.Accent : t.TextSecondary, UiAlign.Center);
                 if (focus) FocusRing(c, t, s, r, radius);
                 break;
             }

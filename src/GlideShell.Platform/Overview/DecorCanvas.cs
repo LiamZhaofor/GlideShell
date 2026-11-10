@@ -16,6 +16,7 @@ internal sealed unsafe class DecorCanvas : IDisposable
     private void* _dwrite;
     private void* _target;
     private void* _brush;
+    private void* _accent; // 第二把画刷：一行文字里标出来的字（按需创建）
     private nint _dc;
     private nint _dib;
     private byte* _bits;
@@ -135,6 +136,48 @@ internal sealed unsafe class DecorCanvas : IDisposable
         D2D.Release(layout);
     }
 
+    /// <summary>
+    /// 同 <see cref="Text"/>，但 <paramref name="marked"/> 里的字（下标）用 <paramref name="accent"/> 颜色、半粗体画出来
+    /// （搜索结果里标出匹配上的字）。
+    /// </summary>
+    public void MarkedText(string text, float x, float y, float maxWidth, float sizePx, int weight, D2D.ColorF color, IReadOnlyList<int> marked, D2D.ColorF accent)
+    {
+        if (!_drawing || text.Length == 0) return;
+        void* layout = Layout(text, sizePx, weight, maxWidth);
+        if (layout == null) return;
+        if (_accent == null)
+        {
+            void* brush;
+            if (D2D.CreateSolidColorBrush(_target, &accent, &brush) >= 0) _accent = brush;
+        }
+        if (_accent != null)
+        {
+            D2D.SetColor(_accent, &accent);
+            foreach (int i in marked)
+            {
+                if (i < 0 || i >= text.Length) continue;
+                var range = new D2D.TextRange { Start = (uint)i, Length = 1 };
+                D2D.SetDrawingEffect(layout, _accent, range);
+                D2D.SetFontWeight(layout, 600, range);
+            }
+        }
+        SetBrush(color);
+        D2D.DrawTextLayout(_target, new D2D.Point2F(x, y), layout, _brush, D2D.DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        D2D.Release(layout);
+    }
+
+    /// <summary>一行文字连同末尾空格的宽度（输入框里光标的位置）。</summary>
+    public float MeasureAdvance(string text, float sizePx, int weight)
+    {
+        if (text.Length == 0) return 0;
+        void* layout = Layout(text, sizePx, weight, 100000);
+        if (layout == null) return 0;
+        D2D.TextMetrics m;
+        int hr = D2D.GetMetrics(layout, &m);
+        D2D.Release(layout);
+        return hr < 0 ? 0 : m.WidthIncludingTrailingWhitespace;
+    }
+
     public void FillRoundRect(float left, float top, float right, float bottom, float radius, D2D.ColorF color)
     {
         if (!_drawing) return;
@@ -236,6 +279,8 @@ internal sealed unsafe class DecorCanvas : IDisposable
         foreach (nint f in _formats.Values) D2D.Release((void*)f);
         _formats.Clear();
         if (_brush != null) D2D.Release(_brush);
+        if (_accent != null) D2D.Release(_accent);
+        _accent = null;
         if (_target != null) D2D.Release(_target);
         if (_dwrite != null) D2D.Release(_dwrite);
         if (_d2d != null) D2D.Release(_d2d);

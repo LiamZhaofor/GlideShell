@@ -180,9 +180,48 @@ public class SwitcherControllerTests
         var (c, host) = Create();
         long end = Swipe(c, dx: -6, releaseVelocity: 0, start: 0);
 
-        c.Sample(end + 5_000_000);
-        c.Sample(end + 10_000_000);
+        // 当前窗口不再从切换条飞回一次：整条淡出，淡完撤层
+        var a = c.Sample(end + 20_000);
+        var b = c.Sample(end + 100_000);
+        Assert.Equal(-1, a.LaunchIndex);
+        Assert.True(a.Visible && b.Visible);
+        Assert.InRange(b.Appear, 0.01, a.Appear - 0.1);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("Hide"));
+        var last = c.Sample(end + 200_000);
+        Assert.Equal(0, last.Appear, 6); // 撤层前最后一帧已经完全透明
         Assert.Equal("Hide:-", host.Calls[^1]);
+        c.Sample(end + 5_000_000);
+        Assert.Single(host.Calls, x => x.StartsWith("Hide"));
+    }
+
+    [Fact]
+    public void A_new_swipe_during_the_fade_out_takes_over_from_the_current_opacity()
+    {
+        var (c, host) = Create();
+        long end = Swipe(c, dx: -6, releaseVelocity: 0, start: 0);
+        double faded = c.Sample(end + 90_000).Appear;
+        c.Begin(Ev(GesturePhase.Began, 0, 0, end + 90_000));
+
+        var f = c.Sample(end + 90_000);
+        Assert.Equal(faded, f.Appear, 2); // 不跳回不透明，从这里淡入
+        Assert.Equal(1, c.Sample(end + 400_000).Appear, 6);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("Hide"));
+    }
+
+    [Fact]
+    public void Swiping_away_and_back_to_the_current_window_does_not_replay_its_animation()
+    {
+        var (c, host) = Create();
+        c.Begin(Ev(GesturePhase.Began, 0, 0, 0));
+        c.Update(Ev(GesturePhase.Changed, -40, 0, 10_000)); // 滑到后面的窗口
+        c.Update(Ev(GesturePhase.Changed, 0, 0, 20_000)); // 又滑回来
+        c.End(Ev(GesturePhase.Ended, 0, 0, 30_000));
+
+        Assert.Equal(-1, c.Sample(40_000).LaunchIndex);
+        c.Sample(300_000);
+        Assert.Equal("Hide:-", host.Calls[^1]);
+        c.Sample(5_000_000);
+        Assert.Single(host.Calls, x => x.StartsWith("Hide"));
     }
 
     [Fact]

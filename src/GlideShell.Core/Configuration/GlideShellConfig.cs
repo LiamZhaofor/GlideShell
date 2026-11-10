@@ -41,6 +41,32 @@ public sealed record OverviewConfig
     public bool GroupByApp { get; set; }
 
     /// <summary>
+    /// 总览底部显示后台程序：此刻在托盘里、没有可见窗口的程序（关到托盘的微信、Steam，Tailscale 这类托盘工具）。
+    /// 点有主窗口的打开它的窗口，点托盘工具弹出它的托盘菜单；右键都是托盘菜单。
+    /// </summary>
+    public bool TrayApps { get; set; } = true;
+
+    /// <summary>总览里直接打字搜索并打开程序（拼音、首字母都能找；Esc 回到窗口）。</summary>
+    public bool Search { get; set; } = true;
+
+    /// <summary>
+    /// 在任何程序里按下就单独弹出搜索框（不进总览；总览开着时在总览里搜）的快捷键（<see cref="Hotkey"/> 的写法，如 <c>Alt+Space</c>；空串 = 不用）。
+    /// 再按一次收起。前台是全屏程序（游戏、视频、演示）时不响应，按键照常交给它。
+    /// </summary>
+    public string SearchHotkey { get; set; } = DefaultSearchHotkey;
+
+    public const string DefaultSearchHotkey = "Alt+Space";
+
+    /// <summary>
+    /// 手动添加到搜索里的程序（文件完整路径：exe、快捷方式 .lnk、.bat 等）：开始菜单里没有的程序加进来也能搜到、打开。
+    /// 名字取 exe 的文件说明，没有就用文件名。设置里「手动添加的程序」改的就是它。
+    /// </summary>
+    public string[] SearchExtraApps { get; set; } = [];
+
+    /// <summary>后台程序栏里不显示的程序（exe 完整路径，不分大小写）。设置里「选择显示哪些程序」改的就是它。</summary>
+    public string[] HiddenTrayApps { get; set; } = [];
+
+    /// <summary>
     /// 总览里窗口卡片的圆角半径（DIP，0–32），按窗口原尺寸算、随卡片一起缩小（macOS 调度中心的做法：缩小的窗口圆角也按比例缩小）。
     /// 窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8，最大化是 0）过渡到这个值。0 = 保持窗口原样。
     /// </summary>
@@ -222,6 +248,12 @@ public sealed record GlideShellConfig
             Response = Clamp(s.Response, 0.05, 2, $"{name}.Response"),
             DampingRatio = Clamp(s.DampingRatio, 0.1, 3, $"{name}.DampingRatio"),
         };
+        string FixHotkey(string? text, string fallback, string name)
+        {
+            if (Hotkey.TryParse(text, out var hotkey) && (hotkey.IsNone || hotkey.IsValid)) return hotkey.ToString();
+            problems.Add(F("{0}={1} 不是可用的快捷键（要带 Ctrl、Alt 或 Win，例如 Alt+Space），已改为 {2}", name, text, fallback));
+            return fallback;
+        }
 
         var r = Recognition;
         double slop = Clamp(r.SlopMm, 0.5, 20, "Recognition.SlopMm");
@@ -271,6 +303,10 @@ public sealed record GlideShellConfig
                 TravelMm = Clamp(Overview.TravelMm, 5, 100, "Overview.TravelMm"),
                 BackdropDim = Clamp(Overview.BackdropDim, 0, 1, "Overview.BackdropDim"),
                 CornerRadius = Clamp(Overview.CornerRadius, 0, 32, "Overview.CornerRadius"),
+                SearchHotkey = FixHotkey(Overview.SearchHotkey, OverviewConfig.DefaultSearchHotkey, "Overview.SearchHotkey"),
+                HiddenTrayApps = Overview.HiddenTrayApps?.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
+                SearchExtraApps = Overview.SearchExtraApps?.Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
                 Spring = FixSpring(Overview.Spring, "Overview.Spring"),
             },
             Switcher = Switcher with

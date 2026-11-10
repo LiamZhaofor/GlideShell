@@ -13,4 +13,9 @@
     <InternalsVisibleTo Include="GlideShell.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 汉字拼音表：tools/pinyin/gen_pinyin.py 从 Unicode Unihan 生成 -->
+    <EmbeddedResource Include="Search\Pinyin.bin" LogicalName="GlideShell.Core.Search.Pinyin.bin" />
+  </ItemGroup>
+
 </Project>

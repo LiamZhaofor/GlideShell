@@ -54,6 +54,9 @@ public sealed class SwitcherController : IGestureTarget
 {
     private const double AppearMs = 120;
 
+    /// <summary>没有切换时切换条淡出多久（与吸附回当前窗口同时进行）。</summary>
+    private const double DismissMs = 180;
+
     /// <summary>键盘切换时切换条延迟多久才淡入：快速按一下 Alt+Tab 直接切到上一个窗口，不闪出切换条（与系统的 Alt+Tab 一致）。</summary>
     public const long KeyRevealDelayUs = 100_000;
 
@@ -63,6 +66,7 @@ public sealed class SwitcherController : IGestureTarget
     private readonly InteractiveTransition _transition;
     private readonly InteractiveTransition _launch;
     private int _launchIndex = -1; // 正在飞回的窗口（-1 = 没有）
+    private long _dismissAtUs = -1; // 没有切换、正在淡出：开始淡出的时刻（-1 = 没有）
     private volatile SwitcherScene _scene = SwitcherScene.Empty;
 
     private bool _visible;
@@ -152,6 +156,13 @@ public sealed class SwitcherController : IGestureTarget
                 _launchIndex = -1;
                 _launch.SnapTo(0);
             }
+            if (_dismissAtUs >= 0)
+            {
+                // 淡出途中又滑起来：停止淡出，从此刻的透明度接着淡入
+                double now = AppearAt(e.HostTimeUs);
+                _dismissAtUs = -1;
+                _shownAtUs = e.HostTimeUs - (long)(now * AppearMs * 1000);
+            }
             _mmPerWindow = Math.Max(1, _config().MmPerWindow);
             _transition.BeginTracking(e.HostTimeUs);
         }
@@ -185,16 +196,32 @@ public sealed class SwitcherController : IGestureTarget
                 int last = Math.Max(0, _scene.Count - 1);
                 target = _transition.Release(-e.VxMmS / _mmPerWindow, e.HostTimeUs, (_, projected) => Math.Clamp(Math.Round(projected), 0, last));
             }
-            // 松手就开始飞回（与吸附同时进行，不等吸附落定）：起点是选中项此刻在切换条上的位置，随吸附移动
-            if (_scene.Count > 0)
+            int index = _scene.Count > 0 ? (int)Math.Clamp(Math.Round(target), 0, _scene.Count - 1) : -1;
+            if (index == 0)
             {
-                _launchIndex = (int)Math.Clamp(Math.Round(target), 0, _scene.Count - 1);
+                // 没有切换（停在 / 滑回了当前窗口）：切换条边吸附回去边淡出，淡完撤层。当前窗口本来就在原位，
+                // 再让它从切换条飞回去像是又打开了一次
+                _dismissAtUs = e.HostTimeUs;
+            }
+            else if (index > 0)
+            {
+                // 松手就开始飞回（与吸附同时进行，不等吸附落定）：起点是选中项此刻在切换条上的位置，随吸附移动
+                _launchIndex = index;
                 _launch.SnapTo(0);
                 _launch.AnimateTo(1, e.HostTimeUs);
-                if (_launchIndex > 0) launching = _scene.Windows[_launchIndex].Id;
+                launching = _scene.Windows[index].Id;
             }
         }
         if (launching is { } id) _host.Launching(id);
+    }
+
+    /// <summary>此刻切换条的整体透明度（淡入 × 淡出）。在锁内调用。</summary>
+    private double AppearAt(long hostUs)
+    {
+        double appear = Math.Clamp((hostUs - _shownAtUs) / 1000.0 / AppearMs, 0, 1);
+        if (_dismissAtUs < 0) return appear;
+        double d = Math.Clamp((hostUs - _dismissAtUs) / 1000.0 / DismissMs, 0, 1);
+        return appear * (1 - d * d * (3 - 2 * d));
     }
 
     // ---------- 键盘（Alt+Tab，UI 线程） ----------
@@ -333,9 +360,10 @@ public sealed class SwitcherController : IGestureTarget
         lock (_gate)
         {
             activate = null;
-            if (_launchIndex < 0 || _tracking || _keySession || !_visible) return false;
+            if ((_launchIndex < 0 && _dismissAtUs < 0) || _tracking || _keySession || !_visible) return false;
             activate = _launchIndex > 0 ? _scene.Windows[_launchIndex].Id : null;
             _launchIndex = -1;
+            _dismissAtUs = -1; // 淡出途中按 Alt+Tab 同样提前结束
             _launch.SnapTo(0);
             _visible = false;
             _transition.SnapTo(0);
@@ -359,11 +387,16 @@ public sealed class SwitcherController : IGestureTarget
         int keyIndex, ringIndex;
         lock (_gate)
         {
-            if (_launchIndex < 0 && s.JustSettled && _visible && !_tracking && !_keySession)
+            if (_launchIndex < 0 && _dismissAtUs < 0 && s.JustSettled && _visible && !_tracking && !_keySession)
             {
-                // 兜底（没有松手事件就落定了，例如场景为空）：选中的缩略图从这里飞回窗口原位
+                // 兜底（没有松手事件就落定了，例如场景为空）：选中别的窗口时缩略图从这里飞回窗口原位，停在当前窗口淡出
                 _launchIndex = scene.Count == 0 ? -1 : (int)Math.Clamp(Math.Round(s.Value), 0, scene.Count - 1);
                 if (_launchIndex < 0) hide = true;
+                else if (_launchIndex == 0)
+                {
+                    _launchIndex = -1;
+                    _dismissAtUs = hostUs;
+                }
                 else
                 {
                     _launch.SnapTo(0);
@@ -376,13 +409,15 @@ public sealed class SwitcherController : IGestureTarget
                 activate = _launchIndex > 0 ? scene.Windows[_launchIndex].Id : null;
                 hide = true;
             }
+            if (_dismissAtUs >= 0 && _visible && !_tracking && hostUs - _dismissAtUs >= DismissMs * 1000) hide = true; // 淡完了
             if (hide)
             {
                 _visible = false; // 这一帧仍按落点画（与撤层后的桌面一致）
                 _transition.SnapTo(0); // 下一次切换从当前（新的前台）窗口开始
             }
             visible = _visible || hide;
-            appear = Math.Clamp((hostUs - _shownAtUs) / 1000.0 / AppearMs, 0, 1);
+            appear = AppearAt(hostUs);
+            if (hide) _dismissAtUs = -1;
             launch = _launchIndex >= 0 ? Math.Clamp(l.Value, 0, 1) : 0;
             launchIndex = _launchIndex;
             keyIndex = _keySession ? _keyIndex : -1;

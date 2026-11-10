@@ -67,6 +67,15 @@ public sealed record SettingsModel
     public double DragAcceleration { get; init; }
     public required IReadOnlyList<string> ExcludedProcesses { get; init; }
     public bool GroupByApp { get; init; }
+    public bool TrayApps { get; init; }
+    public bool Search { get; init; }
+
+    /// <summary>单独弹出搜索框的快捷键（<see cref="Hotkey"/> 的写法，空串 = 不用）。</summary>
+    public string SearchHotkey { get; init; } = "";
+    public IReadOnlyList<string> HiddenTrayApps { get; init; } = [];
+
+    /// <summary>手动添加到搜索里的程序（文件完整路径）。</summary>
+    public IReadOnlyList<string> SearchExtraApps { get; init; } = [];
     public bool AppWindows { get; init; }
     public bool TakeOverDesktopHotkeys { get; init; }
 
@@ -168,6 +177,11 @@ public sealed record SettingsModel
             ExcludedProcesses = [.. c.ExcludedProcesses],
             Autostart = autostart,
             GroupByApp = c.Overview.GroupByApp,
+            TrayApps = c.Overview.TrayApps,
+            Search = c.Overview.Search,
+            SearchHotkey = c.Overview.SearchHotkey,
+            HiddenTrayApps = [.. c.Overview.HiddenTrayApps],
+            SearchExtraApps = [.. c.Overview.SearchExtraApps],
             AppWindows = c.Overview.AppWindows,
             TakeOverDesktopHotkeys = c.Desktops.TakeOverHotkeys,
             TakeOverAltTab = c.Switcher.TakeOverAltTab,
@@ -228,8 +242,8 @@ public sealed record SettingsModel
     public SensitivityPreset? Preset => SensitivityPreset.All.FirstOrDefault(p =>
         p.SlopMm == SlopMm && p.OverviewTravelMm == OverviewTravelMm && p.MmPerWindow == MmPerWindow && p.DesktopTravelMm == DesktopTravelMm);
 
-    /// <summary>恢复默认设置；排除的程序与开机启动属于用户数据，保留。</summary>
-    public SettingsModel Defaults() => FromConfig(new GlideShellConfig(), Autostart) with { ExcludedProcesses = ExcludedProcesses };
+    /// <summary>恢复默认设置；排除的程序、手动添加到搜索的程序与开机启动属于用户数据，保留。</summary>
+    public SettingsModel Defaults() => FromConfig(new GlideShellConfig(), Autostart) with { ExcludedProcesses = ExcludedProcesses, SearchExtraApps = SearchExtraApps };
 
     /// <summary>把界面状态写回配置（界面以外的字段保留），并做与加载时相同的范围修正。</summary>
     public (GlideShellConfig Config, IReadOnlyList<string> Problems) ApplyTo(GlideShellConfig c)
@@ -252,7 +266,7 @@ public sealed record SettingsModel
             Overview = c.Overview with
             {
                 TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails, GroupByApp = GroupByApp, AppWindows = AppWindows,
-                CornerRadius = CornerRadius,
+                CornerRadius = CornerRadius, TrayApps = TrayApps, Search = Search, SearchHotkey = SearchHotkey, HiddenTrayApps = [.. HiddenTrayApps], SearchExtraApps = [.. SearchExtraApps],
             },
             Mouse = c.Mouse with { Button = MouseButton, Sensitivity = MouseSensitivity },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow, TakeOverAltTab = TakeOverAltTab },

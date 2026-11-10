@@ -17,7 +17,7 @@ namespace GlideShell.Platform.Overview;
 /// 其余桌面各一层不带壁纸的缩略图；翻页时各页窗口的矩形整体横向平移。
 /// 拖动窗口时它的缩略图分组临时挂到最上面一支（在桌面条上面，拖到桌面条上时不被缩略图挡住），放下落定后放回原来的层次。
 /// </summary>
-internal sealed unsafe class OverlayWindow : NativeWindow
+internal sealed unsafe partial class OverlayWindow : NativeWindow
 {
     private readonly Action<OverlayWindow, OverlayMouse, double, double> _onMouse;
     private bool _releasingCapture;
@@ -34,6 +34,27 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     private OverlayComposition? _barGlassRoot; // 桌面条上面：桌面名底下的毛玻璃
     private OverlayComposition? _barDecorRoot; // 再上面：桌面名、高亮、「×」「+」
     private BarDecor? _barDecor;
+    private OverlayComposition? _dockGlassRoot; // 桌面条上面：后台程序栏底下的毛玻璃
+    private OverlayComposition? _dockRoot; // 再上面：后台程序栏（图标、名字、高亮、提示）
+    private DockDecor? _dockDecor;
+    private OverlayComposition? _searchGlassRoot; // 后台程序栏上面：搜索面板的暗幕与毛玻璃
+    private OverlayComposition? _searchRoot; // 再上面：搜索面板
+    private SearchDecor? _searchDecor;
+    // 从后台程序栏飞出来的窗口（挂在最上面一支）：有自己的弹簧，落定时与真实窗口重合。
+    // 周期 0.42 秒、不回弹：约 0.32 秒走完 95%，与 macOS 打开窗口的速度相当（跟着总览收起的 0.35 秒略回弹的弹簧太快，0.5 秒又太慢）
+    private static readonly GlideShell.Core.Motion.SpringParameters FlightSpring = new(0.42, 1.0);
+    private volatile SharedThumbnailLayer? _flight;
+    private RectD _flightFrom, _flightTo;
+    private GlideShell.Core.Motion.SpringAnimation _flightAnim;
+    private double _flightTravel; // 起点到终点四条边里移动最远的那条（像素）：剩下不到 1.5 像素就直接落定
+    private readonly RectD[] _flightRect = new RectD[1];
+    private readonly double[] _flightOpacity = new double[1], _flightActive = new double[1];
+    // 总览里右键后台程序栏弹出的托盘菜单（挂在最上面一支）：真实菜单在覆盖层下面，这里画它的缩略图（淡入、阴影），
+    // 淡入完再在覆盖层上开洞露出真实菜单（见 ShowMenu）
+    private sealed record MenuLayer(SharedThumbnailLayer Layer, nint[] Windows, RectD[] Rects, long[] ShownUs, double[] Opacity, double[] Active, double RadiusPx);
+    private volatile MenuLayer? _menu;
+    private string _holes = ""; // 当前开的洞（比较用）
+    private const double MenuFadeUs = 120_000;
     private SharedThumbnailBackend? _shared;
     private readonly DesktopBarView _bar = new();
     private DesktopState _desktops = DesktopState.Empty;
@@ -109,7 +130,11 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             if (_decorRoot is not null) _barRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_barRoot is not null) _barGlassRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_barGlassRoot is not null) _barDecorRoot ??= _composition!.CreateBranch(out sharedFailure);
-            if (_barDecorRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_barDecorRoot is not null) _dockGlassRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_dockGlassRoot is not null) _dockRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_dockRoot is not null) _searchGlassRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_searchGlassRoot is not null) _searchRoot ??= _composition!.CreateBranch(out sharedFailure);
+            if (_searchRoot is not null) _dragRoot ??= _composition!.CreateBranch(out sharedFailure);
             if (_dragRoot is not null)
                 next = SharedThumbnailLayer.Register(shared, _content!, Handle, Monitor.WorkArea, Monitor.DpiScale, windows, _layer as SharedThumbnailLayer, out sharedFailure);
             _shared = shared;
@@ -127,6 +152,12 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _layer = next;
         if (decor is not null && _decorRoot is not null && _layer is SharedThumbnailLayer) _decor ??= new WindowDecor(decor, _decorRoot, Monitor);
         if (decor is not null && _barDecorRoot is not null && _layer is SharedThumbnailLayer) _barDecor ??= new BarDecor(decor, _barDecorRoot, _barGlassRoot!, Handle, Monitor);
+        if (decor is not null && _dockRoot is not null && _layer is SharedThumbnailLayer) _dockDecor ??= new DockDecor(decor, _dockRoot, _dockGlassRoot!, Handle, Monitor);
+        if (decor is not null && _searchRoot is not null && _layer is SharedThumbnailLayer) _searchDecor ??= new SearchDecor(decor, _searchRoot, _searchGlassRoot!, Handle, Monitor);
+        _searchDecor?.HideAll();
+        Dock = null;
+        DockHovered = false;
+        _dockDecor?.HideAll();
         if (_layer is not SharedThumbnailLayer)
         {
             _decor?.HideAll();
@@ -139,6 +170,215 @@ internal sealed unsafe class OverlayWindow : NativeWindow
 
     /// <summary>合成层装饰在用（共享缩略图模式下）：GDI 不再画标题、悬停框与占位卡片。</summary>
     private bool DecorActive => _decor is not null && _layer is SharedThumbnailLayer;
+
+    /// <summary>能画后台程序栏（共享缩略图与合成层装饰都可用；经典缩略图模式下没有这一栏）。</summary>
+    public bool DockAvailable => _dockDecor is not null && _layer is SharedThumbnailLayer;
+
+    /// <summary>本次会话的后台程序栏几何（没有显示时为 null）。</summary>
+    public TrayDockGeometry? Dock { get; private set; }
+
+    /// <summary>指针在后台程序栏的某个程序上：显示手形指针。</summary>
+    public bool DockHovered { get; set; }
+
+    /// <summary>
+    /// UI 线程：显示后台程序栏（<paramref name="geometry"/> 为 null 或没有程序时不显示）。
+    /// <paramref name="apps"/> 与几何的前 <see cref="TrayDockGeometry.Count"/> 个对应。
+    /// <paramref name="animateIn"/>：总览已经展开好了，栏用弹簧从任务栏后面升起；否则跟总览的展开进度走。
+    /// </summary>
+    public void PrepareDock(TrayDockGeometry? geometry, IReadOnlyList<TrayApp> apps, bool animateIn)
+    {
+        if (!DockAvailable) geometry = null;
+        Dock = geometry is { Count: > 0 } ? geometry : null;
+        DockHovered = false;
+        _dockDecor?.Prepare(Dock, apps, animateIn);
+    }
+
+    /// <summary>
+    /// UI 线程：栏里第 <paramref name="index"/> 个程序没了：它淡出、其余收拢（<paramref name="next"/> 是少了它之后的几何，
+    /// <paramref name="apps"/> 是剩下的程序）。收拢不了（放不下而缩小过的栏）就直接重摆。
+    /// </summary>
+    public void RemoveDockApp(int index, TrayDockGeometry next, IReadOnlyList<TrayApp> apps)
+    {
+        if (Dock is null || _dockDecor is null) return;
+        DockHovered = false;
+        if (_dockDecor.RemoveAt(index, next)) Dock = next;
+        else PrepareDock(next, apps, animateIn: false);
+    }
+
+    /// <summary>UI 线程：总览开着时撤走后台程序栏（立刻不再响应鼠标，画面沉回任务栏后面）。</summary>
+    public void RetractDock()
+    {
+        Dock = null;
+        DockHovered = false;
+        _dockDecor?.Retract();
+    }
+
+    /// <summary>能画搜索面板（共享缩略图与合成层装饰都可用）。</summary>
+    public bool SearchAvailable => _searchDecor is not null && _layer is SharedThumbnailLayer;
+
+    /// <summary>UI 线程：显示 / 更新搜索面板（见 <see cref="SearchDecor.Show"/>）。</summary>
+    public void ShowSearch(string query, IReadOnlyList<GlideShell.Core.Search.SearchResult> results, int selected,
+        Func<GlideShell.Core.Search.SearchEntry, AppId?> iconOf) => _searchDecor?.Show(query, results, selected, iconOf);
+
+    /// <summary>UI 线程：搜索结果里选中第 <paramref name="index"/> 行。</summary>
+    public void SelectSearch(int index) => _searchDecor?.Select(index);
+
+    /// <summary>UI 线程：收起搜索面板（淡出）。</summary>
+    public void HideSearch() => _searchDecor?.Hide();
+
+    /// <summary>UI 线程：指针下的搜索结果（-1 = 没有）。</summary>
+    public int SearchHit(double x, double y) => _searchDecor?.HitTest(x, y) ?? -1;
+
+    /// <summary>UI 线程：指针在搜索面板上。</summary>
+    public bool SearchContains(double x, double y) => _searchDecor?.Contains(x, y) ?? false;
+
+    /// <summary>UI 线程：后台程序栏里悬停 / 键盘选中的程序（-1 = 没有）。</summary>
+    public void SetDockHover(int index) => _dockDecor?.SetHover(index);
+
+    /// <summary>UI 线程：后台程序栏里正在打开的程序（图标弹跳，等它的窗口出来；-1 = 没有）。</summary>
+    public void SetDockLaunching(int index) => _dockDecor?.SetLaunching(index);
+
+    /// <summary>
+    /// UI 线程：刚打开的窗口 <paramref name="hwnd"/> 从 <paramref name="from"/>（栏里它的图标处）飞到 <paramref name="to"/>（它的真实位置），
+    /// 从 <paramref name="startUs"/> 起按自己的弹簧飞（与总览收起同时开始，比它慢一些）。与总览里的窗口同一套缩略图、阴影与圆角，
+    /// 落定时与真实窗口重合，撤层无跳变。共享缩略图不可用时返回 false。
+    /// </summary>
+    public bool BeginFlight(nint hwnd, RectD from, RectD to, long startUs)
+    {
+        EndFlight();
+        if (_dragRoot is null || _shared is null || _layer is not SharedThumbnailLayer) return false;
+        var layer = SharedThumbnailLayer.Register(_shared, _dragRoot, Handle, Monitor.WorkArea, Monitor.DpiScale, [(0, hwnd)], null, out _, withWallpaper: false);
+        if (layer is null) return false;
+        _flightFrom = from;
+        _flightTo = to;
+        _flightAnim = new GlideShell.Core.Motion.SpringAnimation(FlightSpring, 0, 1, 0, startUs);
+        _flightTravel = Math.Max(Math.Max(Math.Abs(to.Left - from.Left), Math.Abs(to.Top - from.Top)),
+            Math.Max(Math.Abs(to.Right - from.Right), Math.Abs(to.Bottom - from.Bottom)));
+        _flight = layer;
+        return true;
+    }
+
+    /// <summary>有窗口正在从后台程序栏飞出来（还没落定）。</summary>
+    public bool Flying => _flight is not null && FlightProgress(HostClockNow()).Progress < 1;
+
+    private static long HostClockNow() => GlideShell.Platform.HostClock.NowUs();
+
+    /// <summary>飞行进度（0 = 图标处，1 = 落定）：剩下的距离不到 1.5 像素就算落定（弹簧尾巴上看不出的蠕动不用等）。</summary>
+    private (double Progress, bool Done) FlightProgress(long nowUs)
+    {
+        var (value, _, settled) = _flightAnim.Sample(nowUs);
+        double s = Math.Clamp(value, 0, 1);
+        if (settled || (1 - s) * _flightTravel < 1.5) return (1, true);
+        return (s, false);
+    }
+
+    /// <summary>锁外调用：按 <paramref name="nowUs"/> 摆放飞行中的窗口（不提交）。返回 HRESULT。</summary>
+    private int ApplyFlight(SharedThumbnailLayer flight, long nowUs, double radius)
+    {
+        // 从图标长成真实窗口：开头几帧很小、淡入；圆角从卡片的过渡到窗口自己的；活动阴影逐渐加上（它会是前台窗口）
+        double s = FlightProgress(nowUs).Progress;
+        _flightRect[0] = RectD.Lerp(_flightFrom, _flightTo, s);
+        _flightOpacity[0] = Math.Clamp(s * 4, 0, 1);
+        _flightActive[0] = s;
+        return flight.Apply(_flightRect, _flightOpacity, _flightActive, 0, commit: false, 1 - s, radius);
+    }
+
+    /// <summary>
+    /// UI 线程：总览已经收起、渲染线程不再画了，飞行还没落定时由这里接着画一帧并提交。返回是否已经落定。
+    /// </summary>
+    public bool StepFlight(long nowUs)
+    {
+        if (_flight is not { } flight || _shared is not { } backend) return true;
+        ApplyFlight(flight, nowUs, CornerRadiusDip * Monitor.DpiScale);
+        backend.Commit();
+        return FlightProgress(nowUs).Done;
+    }
+
+    /// <summary>UI 线程：撤掉飞行中的窗口（撤层后）。</summary>
+    public void EndFlight()
+    {
+        var flight = _flight;
+        _flight = null;
+        flight?.Unregister();
+    }
+
+    /// <summary>
+    /// UI 线程：显示总览里弹出的托盘菜单。<paramref name="popups"/> 是各级菜单窗口（打开顺序，后开的在上面）与它们此刻的位置、弹出时刻；
+    /// <paramref name="holes"/> 为 true 的在覆盖层上开洞（真实菜单露出来、鼠标点得到）。空列表 = 撤掉。
+    /// 菜单窗口集合变了才重新注册缩略图，位置变了只更新矩形。
+    /// </summary>
+    public void ShowMenu(IReadOnlyList<(nint Window, RectD Rect, long ShownUs, bool Hole)> popups, double radiusPx)
+    {
+        var old = _menu;
+        if (popups.Count == 0 || _dragRoot is null || _shared is null || _layer is not SharedThumbnailLayer)
+        {
+            _menu = null;
+            old?.Layer.Unregister();
+            SetHoles(popups.Where(p => p.Hole).Select(p => p.Rect).ToList(), radiusPx);
+            return;
+        }
+        var windows = popups.Select(p => p.Window).ToArray();
+        var layer = old is not null && old.Windows.SequenceEqual(windows) ? old.Layer : null;
+        if (layer is null)
+        {
+            // 列表第一个在最上层：后开的子菜单在上面
+            var order = windows.Select((h, i) => (i, h)).Reverse().ToList();
+            layer = SharedThumbnailLayer.Register(_shared, _dragRoot, Handle, Monitor.WorkArea, Monitor.DpiScale, order, null, out _, withWallpaper: false);
+        }
+        if (old is not null && old.Layer != layer) old.Layer.Unregister();
+        _menu = layer is null ? null : new MenuLayer(layer, windows, popups.Select(p => p.Rect).ToArray(), popups.Select(p => p.ShownUs).ToArray(),
+            new double[windows.Length], new double[windows.Length], radiusPx);
+        SetHoles(popups.Where(p => p.Hole).Select(p => p.Rect).ToList(), radiusPx);
+    }
+
+    /// <summary>锁外（渲染线程）：摆放托盘菜单的缩略图（不提交）。</summary>
+    private int ApplyMenu(MenuLayer menu, long nowUs)
+    {
+        for (int i = 0; i < menu.Windows.Length; i++)
+        {
+            double t = Math.Clamp((nowUs - menu.ShownUs[i]) / MenuFadeUs, 0, 1);
+            menu.Opacity[i] = 1 - (1 - t) * (1 - t);
+        }
+        return menu.Layer.Apply(menu.Rects, menu.Opacity, menu.Active, 0, commit: false, menu.RadiusPx > 0 ? 1 : -1, menu.RadiusPx);
+    }
+
+    /// <summary>
+    /// 在覆盖层上给 <paramref name="rects"/>（屏幕坐标）开洞：窗口区域减去这些（圆角）矩形，洞里看到、点到的是下面的真实窗口。空列表 = 还原。
+    /// </summary>
+    private void SetHoles(List<RectD> rects, double radiusPx)
+    {
+        var wa = Monitor.WorkArea;
+        string key = string.Join(";", rects.Select(r => $"{r.Left:F0},{r.Top:F0},{r.Width:F0},{r.Height:F0}"));
+        if (key == _holes) return;
+        _holes = key;
+        if (rects.Count == 0)
+        {
+            SetWindowRgn(Handle, 0, 1);
+            return;
+        }
+        nint region = CreateRectRgn(0, 0, (int)Math.Ceiling(wa.Width), (int)Math.Ceiling(wa.Height));
+        int d = (int)Math.Round(radiusPx * 2);
+        foreach (var r in rects)
+        {
+            int l = (int)Math.Round(r.Left - wa.Left), t = (int)Math.Round(r.Top - wa.Top), rr = (int)Math.Round(r.Right - wa.Left), b = (int)Math.Round(r.Bottom - wa.Top);
+            nint hole = d > 0 ? CreateRoundRectRgn(l, t, rr + 1, b + 1, d, d) : CreateRectRgn(l, t, rr, b);
+            CombineRgn(region, region, hole, 4 /* RGN_DIFF */);
+            Gdi32.DeleteObject(hole);
+        }
+        if (SetWindowRgn(Handle, region, 1) == 0) Gdi32.DeleteObject(region); // 成功后区域归系统
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    private static partial int SetWindowRgn(nint hwnd, nint region, int redraw);
+
+    [System.Runtime.InteropServices.LibraryImport("gdi32.dll")]
+    private static partial nint CreateRectRgn(int left, int top, int right, int bottom);
+
+    [System.Runtime.InteropServices.LibraryImport("gdi32.dll")]
+    private static partial nint CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
+
+    [System.Runtime.InteropServices.LibraryImport("gdi32.dll")]
+    private static partial int CombineRgn(nint dest, nint src1, nint src2, int mode);
 
     /// <summary>桌面条的文字与装饰在合成层里画（共享缩略图模式下）。</summary>
     private bool BarDecorActive => _barDecor is not null && _layer is SharedThumbnailLayer && _bar.HasThumbnails;
@@ -414,6 +654,18 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             }
             _bar.Apply(frame);
             if (BarDecorActive) _barDecor!.Apply(frame, labels, nowUs, wallpaper);
+            if (DockAvailable) _dockDecor!.Apply(frame, nowUs, wallpaper);
+            if (SearchAvailable) _searchDecor!.Apply(nowUs, wallpaper);
+            if (_flight is { } flight)
+            {
+                int r = ApplyFlight(flight, nowUs, radius);
+                if (hr == 0) hr = r;
+            }
+            if (_menu is { } menu)
+            {
+                int r = ApplyMenu(menu, nowUs);
+                if (hr == 0) hr = r;
+            }
             int committed = backend.Commit();
             return hr != 0 ? hr : committed;
         }
@@ -449,8 +701,13 @@ internal sealed unsafe class OverlayWindow : NativeWindow
     public void Release()
     {
         Unlift();
+        EndFlight();
+        ShowMenu([], 0);
         _decor?.HideAll();
         _barDecor?.HideAll();
+        _dockDecor?.HideAll();
+        _searchDecor?.HideAll();
+        Dock = null;
         _layer.HideAll();
         HidePages();
         _pages = null;
@@ -468,6 +725,13 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _decor = null;
         _barDecor?.Dispose();
         _barDecor = null;
+        EndFlight();
+        ShowMenu([], 0);
+        _dockDecor?.Dispose();
+        _dockDecor = null;
+        _searchDecor?.Dispose();
+        _searchDecor = null;
+        Dock = null;
         var old = _layer;
         _layer = ThumbnailLayer.Empty(Monitor.WorkArea);
         old.Unregister();
@@ -486,15 +750,23 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         _decor = null;
         _barDecor?.Dispose();
         _barDecor = null;
+        _dockDecor?.Dispose();
+        _dockDecor = null;
+        _searchDecor?.Dispose();
+        _searchDecor = null;
         _content?.Dispose(); // 分支先于根释放
         _decorRoot?.Dispose();
         _barRoot?.Dispose();
         _barGlassRoot?.Dispose();
         _barDecorRoot?.Dispose();
+        _dockGlassRoot?.Dispose();
+        _dockRoot?.Dispose();
+        _searchGlassRoot?.Dispose();
+        _searchRoot?.Dispose();
         if (_closeVisual != 0) Dcomp.Release((void*)_closeVisual);
         _closeVisual = 0;
         _dragRoot?.Dispose();
-        _content = _decorRoot = _barRoot = _barGlassRoot = _barDecorRoot = _dragRoot = null;
+        _content = _decorRoot = _barRoot = _barGlassRoot = _barDecorRoot = _dockGlassRoot = _dockRoot = _searchGlassRoot = _searchRoot = _dragRoot = null;
         _composition?.Dispose();
         _composition = null;
         base.Dispose();
@@ -514,8 +786,12 @@ internal sealed unsafe class OverlayWindow : NativeWindow
         User32.ShowWindow(Handle, User32.SW_HIDE);
         Unlift();
         SetCloseButton(null);
+        EndFlight();
         _decor?.HideAll();
         _barDecor?.HideAll();
+        _dockDecor?.HideAll();
+        _searchDecor?.HideAll();
+        Dock = null;
         _layer.HideAll();
         HidePages();
         _bar.HideAll();
@@ -550,7 +826,7 @@ internal sealed unsafe class OverlayWindow : NativeWindow
             case User32.WM_MOUSEACTIVATE:
                 return User32.MA_NOACTIVATE;
             case User32.WM_SETCURSOR:
-                User32.SetCursor(User32.LoadCursorW(0, _hovered >= 0 || LabelHovered ? User32.IDC_HAND : User32.IDC_ARROW));
+                User32.SetCursor(User32.LoadCursorW(0, _hovered >= 0 || LabelHovered || DockHovered ? User32.IDC_HAND : User32.IDC_ARROW));
                 return 1;
             case User32.WM_MOUSEMOVE:
                 Mouse(OverlayMouse.Move, lParam);
@@ -567,6 +843,11 @@ internal sealed unsafe class OverlayWindow : NativeWindow
                     _releasingCapture = false;
                 }
                 Mouse(OverlayMouse.Up, lParam);
+                return 0;
+            case 0x0204 /* WM_RBUTTONDOWN */:
+                return 0;
+            case 0x0205 /* WM_RBUTTONUP */:
+                Mouse(OverlayMouse.RightUp, lParam);
                 return 0;
             case User32.WM_CAPTURECHANGED:
                 if (!_releasingCapture) _onMouse(this, OverlayMouse.Lost, 0, 0); // 被别人抢走（例如系统弹窗）：按取消处理
@@ -765,4 +1046,7 @@ internal enum OverlayMouse
 
     /// <summary>鼠标捕获被别人抢走：正在进行的按下 / 拖动按取消处理。</summary>
     Lost,
+
+    /// <summary>右键松开（触摸板双指轻点）。</summary>
+    RightUp,
 }

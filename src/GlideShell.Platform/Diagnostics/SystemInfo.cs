@@ -28,6 +28,24 @@ public static unsafe partial class SystemInfo
     }
 
     /// <summary>本进程的令牌带不带 UIAccess（装在 Program Files、签名过的 UIAccess 版才有）。</summary>
+    /// <summary>物理内存占用百分比（GlobalMemoryStatusEx 的 dwMemoryLoad；取不到为 -1）。</summary>
+    public static int MemoryLoad()
+    {
+        var status = new MemoryStatusEx { Length = (uint)sizeof(MemoryStatusEx) };
+        return GlobalMemoryStatusEx(&status) ? (int)status.MemoryLoad : -1;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MemoryStatusEx
+    {
+        public uint Length, MemoryLoad;
+        public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("kernel32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool GlobalMemoryStatusEx(MemoryStatusEx* status);
+
     public static bool HasUIAccess()
     {
         nint token;
@@ -74,6 +92,34 @@ public static unsafe partial class SystemInfo
             CloseClipboard();
         }
     }
+
+    /// <summary>剪贴板里的文字（没有文字或打不开时为 null）。</summary>
+    public static string? ClipboardText()
+    {
+        if (!OpenClipboard(0)) return null;
+        try
+        {
+            nint memory = GetClipboardData(13 /* CF_UNICODETEXT */);
+            if (memory == 0) return null;
+            void* p = GlobalLock(memory);
+            if (p == null) return null;
+            try
+            {
+                return new string((char*)p);
+            }
+            finally
+            {
+                GlobalUnlock(memory);
+            }
+        }
+        finally
+        {
+            CloseClipboard();
+        }
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("user32.dll")]
+    private static partial nint GetClipboardData(uint format);
 
     /// <summary>日志文件最后 <paramref name="lines"/> 行（日志还在写，按共享读打开）。</summary>
     public static IReadOnlyList<string> LogTail(int lines)

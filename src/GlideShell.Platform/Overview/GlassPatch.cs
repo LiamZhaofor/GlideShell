@@ -119,6 +119,31 @@ internal sealed unsafe class GlassPatch
         Dcomp.SetOpacity((void*)_wallpaper, (float)Math.Clamp(wallpaperOpacity, 0, 1));
     }
 
+    private double _dy;
+    private RectD _clipRect;
+
+    /// <summary>
+    /// 锁内：圆角裁剪改成屏幕上的 <paramref name="rect"/>（<paramref name="origin"/> 是覆盖层左上角）。
+    /// 只能在创建时的范围里收窄（外面没有取壁纸）：栏里少了一个程序、两端往里收时跟着收。
+    /// </summary>
+    public void Clip(RectD rect, RectD origin, double radiusPx)
+    {
+        if (rect == _clipRect || _clip == 0) return;
+        _clipRect = rect;
+        var local = rect.Offset(-origin.Left, -origin.Top);
+        Dcomp.SetClipRect((void*)_clip, (float)local.Left, (float)local.Top, (float)local.Right, (float)local.Bottom);
+        Dcomp.SetClipRadius((void*)_clip, (float)radiusPx, (float)radiusPx);
+    }
+
+    /// <summary>锁内：整块（连同圆角裁剪与模糊）上下平移 <paramref name="dy"/> 像素（后台程序栏从屏幕底边升起时跟着走）。</summary>
+    public void Offset(double dy)
+    {
+        if (dy == _dy) return;
+        _dy = dy;
+        var m = new Matrix3x2(1, 0, 0, 1, 0, (float)dy);
+        Dcomp.SetTransform((void*)_group, &m);
+    }
+
     /// <summary>锁内：摘下并释放。</summary>
     public void Remove(void* parent)
     {

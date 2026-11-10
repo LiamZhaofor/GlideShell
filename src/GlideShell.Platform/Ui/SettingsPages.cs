@@ -168,6 +168,27 @@ public sealed partial class SettingsWindow
             Toggle("appWindowsT", () => _model.AppWindows, v => _model = _model with { AppWindows = v }), 96);
         b.Card("groupByApp", Icons.ViewAll, T("同一程序的窗口排在一起"), T("默认按窗口原来的位置就近排"),
             Toggle("groupByAppT", () => _model.GroupByApp, v => _model = _model with { GroupByApp = v }), 96);
+        b.Card("trayApps", Icons.Apps, T("底部显示后台程序"), T("托盘里的程序排在总览底部：点一下等于单击托盘图标，右键弹出托盘菜单"),
+            Toggle("trayAppsT", () => _model.TrayApps, v => _model = _model with { TrayApps = v }), 96);
+        if (_env.TrayApps is { } trayApps)
+        {
+            bool pick = _expanded.Contains("trayPick");
+            b.Card("trayPick", Icons.ViewAll, T("选择显示哪些程序"), T("关掉的程序不出现在总览底部（它的托盘图标照旧）"), expander: true, expanded: pick, enabled: _model.TrayApps);
+            if (pick && _model.TrayApps) TrayAppList(b, trayApps);
+            else _trayChoices = null; // 收起后下次展开重新列（托盘里的程序会变）
+        }
+        b.Card("search", Icons.Search, T("打字搜索程序"), T("总览里直接打字找程序并打开：拼音、首字母都行（wx 找到微信），Esc 回到窗口"),
+            Toggle("searchT", () => _model.Search, v => _model = _model with { Search = v }), 96);
+        b.Card("searchKey", Icons.Keyboard, T("打开搜索的快捷键"),
+            T("在任何程序里按下就弹出搜索框（不进总览），再按一次收起；全屏的游戏、视频里不响应。点右边的框再按下新的组合键，Backspace 清除"),
+            HotkeyBox("searchKeyB", () => _model.SearchHotkey, v => _model = _model with { SearchHotkey = v }, _model.Search), 168,
+            enabled: _model.Search);
+        bool appsOpen = _expanded.Contains("searchApps");
+        int extra = _model.SearchExtraApps.Count;
+        b.Card("searchApps", Icons.Apps, T("手动添加的程序"),
+            extra == 0 ? T("开始菜单里没有的程序，添加到这里也能搜到、打开") : F("已添加 {0} 个。开始菜单里没有的程序，添加到这里也能搜到、打开", extra),
+            expander: true, expanded: appsOpen, enabled: _model.Search);
+        if (appsOpen && _model.Search) SearchAppList(b);
         SliderCard(b, "dim", T("背景变暗"), T("总览展开后桌面背景暗多少"), 0, 1, 0.05, v => $"{v * 100:0}%",
             () => _model.BackdropDim, v => _model = _model with { BackdropDim = v }, icon: Icons.Color);
         SliderCard(b, "corner", T("窗口圆角"), T("窗口在总览里缩小成卡片时的圆角（跟着窗口一起缩小）。0 = 保持窗口原样"), 0, 32, 1, v => v == 0 ? T("原样") : $"{v:0}",
@@ -409,6 +430,62 @@ public sealed partial class SettingsWindow
         {
             Min = min, Max = max, Step = step, Format = format, Value = get, SetValue = set, Enabled = enabled,
         }, 300, enabled: enabled);
+
+    private IReadOnlyList<Shell.TrayAppChoice>? _trayChoices; // 展开「选择显示哪些程序」时列一次（要给资源管理器发消息），收起后下次再列
+
+    /// <summary>托盘里的每个程序一行开关（关 = 不出现在后台程序栏）；已经关掉、但此刻没在运行的也列出来，好再打开。</summary>
+    /// <summary>「手动添加的程序」展开后：每个程序一行（名字、路径、移除），最后一行「浏览…」添加。</summary>
+    private void SearchAppList(PageBuilder b)
+    {
+        foreach (string path in _model.SearchExtraApps)
+        {
+            string p = path;
+            b.Card("sa:" + p, "", Shell.AppLauncher.DisplayName(p), File.Exists(p) ? p : F("{0}（找不到这个文件）", p),
+                Button("saRemove:" + p, T("移除"), () =>
+                {
+                    _model = _model with { SearchExtraApps = _model.SearchExtraApps.Where(x => !x.Equals(p, StringComparison.OrdinalIgnoreCase)).ToList() };
+                    Changed();
+                }, Icons.Delete), b.ButtonWidthDip(T("移除"), icon: true));
+        }
+        b.Card("saAdd", "", T("添加程序"), T("选一个 exe、快捷方式或脚本"), Button("saAddB", T("浏览…"), AddSearchApp, Icons.Add), b.ButtonWidthDip(T("浏览…"), icon: true));
+    }
+
+    private void AddSearchApp()
+    {
+        string? path = OpenFileDialog.PickProgram(Handle, T("选择要添加到搜索的程序"), T("程序"), T("所有文件"));
+        if (path is null || _model.SearchExtraApps.Contains(path, StringComparer.OrdinalIgnoreCase)) return;
+        _model = _model with { SearchExtraApps = [.. _model.SearchExtraApps, path] };
+        Changed();
+    }
+
+    private void TrayAppList(PageBuilder b, Func<IReadOnlyList<Shell.TrayAppChoice>> list)
+    {
+        try
+        {
+            _trayChoices ??= list();
+        }
+        catch (Exception)
+        {
+            _trayChoices = [];
+        }
+        if (_trayChoices.Count == 0)
+        {
+            b.Card("trayNone", "", T("托盘里现在没有程序"), "");
+            return;
+        }
+        foreach (var app in _trayChoices)
+        {
+            string exe = app.Exe;
+            b.Card("tray:" + exe, "", app.Name, Path.GetFileName(exe) + (app.Running ? "" : T("（没在运行）")),
+                Toggle("trayT:" + exe, () => !_model.HiddenTrayApps.Contains(exe, StringComparer.OrdinalIgnoreCase),
+                    v => _model = _model with
+                    {
+                        HiddenTrayApps = v
+                            ? _model.HiddenTrayApps.Where(e => !string.Equals(e, exe, StringComparison.OrdinalIgnoreCase)).ToList()
+                            : [.. _model.HiddenTrayApps, exe],
+                    }), 96);
+        }
+    }
 
     private static Item Toggle(string key, Func<bool> get, Action<bool> set, bool enabled = true)
         => new(ItemKind.Toggle, key) { On = get, SetOn = set, Enabled = enabled };

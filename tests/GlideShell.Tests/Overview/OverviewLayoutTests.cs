@@ -47,6 +47,33 @@ public class OverviewLayoutTests
     }
 
     [Fact]
+    public void Four_big_windows_use_two_rows_not_one_thin_row()
+    {
+        // 用户反馈「有时候展开成一横排」：原来的评分偏爱铺满宽度，四个大窗口排成一行、每个都缩得很小
+        var area = RectD.FromEdges(0, 66, 2560, 1528 - 104); // 本机：顶部桌面条、底部后台程序栏让出之后
+        var sources = new[]
+        {
+            new RectD(0, 0, 2560, 1528), new RectD(200, 80, 2000, 1300),
+            new RectD(400, 150, 1900, 1250), new RectD(100, 60, 2300, 1400),
+        };
+        var slots = OverviewLayout.Compute(sources, area);
+
+        AssertValid(sources, slots, area);
+        int rows = slots.Select(s => Math.Round(s.Tile.CenterY / 50)).Distinct().Count();
+        Assert.Equal(2, rows);
+    }
+
+    [Fact]
+    public void Two_ordinary_windows_stay_in_one_row()
+    {
+        var sources = new[] { new RectD(0, 100, 1200, 900), new RectD(1300, 100, 1200, 900) };
+        var slots = OverviewLayout.Compute(sources, Area);
+
+        AssertValid(sources, slots, Area);
+        Assert.Equal(slots[0].Tile.CenterY, slots[1].Tile.CenterY, 1);
+    }
+
+    [Fact]
     public void Larger_windows_stay_larger()
     {
         var sources = new[] { new RectD(0, 0, 2000, 1400), new RectD(300, 300, 800, 600) };

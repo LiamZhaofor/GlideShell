@@ -18,6 +18,11 @@ public static unsafe partial class InstanceControl
 
     public static uint UpgradeMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Upgrade");
 
+    public static uint OverviewMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Overview");
+
+    public static uint DockClickMessage { get; } = User32.RegisterWindowMessageW("GlideShell.DockClick");
+    public static uint SearchMessage { get; } = User32.RegisterWindowMessageW("GlideShell.Search");
+
     /// <summary>
     /// 运行实例调用：允许普通进程把这几条请求发给本窗口。UIAccess 版受 UIPI 保护，
     /// 不放行的话安装 / 卸载脚本发出的 --quit、再次启动时的「打开设置」都会被系统丢掉。
@@ -29,6 +34,9 @@ public static unsafe partial class InstanceControl
         ChangeWindowMessageFilterEx(hwnd, ShowSettingsMessage, MSGFLT_ALLOW, null);
         ChangeWindowMessageFilterEx(hwnd, DiagnosticsMessage, MSGFLT_ALLOW, null);
         ChangeWindowMessageFilterEx(hwnd, UpgradeMessage, MSGFLT_ALLOW, null);
+        ChangeWindowMessageFilterEx(hwnd, OverviewMessage, MSGFLT_ALLOW, null);
+        ChangeWindowMessageFilterEx(hwnd, DockClickMessage, MSGFLT_ALLOW, null);
+        ChangeWindowMessageFilterEx(hwnd, SearchMessage, MSGFLT_ALLOW, null);
     }
 
     /// <summary>让运行实例升级到最新版本（有的话；还没查过就先查）。返回 false = 找不到运行实例。</summary>
@@ -36,6 +44,55 @@ public static unsafe partial class InstanceControl
     {
         nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
         return hwnd != 0 && User32.PostMessageW(hwnd, UpgradeMessage, 0, 0);
+    }
+
+    /// <summary>让运行实例打开 / 收起总览（与左键托盘图标、Ctrl+Alt+O 相同；测试与脚本用）。返回 false = 找不到运行实例。</summary>
+    public static bool RequestOverview()
+    {
+        nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
+        return hwnd != 0 && User32.PostMessageW(hwnd, OverviewMessage, 0, 0);
+    }
+
+    /// <summary>
+    /// 测试用：让运行实例左键总览底部后台程序栏里的第 <paramref name="index"/> 个程序（总览要已经展开；与用户点它相同）。
+    /// 返回 false = 找不到运行实例。
+    /// </summary>
+    public static bool RequestDockClick(int index)
+    {
+        nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
+        return hwnd != 0 && User32.PostMessageW(hwnd, DockClickMessage, index, 0);
+    }
+
+    /// <summary>
+    /// 测试用：总览开着时在搜索框里输入 <paramref name="query"/>（最多 8 个 ASCII 字符，打包在 wParam 里；空串 = 收起搜索）。
+    /// 返回 false = 找不到运行实例。
+    /// </summary>
+    public static bool RequestSearch(string query)
+    {
+        nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
+        long packed = 0;
+        for (int i = 0; i < Math.Min(8, query.Length); i++) packed |= (long)(query[i] & 0x7F) << (8 * i);
+        return hwnd != 0 && User32.PostMessageW(hwnd, SearchMessage, (nint)packed, 0);
+    }
+
+    /// <summary>测试用：等于按了一下「打开搜索」的快捷键（同样的判断：全屏时不响应）。返回 false = 找不到运行实例。</summary>
+    public static bool RequestSearchHotkey()
+    {
+        nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
+        return hwnd != 0 && User32.PostMessageW(hwnd, SearchMessage, 0, 1);
+    }
+
+    /// <summary>测试用：解开 <see cref="RequestSearch"/> 打包的查询。</summary>
+    public static string UnpackSearch(nint wParam)
+    {
+        var chars = new List<char>();
+        for (int i = 0; i < 8; i++)
+        {
+            char c = (char)(((long)wParam >> (8 * i)) & 0x7F);
+            if (c == 0) break;
+            chars.Add(c);
+        }
+        return new string([.. chars]);
     }
 
     /// <summary>让运行实例生成诊断报告（它会用记事本打开）。返回 false = 找不到运行实例。</summary>

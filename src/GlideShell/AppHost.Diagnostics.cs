@@ -77,6 +77,25 @@ internal sealed partial class AppHost
             checks.Add(new(T("三指轻点 = 中键"), tapFailures > 0 ? CheckLevel.Warning : taps > 0 ? CheckLevel.Ok : CheckLevel.Info, detail));
         }
 
+        // 后台程序栏：上次总览列出了几个托盘程序、最近一次点击的结果
+        if (!cfg.Overview.TrayApps)
+            checks.Add(new(T("后台程序栏"), CheckLevel.Info, T("关掉了")));
+        else
+        {
+            var tray = TrayCatalog.LastStats;
+            string click = _presenter.LastTrayClick switch
+            {
+                null => "",
+                "ok" => T("；上次点击正常"),
+                var error => F("；上次点击失败：{0}", error),
+            };
+            string apps = _presenter.Apps.Apps.Count > 0 ? F("；开始菜单里 {0} 个程序", _presenter.Apps.Apps.Count) : "";
+            checks.Add(tray.Registered == 0 && tray.Ms == 0
+                ? new(T("后台程序栏"), CheckLevel.Info, T("还没打开过总览") + apps)
+                : new(T("后台程序栏"), _presenter.LastTrayClick is null or "ok" ? CheckLevel.Ok : CheckLevel.Warning,
+                    F("上次总览：托盘里 {0} 个图标，栏里 {1} 个，耗时 {2:F1}ms", tray.Live, tray.Shown, tray.Ms) + click + apps));
+        }
+
         foreach (var (name, stats, period) in new[]
                  {
                      (T("渲染 · 总览"), _presenter.LastRender, _presenter.RefreshPeriodMs),

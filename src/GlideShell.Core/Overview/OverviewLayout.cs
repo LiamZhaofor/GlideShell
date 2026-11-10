@@ -19,8 +19,8 @@ public sealed record LayoutOptions
     /// <summary>小窗口最多放大的比例（按窗口高度相对工作区高度线性给出），保证小窗可读。</summary>
     public double SmallWindowBoost { get; init; } = 0.25;
 
-    /// <summary>评分里「横向空间利用率」的权重：越大越倾向于铺满宽度。</summary>
-    public double UtilizationWeight { get; init; } = 0.55;
+    /// <summary>多排一行至少要让窗口大这么多（比例）才换：差不多大时行数少的看着更整齐。</summary>
+    public double ExtraRowGain { get; init; } = 0.03;
 
     public static LayoutOptions Scaled(double dpiScale) => new()
     {
@@ -35,7 +35,10 @@ public readonly record struct LayoutSlot(RectD Tile, RectD Label);
 /// <summary>
 /// 就近布局（思路来自 GNOME Shell workspace.js，旧原型实测过手感）：
 /// 按原位的竖直中心分行、行内按水平中心排序，让平铺位落在原位附近、飞行距离最短；
-/// 所有窗口同一缩放系数（保留相对大小），小窗口适度放大；尝试 1..n 行，按「缩放 + 空间利用」评分取最优，评分变差即停。
+/// 所有窗口同一缩放系数（保留相对大小），小窗口适度放大；尝试 1..n 行，取窗口缩得最少（缩放系数最大）的那种，
+/// 差不多大时（差不到 <see cref="LayoutOptions.ExtraRowGain"/>）取行数少的。
+/// 原来按「缩放 + 横向铺满程度」评分、评分一变差就停：铺满宽度的分量太重，四个大窗口会排成一横排、每个都缩得很小
+/// （两行能大三成也不选），用户反馈「有时候展开成一横排」。
 /// </summary>
 public static class OverviewLayout
 {
@@ -65,7 +68,7 @@ public static class OverviewLayout
         double totalW = ew.Sum();
 
         List<List<int>>? bestRows = null;
-        double bestScore = double.MinValue, bestScale = 0;
+        double bestScale = 0;
         int lastRowCount = -1;
         for (int target = 1; target <= n; target++)
         {
@@ -82,11 +85,8 @@ public static class OverviewLayout
             double scaleH = (availH - o.Gap * (rows.Count - 1) - o.LabelHeight * rows.Count) / sumRowH;
             double scale = Math.Min(Math.Min(scaleW, scaleH), o.MaxScale);
             if (scale <= 0) break;
-
-            double usedW = rows.Max(r => r.Sum(i => ew[i]) * scale + o.Gap * (r.Count - 1));
-            double score = scale + o.UtilizationWeight * Math.Min(1, usedW / availW);
-            if (bestRows is not null && score <= bestScore + 0.002) break;
-            bestScore = score;
+            // 所有行数都比一遍（不在变差时就停：两行不如一行时三行仍可能最好）
+            if (bestRows is not null && scale <= bestScale * (1 + o.ExtraRowGain)) continue;
             bestRows = rows;
             bestScale = scale;
         }

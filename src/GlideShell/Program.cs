@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using GlideShell.Platform.Diagnostics;
 using GlideShell.Platform.NativeGestures;
 using GlideShell.Platform.Ui;
@@ -27,6 +27,21 @@ internal static class Program
         if (args.Contains("--quit")) return InstanceControl.RequestQuit(TimeSpan.FromSeconds(10)) ? 0 : 4;
         // 让运行中的实例生成诊断报告（设置窗口打不开时也能用）
         if (args.Contains("--diagnostics")) return InstanceControl.RequestDiagnostics() ? 0 : 5;
+        // 让运行中的实例打开 / 收起总览（与左键托盘图标相同）
+        if (args.Contains("--overview")) return InstanceControl.RequestOverview() ? 0 : 5;
+        // 测试用：左键总览底部后台程序栏里的第 n 个程序（总览要已经展开）
+        int dockClick = Array.IndexOf(args, "--dock-click");
+        if (dockClick >= 0 && dockClick + 1 < args.Length && int.TryParse(args[dockClick + 1], out int dockIndex))
+            return InstanceControl.RequestDockClick(dockIndex) ? 0 : 5;
+        // 测试用：等于按一下「打开搜索」的快捷键
+        if (args.Contains("--search-hotkey")) return InstanceControl.RequestSearchHotkey() ? 0 : 5;
+        // 测试用：总览开着时在搜索框里输入（空串收起搜索）
+        int search = Array.IndexOf(args, "--search");
+        if (search >= 0) return InstanceControl.RequestSearch(search + 1 < args.Length ? args[search + 1] : "") ? 0 : 5;
+        // 测试用：弹出第 n 个程序的托盘菜单（与键盘弹出相同，在图标上面）
+        int dockMenu = Array.IndexOf(args, "--dock-menu");
+        if (dockMenu >= 0 && dockMenu + 1 < args.Length && int.TryParse(args[dockMenu + 1], out int menuIndex))
+            return InstanceControl.RequestDockClick(-menuIndex - 1) ? 0 : 5;
         // 让运行中的实例一键升级到最新版本
         if (args.Contains("--upgrade")) return InstanceControl.RequestUpgrade() ? 0 : 5;
 

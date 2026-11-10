@@ -144,7 +144,17 @@ internal static unsafe partial class D2D
     public static int SetTrimming(void* format, Trimming* trimming, void* sign)
         => ((delegate* unmanaged[Stdcall]<void*, Trimming*, void*, int>)Vtbl(format)[9])(format, trimming, sign);
 
-    // ---- IDWriteTextLayout ----
+    // ---- IDWriteTextLayout（IDWriteTextFormat 的 28 个槽之后：SetMaxWidth = 28 … SetFontWeight = 32、SetDrawingEffect = 38）----
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TextRange
+    {
+        public uint Start, Length;
+    }
+
+    public static int SetFontWeight(void* layout, int weight, TextRange range)
+        => ((delegate* unmanaged[Stdcall]<void*, int, TextRange, int>)Vtbl(layout)[32])(layout, weight, range);
+    public static int SetDrawingEffect(void* layout, void* effect, TextRange range)
+        => ((delegate* unmanaged[Stdcall]<void*, void*, TextRange, int>)Vtbl(layout)[38])(layout, effect, range);
     public static int GetMetrics(void* layout, TextMetrics* metrics) => ((delegate* unmanaged[Stdcall]<void*, TextMetrics*, int>)Vtbl(layout)[60])(layout, metrics);
 
     public static uint Release(void* p) => ((delegate* unmanaged[Stdcall]<void*, uint>)Vtbl(p)[2])(p);

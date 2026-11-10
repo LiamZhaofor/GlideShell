@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using GlideShell.Core.Gestures;
@@ -22,6 +22,10 @@ using static GlideShell.Tools.PtpProbe.Native;
 //   scenarios   列出录制场景
 //   selftest    自检原始输入管道：注入一次 1 像素的鼠标移动（随即移回），确认消息窗口能收到 WM_INPUT
 //   settings-shot  离屏画出设置窗口的每一页（中文、英文各一套）存成 BMP，检查文字放不放得下；不显示窗口、不碰配置
+//   screenshot  把整个屏幕（DWM 合成后的画面，含 GlideShell 的覆盖层）存成 BMP：--out 文件；
+//               --burst N --interval 毫秒 [--overview]：连拍 N 张（--overview 先让 GlideShell 打开总览，拍动画过程）
+//   search      按总览搜索的规则在开始菜单的程序里查找：search wx vsc weixin（打印前几条结果、匹配上的字、耗时）
+//   tray        列出总览底部后台程序栏会显示的托盘程序（分类、主窗口、托盘图标位置）；--click / --menu <名字> 替用户点一下
 Console.OutputEncoding = Encoding.UTF8;
 
 string command = args.Length > 0 ? args[0] : "describe";
@@ -49,6 +53,10 @@ return command switch
     "update" => UpdateCheck(args.Length > 1 ? args[1] : null),
     "selftest" => SelfTest(),
     "settings-shot" => SettingsShot(Option(args, "--out") ?? Path.Combine("artifacts", "settings-shot")),
+    "tray" => Tray(Option(args, "--click"), Option(args, "--menu")),
+    "search" => Search(args.Skip(1).ToArray()),
+    "screenshot" => Screenshot(Option(args, "--out") ?? Path.Combine("artifacts", "screen.bmp"), int.Parse(Option(args, "--burst") ?? "1"),
+        int.Parse(Option(args, "--interval") ?? "40"), args.Contains("--overview")),
     _ => Usage(),
 };
 
@@ -445,6 +453,87 @@ static int UpdateCheck(string? current)
     return result is { State: GlideShell.Platform.Updates.UpdateState.UpToDate or GlideShell.Platform.Updates.UpdateState.Available } ? 0 : 1;
 }
 
+static int Screenshot(string path, int burst, int intervalMs, bool openOverview)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+    if (burst <= 1 && !openOverview)
+    {
+        GlideShell.Platform.Diagnostics.ScreenCapture.Save(path);
+        Console.WriteLine($"已保存 {Path.GetFullPath(path)}");
+        return 0;
+    }
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    if (openOverview && !GlideShell.Platform.Ui.InstanceControl.RequestOverview())
+    {
+        Console.WriteLine("找不到运行中的 GlideShell");
+        return 1;
+    }
+    string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, Path.GetFileNameWithoutExtension(path));
+    for (int i = 0; i < burst; i++)
+    {
+        long due = (long)i * intervalMs;
+        while (sw.ElapsedMilliseconds < due) Thread.Sleep(1);
+        long at = sw.ElapsedMilliseconds;
+        GlideShell.Platform.Diagnostics.ScreenCapture.Save($"{stem}-{i}.bmp");
+        Console.WriteLine($"{stem}-{i}.bmp  {at}ms → {sw.ElapsedMilliseconds}ms");
+    }
+    return 0;
+}
+
+static int Search(string[] queries)
+{
+    using var apps = new GlideShell.Platform.Shell.AppCatalog();
+    apps.Refresh(0).Wait();
+    using var launcher = new GlideShell.Platform.Shell.AppLauncher(apps);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var entries = launcher.Entries;
+    Console.WriteLine($"开始菜单 {apps.Apps.Count} 项，可搜的程序 {entries.Count} 个，拆字取拼音 {sw.Elapsed.TotalMilliseconds:F1}ms");
+    foreach (string q in queries)
+    {
+        sw.Restart();
+        var results = GlideShell.Core.Search.AppSearch.Find(q, entries, launcher.Usage, DateTime.UtcNow);
+        double ms = sw.Elapsed.TotalMilliseconds;
+        Console.WriteLine($"「{q}」 {results.Count} 条，{ms:F2}ms");
+        foreach (var r in results)
+        {
+            string marked = string.Concat(r.Entry.Name.Select((c, i) => r.Highlights.Contains(i) ? $"[{c}]" : c.ToString()));
+            Console.WriteLine($"    {r.Score,6:F1}  {marked}");
+        }
+    }
+    return 0;
+}
+
+static int Tray(string? click, string? menu)
+{
+    using var apps = new GlideShell.Platform.Shell.AppCatalog();
+    apps.Refresh(0).Wait();
+    Console.WriteLine($"开始菜单程序：{apps.Apps.Count} 个，耗时 {apps.LastBuildMs}ms");
+    var list = GlideShell.Platform.Shell.TrayCatalog.Snapshot(apps);
+    for (int warm = 0; warm < 2; warm++) list = GlideShell.Platform.Shell.TrayCatalog.Snapshot(apps); // 第一次含加载开销，看热的耗时
+    var stats = GlideShell.Platform.Shell.TrayCatalog.LastStats;
+    Console.WriteLine($"注册表里 {stats.Registered} 个图标，此刻在托盘 {stats.Live} 个，栏里 {stats.Shown} 个，耗时 {stats.Ms:F1}ms（{stats.Probes} 次图标查询 {stats.ProbeMs:F1}ms，分类 {stats.ClassifyMs:F1}ms，取名 {stats.NameMs:F1}ms）");
+    foreach (var a in list)
+    {
+        GlideShell.Platform.Shell.TrayCatalog.TryGetRect(a, out var r);
+        string main = a.MainWindow != 0 ? $" 主窗口 0x{a.MainWindow:X}「{GlideShell.Platform.Shell.WindowCatalog.Title((nint)a.MainWindow)}」" : "";
+        Console.WriteLine($"  {a.Name,-30} 图标 [{r.Left},{r.Top} {r.Width}x{r.Height}]{main}");
+        Console.WriteLine($"         {a.Exe}  宿主 0x{a.OwnerWindow:X} uid={a.Uid} guid={a.IconGuid}");
+    }
+    string? target = click ?? menu;
+    if (target is null) return 0;
+    var app = list.FirstOrDefault(a => a.Name.Contains(target, StringComparison.OrdinalIgnoreCase));
+    if (app is null)
+    {
+        Console.WriteLine($"栏里没有「{target}」");
+        return 1;
+    }
+    using var invoker = new GlideShell.Platform.Shell.TrayInvoker();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    string? error = invoker.Click(app, menu is not null).Result;
+    Console.WriteLine($"{(menu is not null ? "右键菜单" : "左键")}「{app.Name}」：{error ?? "完成"}，耗时 {sw.ElapsedMilliseconds}ms");
+    return error is null ? 0 : 1;
+}
+
 static int SettingsShot(string outDir)
 {
     Directory.CreateDirectory(outDir);
@@ -452,7 +541,12 @@ static int SettingsShot(string outDir)
     var model = GlideShell.Core.Configuration.SettingsModel.FromConfig(new GlideShell.Core.Configuration.GlideShellConfig(), autostart: true) with
     {
         ExcludedProcesses = ["mstsc", "vmconnect"],
+        SearchExtraApps = [@"C:\Windows\System32\notepad.exe", @"D:\Tools\missing-tool.exe"], // 截图里看得到「手动添加的程序」列表与找不到的文件
     };
+    using var trayNames = new GlideShell.Platform.Shell.AppCatalog();
+    trayNames.Refresh(0).Wait();
+    var firstTray = GlideShell.Platform.Shell.TrayCatalog.Snapshot(trayNames, includeVisible: true).FirstOrDefault();
+    if (firstTray is not null) model = model with { HiddenTrayApps = [firstTray.Exe] }; // 截图里看得到一个关掉的开关
     foreach (var language in new[] { GlideShell.Core.Localization.UiLanguage.Chinese, GlideShell.Core.Localization.UiLanguage.English })
     {
         GlideShell.Core.Localization.L.Language = language;
@@ -474,7 +568,11 @@ static int SettingsShot(string outDir)
             UpdateStatus: () => new GlideShell.Platform.Updates.UpdateStatus(GlideShell.Platform.Updates.UpdateState.UpToDate, CheckedAt: DateTime.Now),
             CheckUpdates: () => { },
             Compatibility: () => checks,
-            CreateDiagnosticReport: () => { });
+            CreateDiagnosticReport: () => { },
+            TrayApps: () => GlideShell.Platform.Shell.TrayCatalog.Snapshot(trayNames, includeVisible: true)
+                .GroupBy(a => a.Exe, StringComparer.OrdinalIgnoreCase)
+                .Select(g => new GlideShell.Platform.Shell.TrayAppChoice(g.Key, g.First().Name))
+                .ToList());
         var window = GlideShell.Platform.Ui.SettingsWindow.CreateHidden(ui, model, env);
         window.ExpandAll();
         string tag = language == GlideShell.Core.Localization.UiLanguage.English ? "en" : "zh";

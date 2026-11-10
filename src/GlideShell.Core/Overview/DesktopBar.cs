@@ -39,9 +39,10 @@ public readonly record struct DesktopBarHit(DesktopBarPart Part, int Index)
 public sealed class DesktopBarGeometry
 {
     private DesktopBarGeometry(RectD area, double collapsedHeight, double expandedHeight, RectD[] thumbs, RectD[] pills, RectD[] labels,
-        RectD addTile, RectD addPill, double removeSize)
+        RectD addTile, RectD addPill, double removeSize, double bottomInset)
     {
         Area = area;
+        BottomInset = bottomInset;
         CollapsedHeight = collapsedHeight;
         ExpandedHeight = expandedHeight;
         Thumbs = thumbs;
@@ -56,6 +57,9 @@ public sealed class DesktopBarGeometry
 
     /// <summary>这块屏的工作区（覆盖层范围）。</summary>
     public RectD Area { get; }
+
+    /// <summary>窗口区域底部给后台程序栏让出的高度（像素）。</summary>
+    public double BottomInset { get; }
 
     /// <summary>收起时顶部桌面名那一条的高度（窗口区域从它下面开始）。</summary>
     public double CollapsedHeight { get; }
@@ -87,13 +91,14 @@ public sealed class DesktopBarGeometry
     }
 
     /// <summary>收起时窗口区域（总览平铺用）。</summary>
-    public RectD ContentArea => RectD.FromEdges(Area.Left, Area.Top + CollapsedHeight, Area.Right, Area.Bottom);
+    public RectD ContentArea => RectD.FromEdges(Area.Left, Area.Top + CollapsedHeight, Area.Right, Area.Bottom - BottomInset);
 
     /// <summary>展开时窗口区域。</summary>
-    public RectD ExpandedContentArea => RectD.FromEdges(Area.Left, Area.Top + ExpandedHeight, Area.Right, Area.Bottom);
+    public RectD ExpandedContentArea => RectD.FromEdges(Area.Left, Area.Top + ExpandedHeight, Area.Right, Area.Bottom - BottomInset);
 
     /// <param name="dpiScale">1.0 = 96 DPI。</param>
-    public static DesktopBarGeometry Compute(RectD area, int count, double dpiScale)
+    /// <param name="bottomInset">窗口区域底部给后台程序栏让出的高度（像素）。</param>
+    public static DesktopBarGeometry Compute(RectD area, int count, double dpiScale, double bottomInset = 0)
     {
         double dip = dpiScale;
         double collapsed = 44 * dip;
@@ -128,7 +133,7 @@ public sealed class DesktopBarGeometry
         }
         var addTile = new RectD(x, area.Top + top, addW, thumbH);
         var addPill = new RectD(addTile.CenterX - pillH / 2, area.Top + (collapsed - pillH) / 2, pillH, pillH);
-        return new DesktopBarGeometry(area, collapsed, expanded, thumbs, pills, labels, addTile, addPill, labelH);
+        return new DesktopBarGeometry(area, collapsed, expanded, thumbs, pills, labels, addTile, addPill, labelH, Math.Max(0, bottomInset));
     }
 
     /// <summary>展开程度 <paramref name="expansion"/>（0 收起 ~ 1 展开）下第 <paramref name="index"/> 个缩略图的位置：从桌面名的位置长出来。</summary>

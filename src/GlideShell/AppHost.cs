@@ -47,6 +47,8 @@ internal sealed partial class AppHost
     private HotKeys? _hotkeys;
     private DesktopHotkeys? _desktopKeys;
     private AltTabHotkeys? _altTab;
+    private GlobalHotkey? _searchHotkey;
+    private (string Text, Hotkey Parsed) _searchHotkeyParsed = ("", Hotkey.None);
     private HotCornerWatcher? _hotCorners;
     private readonly UpdateChecker _updates = new(typeof(AppHost).Assembly.GetName().Version ?? new Version(0, 0, 0), Path.GetDirectoryName(Log.DefaultDirectory)!);
     private long _lastUpdateCheckMs = long.MinValue; // 上一次自动升级检测（Environment.TickCount64）
@@ -125,6 +127,22 @@ internal sealed partial class AppHost
             UpgradeFromCommandLine();
             return 0;
         });
+        _ui.OnMessage(InstanceControl.OverviewMessage, (_, _) =>
+        {
+            _overview.Toggle(HostClock.NowUs());
+            return 0;
+        });
+        _ui.OnMessage(InstanceControl.DockClickMessage, (wParam, _) =>
+        {
+            _presenter.ClickDock((int)wParam);
+            return 0;
+        });
+        _ui.OnMessage(InstanceControl.SearchMessage, (wParam, lParam) =>
+        {
+            if (lParam == 1) OnSearchHotkey(); // --search-hotkey
+            else _presenter.TypeSearch(InstanceControl.UnpackSearch(wParam));
+            return 0;
+        });
         _ui.OnMessage(InstanceControl.DiagnosticsMessage, (_, _) =>
         {
             CreateDiagnosticReport();
@@ -140,6 +158,8 @@ internal sealed partial class AppHost
         if (!_hotkeys.Register(Native.MOD_CONTROL | Native.MOD_ALT, VkO, () => _overview.Toggle(HostClock.NowUs())))
             Log.Warn("热键 Ctrl+Alt+O 被其他程序占用");
         _desktopKeys = new DesktopHotkeys(OnDesktopKey);
+        _searchHotkey = new GlobalHotkey(SearchHotkey, OnSearchHotkey);
+        _presenter.IsSearchHotkey = vk => GlobalHotkey.Matches(SearchHotkey(), vk);
         _altTab = new AltTabHotkeys(_ui, OnAltTab, () => _ui.Post(() => _switcher.KeyCommit(HostClock.NowUs())),
             () => _ui.Post(() => _switcher.KeyCancel(HostClock.NowUs())),
             () => _ui.Post(() =>
@@ -285,6 +305,9 @@ internal sealed partial class AppHost
         bool desktopCycle = name == "show-desktop-cycle" || desktopQuick;
         if (desktopCycle) name = "show-desktop";
         int linger = name is "overview-hold" or "overview-hold-page" or "app-hold" ? 12000 : 1500;
+        // overview-cycle：三指上滑展开、停一下、三指下滑收起，反复 12 次（测卡顿用）
+        bool cycle = name == "overview-cycle";
+        if (cycle) name = "overview";
         if (appHold) name = "overview-close";
         if (bar || name is "overview-hold" or "overview-hold-page") name = "overview";
         if (!SyntheticTouch.Scripts.TryGetValue(name, out var script))
@@ -304,6 +327,13 @@ internal sealed partial class AppHost
                 _recognizer?.Process(ContactFrame.Create(now, now, contacts));
             }
             Log.Info($"模拟手势 {name} 回放完毕");
+            for (int k = 0; cycle && k < 12; k++)
+            {
+                Thread.Sleep(700);
+                Replay("overview-close");
+                Thread.Sleep(900);
+                if (k < 11) Replay("overview");
+            }
             if (swipe)
             {
                 Thread.Sleep(900);
@@ -419,6 +449,35 @@ internal sealed partial class AppHost
             _mouseGestures.Dispose();
             _mouseGestures = null;
         }
+    }
+
+    /// <summary>「打开搜索」的快捷键（设置里关了搜索、或写成空串 = 不用）；按配置文字缓存解析结果。</summary>
+    private Hotkey SearchHotkey()
+    {
+        var overview = _config.Overview;
+        string text = overview.Search ? overview.SearchHotkey : "";
+        var cached = _searchHotkeyParsed;
+        if (cached.Text == text) return cached.Parsed;
+        var parsed = Hotkey.TryParse(text, out var h) && h.IsValid ? h : Hotkey.None;
+        _searchHotkeyParsed = (text, parsed);
+        return parsed;
+    }
+
+    /// <summary>
+    /// 按下了「打开搜索」的快捷键（UI 线程，键盘钩子里；也供 --search-hotkey 测试）：单独弹出搜索框（总览开着时在总览里搜），再按一次收起。
+    /// 前台是全屏程序（游戏、视频、演示）时不响应，按键照常交给它；切换条、切桌面、拖窗口进行中也不响应。返回是否接管。
+    /// </summary>
+    private bool OnSearchHotkey()
+    {
+        if (!_config.Overview.Search) return false;
+        if (!_overview.IsVisible && _foreground?.IsFullscreenNow() == true)
+        {
+            Log.Info("搜索快捷键：前台是全屏程序，不响应");
+            return false;
+        }
+        if (_switcher.IsVisible || _desktopSwitch.IsVisible || _drag.IsDragging) return false;
+        _ui.Post(_presenter.ToggleSearch);
+        return true;
     }
 
     /// <summary>触发角（UI 线程）：暂停、排除的程序在前台、全屏时不触发。</summary>
@@ -751,7 +810,8 @@ internal sealed partial class AppHost
             CreateDiagnosticReport,
             () => Upgrader.Status,
             UpgradesInPlace ? () => StartUpgrade(confirm: false) : null,
-            UpgradeUnavailableReason));
+            UpgradeUnavailableReason,
+            _presenter.TrayAppChoices));
     }
 
     /// <summary>设置窗口「保存」：写配置（文件监视器随后重载，这里也立即生效）与开机启动。返回空列表 = 成功。</summary>
@@ -828,6 +888,7 @@ internal sealed partial class AppHost
         _virtualDesktops.Dispose();
         RestoreNativeGestures();
         _hotkeys?.Dispose();
+        _searchHotkey?.Dispose();
         _tray?.Dispose();
         _foreground?.Dispose();
         _ui.Dispose();
