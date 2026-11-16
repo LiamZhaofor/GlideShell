@@ -419,6 +419,7 @@ internal sealed unsafe class OverlayComposition : IDisposable
                 if (Dcomp.CreateRectangleClip(_backend.Device, &c) < 0) return;
                 Dcomp.SetClipRect(c, 0, 0, (float)width, (float)height);
                 Dcomp.SetClipObject(_root, c);
+                Dcomp.SetBorderMode(_root, Dcomp.BORDER_MODE_SOFT); // 圆角抗锯齿
                 _roundClip = c;
             }
             Dcomp.SetClipRadius(_roundClip, (float)radius, (float)radius);
@@ -483,9 +484,14 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     private readonly record struct Shadow(nint Visual, nint Surface, int Downscale, double MarginPx);
 
     /// <param name="Group">挂在根视觉下的那个（壁纸就是缩略图视觉本身）。</param>
+    /// <param name="Visual">设变换、不透明度、圆角裁剪的视觉：窗口是包着 DWM 缩略图视觉的我们自己的视觉（见 <paramref name="Raw"/>），壁纸是缩略图视觉本身。</param>
     /// <param name="RealRadius">窗口自己的圆角（物理像素）：Windows 11 有标题栏 / 可调边框、没最大化的窗口是 8 DIP，其余为 0。</param>
+    /// <param name="Raw">
+    /// DWM 给的缩略图视觉（挂在 <paramref name="Visual"/> 下面；0 = 没有包装）。它不接受 SetBorderMode（E_INVALIDARG），
+    /// 边框模式锁在 HARD，裁剪在它身上圆角就是锯齿；包一层我们自己的视觉、设成 SOFT，圆角裁剪放在这层上才抗锯齿。
+    /// </param>
     private readonly record struct Entry(nint Group, nint Visual, nint Thumb, nint Hwnd, int SceneIndex, User32.RECT Source, bool HasContent,
-        Shadow Inactive, Shadow Active, double RealRadius = 0);
+        Shadow Inactive, Shadow Active, double RealRadius = 0, nint Raw = 0);
 
     /// <summary>Windows 11 窗口的圆角半径（DIP）。</summary>
     public const double WindowCornerDip = 8;
@@ -630,8 +636,11 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     /// <param name="commit">false：不提交，由调用方把几层的修改一起 Commit（切桌面的三个桌面要同一帧生效）。</param>
     /// <param name="corner">
     /// 圆角卡片的程度（0 = 窗口自己的圆角，1 = <paramref name="cardRadiusPx"/>，按它插值）；负数 = 不裁剪（切桌面、桌面条里的窗口）。
-    /// 两个半径都是窗口原尺寸下的（物理像素），跟着缩略图一起缩放——macOS 调度中心里窗口缩小，圆角也按比例缩小。
-    /// 总览里传展开进度：窗口在原位时与真实窗口一致，到平铺位时是 macOS 那样的圆角卡片（最大化的窗口也是）。
+    /// 总览里传展开进度：窗口在原位时与真实窗口一致，到平铺位时是圆角卡片（最大化的窗口也是）。
+    /// </param>
+    /// <param name="cardRadiusPx">
+    /// 卡片在屏幕上的圆角（物理像素），不随缩略图缩放：大小卡片一样圆。窗口自己的圆角按它此刻的缩放算（在原位时就是真实窗口的），
+    /// 两者在屏幕上插值；最多到卡片短边的一半（飞行起点很小的矩形）。
     /// </param>
     public int Apply(ReadOnlySpan<RectD> sceneRects, ReadOnlySpan<double> sceneOpacity, ReadOnlySpan<double> sceneActive, double wallpaperOpacity, bool commit,
         double corner = -1, double cardRadiusPx = 0)
@@ -664,7 +673,12 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
                 Check(Dcomp.SetTransform(v, &m));
                 double opacity = Math.Clamp(sceneOpacity[e.SceneIndex], 0, 1);
                 Check(Dcomp.SetOpacity(v, (float)opacity));
-                if (corner >= 0 && opacity > 0) Round(e, sx, sy, e.RealRadius + (cardRadiusPx - e.RealRadius) * Math.Clamp(corner, 0, 1));
+                if (corner >= 0 && opacity > 0)
+                {
+                    double own = e.RealRadius * sx, screen = own + (cardRadiusPx - own) * Math.Clamp(corner, 0, 1);
+                    screen = Math.Min(screen, Math.Min(r.Width, r.Height) / 2);
+                    Round(e, sx, sy, screen / Math.Max(1e-3, sx)); // 裁剪写在缩略图自己的（窗口原尺寸）坐标系里
+                }
 
                 // 阴影图覆盖窗口四周 MarginPx，按 Downscale 缩小存储：缩放 = 窗口缩放 × Downscale，左上角再往外挪 MarginPx
                 double active = e.SceneIndex < sceneActive.Length ? Math.Clamp(sceneActive[e.SceneIndex], 0, 1) : 0;
@@ -689,6 +703,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
     /// 锁内：缩略图按窗口原尺寸下半径 <paramref name="radiusPx"/> 的圆角裁剪（缩略图视觉按源尺寸 1:1 建、整体缩放，圆角随之缩放）。
     /// 横纵缩放略有不同时把纵向半径换算一下，屏幕上仍是正圆角。
     /// </summary>
+
     private void Round(in Entry e, double sx, double sy, double radiusPx)
     {
         if (!_clips.TryGetValue(e.Visual, out nint clip))
@@ -887,11 +902,26 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             inactive = MakeShadow(ShadowStyle.Inactive);
             active = MakeShadow(ShadowStyle.Active);
         }
-        hr = CreateThumbnail(backend, overlay, hwnd, source, out nint visual, out nint thumb);
+        hr = CreateThumbnail(backend, overlay, hwnd, source, out nint raw, out nint thumb);
+        // 包一层自己的视觉（软边框：圆角裁剪抗锯齿），变换、不透明度、裁剪都设在它上面；缩略图视觉本身保持不透明、原位
+        nint visual = 0;
+        if (hr >= 0)
+        {
+            void* w;
+            hr = Dcomp.CreateVisual(backend.Device, &w);
+            if (hr >= 0)
+            {
+                visual = (nint)w;
+                Dcomp.SetBorderMode(w, Dcomp.BORDER_MODE_SOFT);
+                Dcomp.SetOpacity(w, 0);
+                Dcomp.SetOpacity((void*)raw, 1);
+                hr = Dcomp.AddVisual(w, (void*)raw);
+            }
+        }
         if (hr >= 0) hr = Dcomp.AddVisual((void*)group, (void*)visual);
         if (hr >= 0) hr = Dcomp.AddVisual(root, (void*)group);
         entry = new Entry(group, visual, thumb, hwnd, -1, source, true, inactive, active,
-            CastsShadow(hwnd) ? WindowCornerDip * dpiScale : 0); // 有系统阴影的窗口才有系统圆角
+            CastsShadow(hwnd) ? WindowCornerDip * dpiScale : 0, raw); // 有系统阴影的窗口才有系统圆角
         if (hr < 0)
         {
             Remove(backend, null, entry);
@@ -936,6 +966,7 @@ internal sealed unsafe partial class SharedThumbnailLayer : IThumbnailLayer
             if (s.Surface != 0) backend.ReleaseShadow(s.Surface);
         }
         if (e.Visual != 0) Dcomp.Release((void*)e.Visual);
+        if (e.Raw != 0) Dcomp.Release((void*)e.Raw);
         if (e.Group != 0 && e.Group != e.Visual) Dcomp.Release((void*)e.Group);
         if (e.Thumb != 0) Dwmapi.DwmUnregisterThumbnail(e.Thumb);
     }

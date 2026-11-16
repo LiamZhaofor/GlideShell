@@ -497,7 +497,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
                 .Where(i => (cfg.PrimaryMonitorOnly ? primary : scene.Windows[i].MonitorIndex) == o.Monitor.Index ||
                             scene.Windows[i].Overlaps(o.Monitor.WorkArea))
                 .ToList();
-            o.CornerRadiusDip = cfg.CornerRadius;
+            o.CornerRadiusDip = cfg.CardRadius;
             int failure = o.Prepare(scene, members, shared, decor);
             if (failure != 0) _shared.Disable(failure, "总览");
         }
@@ -1375,6 +1375,14 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     }
 
     /// <summary>测试用（UI 线程）：搜索框里换成 <paramref name="query"/>（与用户打这些字相同；空串 = 收起搜索）。</summary>
+    /// <summary>测试用（--search-type）：在开着的搜索里接着输入，与一个个按键相同。</summary>
+    public void AppendSearch(string text)
+    {
+        if (_searchOverlay is null || text.Length == 0) return;
+        _query += text;
+        UpdateSearch();
+    }
+
     public void TypeSearch(string query)
     {
         if (_searchOverlay is null && _pendingSearch is not null)

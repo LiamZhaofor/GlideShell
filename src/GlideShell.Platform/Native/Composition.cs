@@ -71,6 +71,12 @@ internal static unsafe partial class Dcomp
     /// <summary>矩形裁剪（视觉自己的坐标系里，随它的变换一起缩放）。头文件里 SetClip 的两个重载在 vtable 里倒序，矩形版在 14。</summary>
     public static int SetClip(void* visual, D2D_RECT_F* rect) => ((delegate* unmanaged[Stdcall]<void*, D2D_RECT_F*, int>)Vtbl(visual)[14])(visual, rect);
     public static int SetBitmapInterpolationMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[11])(visual, mode);
+
+    /// <summary>DCOMPOSITION_BORDER_MODE_SOFT：内容边缘与裁剪（包括圆角裁剪的弧）做抗锯齿；默认继承到根上是 HARD，圆角会有锯齿。</summary>
+    public const int BORDER_MODE_SOFT = 0;
+
+    /// <summary>IDCompositionVisual::SetBorderMode（vtable 12，紧跟 SetBitmapInterpolationMode）。</summary>
+    public static int SetBorderMode(void* visual, int mode) => ((delegate* unmanaged[Stdcall]<void*, int, int>)Vtbl(visual)[12])(visual, mode);
     /// <summary>insertAbove=false 且 reference=null：加到兄弟的最上层。</summary>
     public static int AddVisual(void* parent, void* visual) => ((delegate* unmanaged[Stdcall]<void*, void*, int, void*, int>)Vtbl(parent)[16])(parent, visual, 0, null);
     /// <summary>插到 <paramref name="reference"/> 的上面（<paramref name="above"/>）或下面。</summary>

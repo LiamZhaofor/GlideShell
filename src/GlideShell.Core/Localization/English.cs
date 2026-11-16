@@ -295,9 +295,9 @@ internal static class English
         ["背景变暗"] = "Dim background",
         ["总览展开后桌面背景暗多少"] = "How much the desktop background darkens when the overview is open",
         ["窗口圆角"] = "Window corner radius",
-        ["窗口在总览里缩小成卡片时的圆角（跟着窗口一起缩小）。0 = 保持窗口原样"] =
-            "Corner radius of windows shrunk into cards in the overview (scales with the window). 0 = keep the window's own corners",
-        ["原样"] = "Original",
+        ["窗口在总览、切换条里变成卡片时的圆角，大小卡片一样圆。0 = 直角"] =
+            "Corner radius of window cards in the overview and the switcher, the same for every card size. 0 = square",
+        ["直角"] = "Square",
         ["键盘"] = "Keyboard",
         ["Alt+Tab 用切换条"] = "Use the switcher for Alt+Tab",
         ["按住 Alt、每按一次 Tab 选下一个窗口，松开 Alt 切过去；快速按一下直接回到上一个窗口"] =

@@ -31,7 +31,6 @@ internal sealed unsafe class WindowDecor
         public nint Text, Icon, Close;
         public NineSlice? Ring, Card;
         public double RingRadius, CardRadius; // 建的时候用的圆角（物理像素；配置或平铺大小变了要重建）
-        public double Scale = 1; // 平铺位相对窗口原尺寸的缩放（卡片圆角随它缩小）
         public nint CardIcon;
         public bool WantsCard;
         public volatile bool HasIcon, HasCardIcon;
@@ -61,11 +60,11 @@ internal sealed unsafe class WindowDecor
 
     private double Dpi => _monitor.DpiScale;
 
-    /// <summary>UI 线程：窗口原尺寸下的圆角半径（DIP），在平铺位上按窗口的缩放缩小。悬停框与卡片同心，占位卡片用同样的圆角。</summary>
-    public double CardRadiusDip { get; set; } = 12;
+    /// <summary>UI 线程：卡片在屏幕上的圆角半径（DIP，不随窗口缩放）。悬停框与卡片同心，占位卡片用同样的圆角。</summary>
+    public double CardRadiusDip { get; set; } = GlideShell.Core.Configuration.OverviewConfig.DefaultCardRadius;
 
-    /// <summary>某个窗口在平铺位上的卡片圆角（物理像素，取到半像素，图按它缓存）。</summary>
-    private double CardRadiusPx(Entry e) => Math.Round(CardRadiusDip * Dpi * e.Scale * 2) / 2;
+    /// <summary>卡片圆角（物理像素，取到半像素，图按它缓存）。</summary>
+    private double CardRadiusPx(Entry e) => Math.Round(CardRadiusDip * Dpi * 2) / 2;
 
     private double RingRadiusPx(Entry e) => CardRadiusPx(e) + (RingGapDip + RingStrokeDip) * Dpi;
 
@@ -291,7 +290,6 @@ internal sealed unsafe class WindowDecor
         e.WantTextMax = Math.Max(24, (int)Math.Round(tile - (IconDip + IconGapDip) * Dpi));
         if (e.Title != w.Title) e.TextMax = 0; // 标题变了：重画
         e.Title = w.Title;
-        e.Scale = scene.Slots[index].Tile.Width / Math.Max(1, w.Source.Width);
         double cardRadius = Math.Max(1, CardRadiusPx(e));
         if (e.Card is not null && e.CardRadius != cardRadius)
         {

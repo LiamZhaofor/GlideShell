@@ -85,7 +85,7 @@ public sealed record SettingsModel
 
     public bool ThreeFingerTapMiddleClick { get; init; }
     public HotCornerAction[] HotCorners { get; init; } = new HotCornerAction[4]; // 左上、右上、左下、右下
-    public double CornerRadius { get; init; }
+    public double CardRadius { get; init; }
     public MouseDragButton MouseButton { get; init; }
     public double MouseSensitivity { get; init; }
 
@@ -188,7 +188,7 @@ public sealed record SettingsModel
             CheckUpdates = c.Updates.Check,
             ThreeFingerTapMiddleClick = c.ThreeFingerTapMiddleClick,
             HotCorners = [c.HotCorners.TopLeft, c.HotCorners.TopRight, c.HotCorners.BottomLeft, c.HotCorners.BottomRight],
-            CornerRadius = c.Overview.CornerRadius,
+            CardRadius = c.Overview.CardRadius,
             MouseButton = c.Mouse.Button,
             MouseSensitivity = c.Mouse.Sensitivity,
             Language = c.Language,
@@ -266,7 +266,7 @@ public sealed record SettingsModel
             Overview = c.Overview with
             {
                 TravelMm = OverviewTravelMm, BackdropDim = BackdropDim, SharedThumbnails = SharedThumbnails, GroupByApp = GroupByApp, AppWindows = AppWindows,
-                CornerRadius = CornerRadius, TrayApps = TrayApps, Search = Search, SearchHotkey = SearchHotkey, HiddenTrayApps = [.. HiddenTrayApps], SearchExtraApps = [.. SearchExtraApps],
+                CardRadius = CardRadius, TrayApps = TrayApps, Search = Search, SearchHotkey = SearchHotkey, HiddenTrayApps = [.. HiddenTrayApps], SearchExtraApps = [.. SearchExtraApps],
             },
             Mouse = c.Mouse with { Button = MouseButton, Sensitivity = MouseSensitivity },
             Switcher = c.Switcher with { MmPerWindow = MmPerWindow, TakeOverAltTab = TakeOverAltTab },

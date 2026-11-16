@@ -191,8 +191,8 @@ public sealed partial class SettingsWindow
         if (appsOpen && _model.Search) SearchAppList(b);
         SliderCard(b, "dim", T("背景变暗"), T("总览展开后桌面背景暗多少"), 0, 1, 0.05, v => $"{v * 100:0}%",
             () => _model.BackdropDim, v => _model = _model with { BackdropDim = v }, icon: Icons.Color);
-        SliderCard(b, "corner", T("窗口圆角"), T("窗口在总览里缩小成卡片时的圆角（跟着窗口一起缩小）。0 = 保持窗口原样"), 0, 32, 1, v => v == 0 ? T("原样") : $"{v:0}",
-            () => _model.CornerRadius, v => _model = _model with { CornerRadius = v }, icon: Icons.Desktop);
+        SliderCard(b, "corner", T("窗口圆角"), T("窗口在总览、切换条里变成卡片时的圆角，大小卡片一样圆。0 = 直角"), 0, 32, 1, v => v == 0 ? T("直角") : $"{v:0}",
+            () => _model.CardRadius, v => _model = _model with { CardRadius = v }, icon: Icons.Desktop);
 
         b.Section(T("键盘"));
         b.Card("altTab", Icons.Keyboard, T("Alt+Tab 用切换条"), T("按住 Alt、每按一次 Tab 选下一个窗口，松开 Alt 切过去；快速按一下直接回到上一个窗口"),

@@ -66,13 +66,10 @@ internal sealed unsafe class SwitcherDecor
 
     private double _ringRadius = -1; // 建选中框用的圆角（物理像素）
 
-    /// <summary>选中框的圆角：选中的缩略图（放大后）上卡片的圆角加上框与卡片的间距；各窗口缩放不同，取中位数（取到半像素）。</summary>
+    /// <summary>选中框的圆角：卡片的圆角（屏幕上固定，不随缩放）加上框与卡片的间距（取到半像素）。</summary>
     private void EnsureRing(SwitcherScene scene)
     {
-        var scales = Enumerable.Range(0, scene.Count)
-            .Select(i => scene.Layout.ItemRect(i, i).Width / Math.Max(1, scene.Windows[i].Source.Width)).Order().ToList();
-        double scale = scales.Count > 0 ? scales[scales.Count / 2] : 0.2;
-        double radius = Math.Round((CardRadiusDip * scale + RingGapDip + RingStrokeDip) * Dpi * 2) / 2;
+        double radius = Math.Round((CardRadiusDip + RingGapDip + RingStrokeDip) * Dpi * 2) / 2;
         if (_ring is not null && radius == _ringRadius) return;
         lock (_res.Backend.Gate) _ring?.Remove(_branch.Root);
         _ring = _res.Shape(radius, RingStrokeDip * Dpi, RingColor) is { } shape ? NineSlice.Create(_res.Backend, _branch.Root, shape) : null;

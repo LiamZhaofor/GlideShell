@@ -56,6 +56,9 @@ public sealed unsafe class UiThread : NativeWindow
     /// </summary>
     public event Action<bool>? SessionEnding;
 
+    /// <summary>当前会话正在注销 / 关机 / 重启（SM_SHUTTINGDOWN）。任意线程、任意进程都可以查。</summary>
+    public static bool SessionShuttingDown => User32.GetSystemMetrics(0x2000) != 0;
+
     /// <summary>为某个消息挂处理器（托盘回调、热键等）；处理器返回 null 表示继续默认处理。</summary>
     public void OnMessage(uint message, Func<nint, nint, nint?> handler) => _handlers[message] = handler;
 

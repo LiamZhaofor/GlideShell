@@ -269,6 +269,7 @@ internal sealed unsafe class SearchDecor
             _dim?.Place(new RectD(0, 0, origin.Width, origin.Height), _dimOpacity * a);
             _glass?.Offset(dy);
             _glass?.Place(a, wallpaper);
+            if (_dimOpacity <= 0) _glass?.Invalidate(); // 独立搜索窗（下面是透明窗口）：每帧整块重画玻璃，见 GlassPatch.Invalidate
             _fill?.Place(local, a);
             _edge?.Place(local, a);
 

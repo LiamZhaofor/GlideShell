@@ -67,12 +67,12 @@ public static unsafe partial class InstanceControl
     /// 测试用：总览开着时在搜索框里输入 <paramref name="query"/>（最多 8 个 ASCII 字符，打包在 wParam 里；空串 = 收起搜索）。
     /// 返回 false = 找不到运行实例。
     /// </summary>
-    public static bool RequestSearch(string query)
+    public static bool RequestSearch(string query, bool append = false)
     {
         nint hwnd = User32.FindWindowW(UiThread.WindowClass, null);
         long packed = 0;
         for (int i = 0; i < Math.Min(8, query.Length); i++) packed |= (long)(query[i] & 0x7F) << (8 * i);
-        return hwnd != 0 && User32.PostMessageW(hwnd, SearchMessage, (nint)packed, 0);
+        return hwnd != 0 && User32.PostMessageW(hwnd, SearchMessage, (nint)packed, append ? 2 : 0);
     }
 
     /// <summary>测试用：等于按了一下「打开搜索」的快捷键（同样的判断：全屏时不响应）。返回 false = 找不到运行实例。</summary>

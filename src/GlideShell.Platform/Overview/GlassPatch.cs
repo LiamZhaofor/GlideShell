@@ -90,6 +90,7 @@ internal sealed unsafe class GlassPatch
                     Dcomp.SetClipRect(c, (float)local.Left, (float)local.Top, (float)local.Right, (float)local.Bottom);
                     Dcomp.SetClipRadius(c, (float)radiusPx, (float)radiusPx);
                     Dcomp.SetClipObject((void*)group, c);
+                    Dcomp.SetBorderMode((void*)group, Dcomp.BORDER_MODE_SOFT); // 圆角抗锯齿
                     ok = Dcomp.CreateGaussianBlur(backend.Device, (float)sigmaPx, &e) >= 0;
                     if (ok)
                     {
@@ -117,6 +118,20 @@ internal sealed unsafe class GlassPatch
         _hidden = false;
         Dcomp.SetOpacity((void*)_group, (float)Math.Min(1, opacity));
         Dcomp.SetOpacity((void*)_wallpaper, (float)Math.Clamp(wallpaperOpacity, 0, 1));
+    }
+
+    private bool _nudge;
+
+    /// <summary>
+    /// 锁内：让整块玻璃这一帧整体重画（黑底的不透明度在 1 与 0.999 之间交替，看不出来）。
+    /// 下面是透明窗口、背后有 Chromium 一类程序在刷新时，系统只局部重画，带模糊效果的玻璃会在那一块整块缺掉、
+    /// 透出后面的程序（用户手机拍到的；屏幕截图截不到，像是硬件叠加层的问题）；每帧整块重画就不依赖局部重画。
+    /// </summary>
+    public void Invalidate()
+    {
+        if (_hidden || _black == 0) return;
+        _nudge = !_nudge;
+        Dcomp.SetOpacity((void*)_black, _nudge ? 0.999f : 1f);
     }
 
     private double _dy;

@@ -67,10 +67,13 @@ public sealed record OverviewConfig
     public string[] HiddenTrayApps { get; set; } = [];
 
     /// <summary>
-    /// 总览里窗口卡片的圆角半径（DIP，0–32），按窗口原尺寸算、随卡片一起缩小（macOS 调度中心的做法：缩小的窗口圆角也按比例缩小）。
-    /// 窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8，最大化是 0）过渡到这个值。0 = 保持窗口原样。
+    /// 总览、应用窗口视图、切换条里窗口卡片的圆角半径（屏幕上的 DIP，0–32），不随窗口缩放：大小卡片的圆角一样大。
+    /// 窗口从原位飞到平铺位的途中，圆角从窗口自己的（Windows 11 是 8，最大化是 0）过渡到这个值。0 = 直角。
+    /// 2.2 之前是 <c>cornerRadius</c>（按窗口原尺寸算、随卡片缩小）；意思变了，所以换了名字，旧的设置不再读。
     /// </summary>
-    public double CornerRadius { get; set; } = 12;
+    public double CardRadius { get; set; } = DefaultCardRadius;
+
+    public const double DefaultCardRadius = 16;
 }
 
 public sealed record UpdatesConfig
@@ -302,7 +305,7 @@ public sealed record GlideShellConfig
             {
                 TravelMm = Clamp(Overview.TravelMm, 5, 100, "Overview.TravelMm"),
                 BackdropDim = Clamp(Overview.BackdropDim, 0, 1, "Overview.BackdropDim"),
-                CornerRadius = Clamp(Overview.CornerRadius, 0, 32, "Overview.CornerRadius"),
+                CardRadius = Clamp(Overview.CardRadius, 0, 32, "Overview.CardRadius"),
                 SearchHotkey = FixHotkey(Overview.SearchHotkey, OverviewConfig.DefaultSearchHotkey, "Overview.SearchHotkey"),
                 HiddenTrayApps = Overview.HiddenTrayApps?.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
                 SearchExtraApps = Overview.SearchExtraApps?.Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim())

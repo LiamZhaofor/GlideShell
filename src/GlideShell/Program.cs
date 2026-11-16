@@ -36,6 +36,9 @@ internal static class Program
         // 测试用：等于按一下「打开搜索」的快捷键
         if (args.Contains("--search-hotkey")) return InstanceControl.RequestSearchHotkey() ? 0 : 5;
         // 测试用：总览开着时在搜索框里输入（空串收起搜索）
+        // 测试用：在开着的搜索框里接着输入（最多 8 个 ASCII 字符，可以连续调用，模拟一个个打字）
+        int searchType = Array.IndexOf(args, "--search-type");
+        if (searchType >= 0) return InstanceControl.RequestSearch(searchType + 1 < args.Length ? args[searchType + 1] : "", append: true) ? 0 : 5;
         int search = Array.IndexOf(args, "--search");
         if (search >= 0) return InstanceControl.RequestSearch(search + 1 < args.Length ? args[search + 1] : "") ? 0 : 5;
         // 测试用：弹出第 n 个程序的托盘菜单（与键盘弹出相同，在图标上面）
@@ -81,6 +84,8 @@ internal static class Program
         bool pending = native.HasPendingTakeover;
         // 正常退出（含 --quit、注销）退出码是 0、接管记录已删；暂停时崩溃没有接管记录，靠退出码发现
         if (!pending && exitCode is null or 0) return 0;
+        // 关机 / 重启时主进程已经还原过系统手势，是被系统结束的（退出码 0x40010004），不算异常退出
+        if (!pending && UiThread.SessionShuttingDown) return 0;
         CrashRecord.Append($"主进程 {pid} 异常退出，退出码 {(exitCode is { } code ? $"0x{code:X8}" : "未知")}{(pending ? "，看门狗已还原系统手势" : "")}");
         if (!pending) return 0;
         Log.Start();

@@ -93,7 +93,7 @@ internal sealed partial class AppHost
         _overview.DesktopShown = _presenter.DesktopShownNow;
         _foreground.RawChanged += _presenter.OnForegroundChanged;
         _overviewBrowse = new OverviewBrowse(_presenter, () => _config.Switcher);
-        _switcherPresenter = new SwitcherPresenter(_ui, _sharedThumbnails, () => _config.Overview.CornerRadius);
+        _switcherPresenter = new SwitcherPresenter(_ui, _sharedThumbnails, () => _config.Overview.CardRadius);
         _switcher = new SwitcherController(_switcherPresenter, () => _config.Switcher);
         _switcherPresenter.Attach(_switcher);
         _desktopPresenter = new DesktopSwitchPresenter(_ui, _virtualDesktops, _sharedThumbnails);
@@ -140,6 +140,7 @@ internal sealed partial class AppHost
         _ui.OnMessage(InstanceControl.SearchMessage, (wParam, lParam) =>
         {
             if (lParam == 1) OnSearchHotkey(); // --search-hotkey
+            else if (lParam == 2) _presenter.AppendSearch(InstanceControl.UnpackSearch(wParam)); // --search-type
             else _presenter.TypeSearch(InstanceControl.UnpackSearch(wParam));
             return 0;
         });
@@ -570,6 +571,9 @@ internal sealed partial class AppHost
         if (_simulate is null)
             foreach (var m in _native.Restore(refreshShell: false).Messages) Log.Info($"系统手势：{m}");
         Log.Flush(TimeSpan.FromSeconds(1));
+        // 收尾已做完，自己以退出码 0 结束：等系统来结束的话退出码是 0x40010004，
+        // 看门狗会当成异常退出，下次启动就会误报「上次异常退出」
+        Environment.Exit(0);
     }
 
     private void StartWatchdog()
