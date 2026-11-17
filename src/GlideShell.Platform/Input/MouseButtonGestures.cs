@@ -111,7 +111,7 @@ public sealed unsafe partial class MouseButtonGestures : IDisposable
         User32.MSG msg;
         while (User32.GetMessageW(&msg, 0, 0, 0) > 0)
         {
-            if (msg.message == WmApp) SendClick((MouseDragButton)(int)msg.wParam, out _);
+            if (msg.message == WmApp) ClickDelivery.Send((MouseDragButton)(int)msg.wParam);
             else if (msg.message == WmInput) OnRawInput(msg.lParam);
             else if (msg.message == WmRawOn) SetRawInput(true);
             else if (msg.message == WmRawOff) SetRawInput(false);

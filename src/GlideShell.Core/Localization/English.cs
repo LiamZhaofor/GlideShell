@@ -79,6 +79,8 @@ internal static class English
         ["关掉了，三指轻点交给 Windows"] = "Turned off; three-finger tap is left to Windows",
         ["本次运行识别 {0} 次，发送失败 {1} 次"] = "Recognized {0} times this session, {1} failed to send",
         ["；鼠标钩子看到 {0} 次"] = "; the mouse hook saw {0}",
+        ["；兜底：换线程补发 {0} 次，新进程代发 {1} 次，没发出去 {2} 次"] = "; fallback: resent from a new thread {0} times, sent by a helper process {1} times, lost {2} times",
+        ["；本进程的注入被系统拒绝，等空闲时自动重启"] = "; Windows is rejecting this process's input, it will restart itself when idle",
         ["后台程序栏"] = "Background apps bar",
         ["没有找到程序"] = "No matching apps",
         ["↑↓ 选择　　Enter 打开　　Esc 返回窗口"] = "↑↓ Select　　Enter Open　　Esc Back to windows",

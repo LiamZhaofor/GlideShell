@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using GlideShell.Platform.Diagnostics;
+using GlideShell.Platform.Input;
 using GlideShell.Platform.NativeGestures;
 using GlideShell.Platform.Ui;
 
@@ -23,6 +24,11 @@ internal static class Program
         // 看门狗与紧急还原不受单实例限制
         if (args.Length >= 2 && args[0] == "--watchdog" && int.TryParse(args[1], out int pid)) return Watchdog(pid);
         if (args.Contains("--restore-native")) return RestoreNative();
+        // 注入兜底：主进程的注入被拒时，由新启动的进程代发一次点击（见 ClickDelivery）
+        if (args.Length >= 1 && args[0] == ClickDelivery.HelperSwitch) return ClickDelivery.RunHelper(args.Length >= 2 ? args[1] : null);
+        // 自动重启：等旧实例退出（它会先还原系统手势、放开单实例锁）再照常启动
+        int restartAfter = Array.IndexOf(args, AppHost.RestartAfterSwitch);
+        if (restartAfter >= 0 && restartAfter + 1 < args.Length && int.TryParse(args[restartAfter + 1], out int oldPid)) WaitForExit(oldPid);
         // 安装 / 卸载脚本用：让运行中的实例正常退出（会还原系统手势），等它结束
         if (args.Contains("--quit")) return InstanceControl.RequestQuit(TimeSpan.FromSeconds(10)) ? 0 : 4;
         // 让运行中的实例生成诊断报告（设置窗口打不开时也能用）
@@ -57,6 +63,8 @@ internal static class Program
             return InstanceControl.RequestShowSettings() ? 0 : 1;
         }
 
+        AppHost.AutoRestarted = restartAfter >= 0;
+        ClickDelivery.SimulateFailure = args.Contains(ClickDelivery.SimulateFailureSwitch);
         int sim = Array.IndexOf(args, "--simulate");
         return new AppHost(sim >= 0 && sim + 1 < args.Length ? args[sim + 1] : null).Run();
     }
@@ -93,6 +101,19 @@ internal static class Program
         foreach (var m in native.Restore().Messages) Log.Info($"系统手势：{m}");
         Log.Flush(TimeSpan.FromSeconds(2));
         return 0;
+    }
+
+    private static void WaitForExit(int pid)
+    {
+        try
+        {
+            using var old = Process.GetProcessById(pid);
+            old.WaitForExit(TimeSpan.FromSeconds(15));
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // 已经退出了
+        }
     }
 
     private static int RestoreNative()

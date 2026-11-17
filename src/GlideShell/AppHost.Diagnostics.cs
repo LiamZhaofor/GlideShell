@@ -74,7 +74,11 @@ internal sealed partial class AppHost
         {
             string detail = F("本次运行识别 {0} 次，发送失败 {1} 次", taps, tapFailures);
             if (_mouseGestures?.Hooked == true) detail += F("；鼠标钩子看到 {0} 次", MouseButtonGestures.MarkedMiddleSeen);
-            checks.Add(new(T("三指轻点 = 中键"), tapFailures > 0 ? CheckLevel.Warning : taps > 0 ? CheckLevel.Ok : CheckLevel.Info, detail));
+            // 发送失败后的兜底（三指轻点与鼠标按键补发共用）：换线程补发、新进程代发、都没发出去各几次
+            if (ClickDelivery.DirectFailures > 0)
+                detail += F("；兜底：换线程补发 {0} 次，新进程代发 {1} 次，没发出去 {2} 次", ClickDelivery.ThreadRetries, ClickDelivery.HelperClicks, ClickDelivery.Lost);
+            if (ClickDelivery.ProcessStuck) detail += T("；本进程的注入被系统拒绝，等空闲时自动重启");
+            checks.Add(new(T("三指轻点 = 中键"), ClickDelivery.Lost > 0 || ClickDelivery.ProcessStuck ? CheckLevel.Warning : taps > 0 ? CheckLevel.Ok : CheckLevel.Info, detail));
         }
 
         // 后台程序栏：上次总览列出了几个托盘程序、最近一次点击的结果

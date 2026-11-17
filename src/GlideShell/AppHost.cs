@@ -36,6 +36,18 @@ internal sealed partial class AppHost
 {
     private const uint VkO = 0x4F;
 
+    /// <summary>自动重启时新实例的命令行开关：<c>--restart-after 旧进程号</c>，先等旧实例退出再启动。</summary>
+    public const string RestartAfterSwitch = "--restart-after";
+
+    /// <summary>启动后至少这么久才因注入失败自动重启（刚启动时等一等，免得和启动收尾撞在一起）。</summary>
+    private const long RestartMinUptimeMs = 60_000;
+
+    /// <summary>自动重启出来的实例在这么久之内又坏了，就不再重启（防止反复重启），点击继续由新进程代发。</summary>
+    private const long RestartAgainMinUptimeMs = 10 * 60_000;
+
+    /// <summary>本实例是因注入失败自动重启出来的（命令行带 <see cref="RestartAfterSwitch"/>）。</summary>
+    public static bool AutoRestarted { get; set; }
+
     private readonly string _exePath = Environment.ProcessPath ?? "GlideShell.exe";
     private readonly NativeGestureManager _native = new();
     private volatile GlideShellConfig _config = new();
@@ -71,6 +83,8 @@ internal sealed partial class AppHost
     private long _lastConfigReloadUs;
     private int _takeoverGeneration; // UI 线程
     private int _middleClicks, _middleClickFailures; // 三指轻点发出的中键（输入线程写，诊断页读）
+    private readonly long _startedMs = Environment.TickCount64;
+    private bool _restarting; // UI 线程
     private bool _firstRun; // 启动时还没有配置文件
     private readonly string? _simulate;
 
@@ -81,6 +95,8 @@ internal sealed partial class AppHost
     {
         Log.Start();
         Log.Info($"GlideShell {typeof(AppHost).Assembly.GetName().Version} 启动：{Environment.OSVersion}，{_exePath}");
+        if (AutoRestarted) Log.Info("（注入点击坏了之后自动重启的实例）");
+        if (ClickDelivery.SimulateFailure) Log.Warn($"开发用：{ClickDelivery.SimulateFailureSwitch}，本进程的注入一律当作被拒");
         LoadConfig();
 
         _ui = new UiThread();
@@ -112,6 +128,8 @@ internal sealed partial class AppHost
             // 模拟模式只用于自动化验证，不碰用户的系统手势设置
             TakeOverNativeGestures();
             StartWatchdog();
+            // 注入点击被拒时的兜底；确认本进程坏了就找空闲时重启自己（见 ClickDelivery）
+            ClickDelivery.Configure(_exePath, () => _ui.Post(RestartForInjection));
         }
 
         _tray = new TrayIcon(_ui, "GlideShell", Menu, onClick: () => _overview.Toggle(HostClock.NowUs()));
@@ -230,9 +248,50 @@ internal sealed partial class AppHost
     private void SendMiddleClick()
     {
         Interlocked.Increment(ref _middleClicks);
-        if (MouseButtonGestures.SendClick(MouseDragButton.Middle, out int error)) return;
-        int failures = Interlocked.Increment(ref _middleClickFailures);
-        Log.Warn($"三指轻点：中键没有发出去（SendInput 错误 {error}，本次运行第 {failures} 次）");
+        // 直接发失败时 ClickDelivery 写日志并在后台兜底（换线程 → 新进程代发 → 重启）
+        if (!ClickDelivery.Send(MouseDragButton.Middle)) Interlocked.Increment(ref _middleClickFailures);
+    }
+
+    /// <summary>
+    /// 本进程的注入已确认坏了（新进程能发、本进程发不出去，唤醒后会这样）：重启自己（UI 线程）。
+    /// 重启前点击由新进程代发，不丢；等手势、覆盖层都结束了再重启，免得打断用户。
+    /// </summary>
+    private void RestartForInjection()
+    {
+        if (_restarting) return;
+        long uptime = Environment.TickCount64 - _startedMs;
+        if (AutoRestarted && uptime < RestartAgainMinUptimeMs)
+        {
+            Log.Warn("注入点击：自动重启后不到 10 分钟又坏了，不再自动重启（之后的点击继续由新进程代发）");
+            return;
+        }
+        if (uptime < RestartMinUptimeMs)
+        {
+            _ui.PostDelayed((int)(RestartMinUptimeMs - uptime), RestartForInjection); // 刚启动：满 60 秒再重启
+            return;
+        }
+        if (_overview.IsVisible || _switcher.IsVisible || _desktopSwitch.IsVisible || _drag.IsDragging || _ui.DialogWindow != 0)
+        {
+            _ui.PostDelayed(2000, RestartForInjection); // 正在用：稍后再看
+            return;
+        }
+        try
+        {
+            // 与看门狗相同，必须走 ShellExecute（UIAccess 版 CreateProcess 启动自己会被拒）
+            Process.Start(new ProcessStartInfo(_exePath, $"{RestartAfterSwitch} {Environment.ProcessId}")
+            {
+                UseShellExecute = true,
+                WorkingDirectory = AppContext.BaseDirectory,
+            })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Log.Warn($"注入点击：自动重启失败（{ex.Message}），之后的点击继续由新进程代发");
+            return;
+        }
+        _restarting = true;
+        Log.Info("注入点击：本进程的注入坏了，自动重启 GlideShell");
+        _ui.Quit();
     }
 
     /// <summary>只在手指落下与开始滑动时各调用一次（输入线程）。总览已打开时不拦截：必须能用手势收起。</summary>
