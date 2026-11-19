@@ -256,6 +256,118 @@ public class DesktopBarTests
         Assert.Equal("Closing:-", host.Calls[^1]);
     }
 
+    // ---------- 拖动桌面排序 ----------
+
+    [Fact]
+    public void Reorder_slots_move_the_dragged_desktop_and_shift_the_others()
+    {
+        // 0 拖到 2：预览为 1、2、0
+        Assert.Equal(2, DesktopBarReorder.Slot(0, 0, 2, 3));
+        Assert.Equal(0, DesktopBarReorder.Slot(1, 0, 2, 3));
+        Assert.Equal(1, DesktopBarReorder.Slot(2, 0, 2, 3));
+        // 2 拖到 0：预览为 2、0、1
+        Assert.Equal(1, DesktopBarReorder.Slot(0, 2, 0, 3));
+        Assert.Equal(2, DesktopBarReorder.Slot(1, 2, 0, 3));
+        Assert.Equal(0, DesktopBarReorder.Slot(2, 2, 0, 3));
+        // 原样放下或无效下标不改变任何槽位
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(i, DesktopBarReorder.Slot(i, 1, 1, 3));
+            Assert.Equal(i, DesktopBarReorder.Slot(i, -1, 2, 3));
+        }
+    }
+
+    [Fact]
+    public void Reorder_target_changes_only_after_crossing_neighbor_centers()
+    {
+        var bar = DesktopBarGeometry.Compute(Area, 3, 1.5);
+        Assert.Equal(0, DesktopBarReorder.Target(bar, 0, bar.Thumbs[0].CenterX));
+        Assert.Equal(0, DesktopBarReorder.Target(bar, 0, bar.Thumbs[1].CenterX - 1));
+        Assert.Equal(1, DesktopBarReorder.Target(bar, 0, bar.Thumbs[1].CenterX + 1));
+        Assert.Equal(2, DesktopBarReorder.Target(bar, 0, bar.Thumbs[2].CenterX + 1));
+        Assert.Equal(1, DesktopBarReorder.Target(bar, 2, bar.Thumbs[1].CenterX - 1));
+        Assert.Equal(0, DesktopBarReorder.Target(bar, 2, bar.Thumbs[0].CenterX - 1));
+        Assert.Equal(-1, DesktopBarReorder.Target(bar, 3, 0));
+    }
+
+    [Fact]
+    public void Dragged_desktop_follows_the_pointer_previews_the_target_and_finishes_once()
+    {
+        var (c, _, t) = Opened();
+        c.SetBarHovered(true, t);
+        t += 2_000_000;
+        c.Sample(t);
+        var bar = DesktopBarGeometry.Compute(Area, 3, 1.5);
+        var thumb = bar.Thumbs[0];
+        Assert.True(c.BeginDesktopDrag(0, thumb.CenterX, thumb.CenterY, thumb, t));
+
+        c.DragDesktopTo(bar.Thumbs[2].CenterX + 1, thumb.CenterY + 20, bar, t + 10_000);
+        var dragging = c.Sample(t + 20_000).DesktopDrag;
+        Assert.NotNull(dragging);
+        Assert.Equal(0, dragging.Value.Source);
+        Assert.Equal(2, dragging.Value.Target);
+        Assert.Equal(bar.Thumbs[2].CenterX + 1, dragging.Value.X);
+        Assert.Equal(thumb.CenterY + 20, dragging.Value.Y);
+        Assert.Equal(0.5, dragging.Value.GrabX, 6);
+        Assert.False(dragging.Value.Dropped);
+
+        var move = c.DropDesktop();
+        Assert.Equal(new DesktopBarMove(0, 2), move.GetValueOrDefault());
+        Assert.True(c.Sample(t + 30_000).DesktopDrag!.Value.Dropped); // 等系统结果时保持目标预览
+        Assert.True(c.IsDesktopDragging);
+        Assert.Null(c.DropDesktop()); // 重复松开不能再次调用系统排序
+        c.FinishDesktopDrag();
+        Assert.False(c.IsDesktopDragging);
+        Assert.Null(c.Sample(t + 40_000).DesktopDrag);
+    }
+
+    [Fact]
+    public void Desktop_drag_needs_an_expanded_bar_and_can_be_cancelled()
+    {
+        var (c, _, t) = Opened();
+        var bar = DesktopBarGeometry.Compute(Area, 3, 1.5);
+        Assert.False(c.BeginDesktopDrag(0, bar.Thumbs[0].CenterX, bar.Thumbs[0].CenterY, bar.Thumbs[0], t));
+        c.SetBarHovered(true, t);
+        t += 2_000_000;
+        c.Sample(t);
+        Assert.True(c.BeginDesktopDrag(1, bar.Thumbs[1].CenterX, bar.Thumbs[1].CenterY, bar.Thumbs[1], t));
+        c.DragDesktopTo(bar.Thumbs[0].CenterX, bar.Thumbs[0].CenterY, bar, t + 10_000);
+        c.FinishDesktopDrag(); // 捕获丢失 / Esc：不调用系统排序
+        Assert.Null(c.DropDesktop());
+        Assert.Null(c.Sample(t + 20_000).DesktopDrag);
+    }
+
+    [Fact]
+    public void Desktop_drag_keeps_the_current_page_and_blocks_paging_clicks_and_swipes()
+    {
+        var (c, host, t, pages) = OpenedWithPages();
+        c.SetBarHovered(true, t);
+        t += 2_000_000;
+        c.Sample(t);
+        var bar = DesktopBarGeometry.Compute(Area, 3, 1.5);
+        Assert.True(c.BeginDesktopDrag(0, bar.Thumbs[0].CenterX, bar.Thumbs[0].CenterY, bar.Thumbs[0], t));
+        c.DragDesktopTo(bar.Thumbs[2].CenterX, bar.Thumbs[0].CenterY, bar, t + 10_000);
+        Assert.Same(pages[0], c.Scene);
+        Assert.Equal(0, c.Desktops.Current);
+        Assert.False(c.StepPage(1, t + 20_000));
+        c.GoToDesktop(2, t + 20_000);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("SwitchDesktop", StringComparison.Ordinal));
+        c.DesktopSwipe.Begin(Swipe4(GesturePhase.Began, 0, 0, t + 20_000));
+        c.DesktopSwipe.Update(Swipe4(GesturePhase.Changed, -40, -200, t + 30_000));
+        c.DesktopSwipe.End(Swipe4(GesturePhase.Ended, -40, -200, t + 40_000));
+        Assert.Equal(0, c.Sample(t + 50_000).PagePosition, 6);
+        Assert.DoesNotContain(host.Calls, x => x.StartsWith("PageChanged", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MoveDesktop_uses_the_checked_vtable_slot_for_each_supported_layout()
+    {
+        Assert.Equal(12, global::GlideShell.Platform.VirtualDesktops.VirtualDesktopLayout.Win11_24H2.MoveDesktop);
+        Assert.Equal(11, global::GlideShell.Platform.VirtualDesktops.VirtualDesktopLayout.Win11_23H2.MoveDesktop);
+        Assert.Equal(10, global::GlideShell.Platform.VirtualDesktops.VirtualDesktopLayout.Win11_23H2.CreateDesktop);
+        Assert.Equal(12, global::GlideShell.Platform.VirtualDesktops.VirtualDesktopLayout.Win11_23H2.RemoveDesktop);
+    }
+
     [Fact]
     public void Windows_fade_out_while_zooming_into_another_desktop()
     {

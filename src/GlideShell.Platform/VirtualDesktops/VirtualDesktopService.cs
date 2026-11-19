@@ -142,6 +142,25 @@ public sealed unsafe class VirtualDesktopService : IDisposable
         return tcs.Task;
     }
 
+    /// <summary>把桌面移到从左到右的第 <paramref name="index"/> 个位置。返回 HRESULT；完成时 <see cref="State"/> 已更新。</summary>
+    public Task<int> MoveDesktopAsync(Guid desktop, int index)
+    {
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Post(() =>
+        {
+            if (!EnsureConnected() || index < 0 || index >= _state.Count || !_desktops.TryGetValue(desktop, out nint d))
+            {
+                tcs.SetResult(unchecked((int)0x80004005));
+                return;
+            }
+            int hr = ((delegate* unmanaged<nint, nint, int, int>)Slot(_manager, _layout!.MoveDesktop))(_manager, d, index);
+            if (hr is RpcDisconnected or RpcServerUnavailable) Disconnect();
+            else ReadState();
+            tcs.SetResult(hr);
+        });
+        return tcs.Task;
+    }
+
     /// <summary>
     /// 把顶层窗口 <paramref name="window"/> 移到桌面 <paramref name="desktop"/>（不切换桌面）。返回 HRESULT。
     /// 公开的 IVirtualDesktopManager::MoveWindowToDesktop 只能移本进程的窗口，所以走 explorer 的视图对象。

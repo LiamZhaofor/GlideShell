@@ -1,4 +1,4 @@
-﻿using GlideShell.Core.Configuration;
+using GlideShell.Core.Configuration;
 using GlideShell.Core.Geometry;
 using GlideShell.Core.Motion;
 using GlideShell.Core.Overview;
@@ -72,7 +72,9 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private OverlayWindow? _press; // 按下时所在的覆盖层（null = 没按着）
     private double _pressX, _pressY;
     private long? _pressWindow; // 按在了哪个窗口上（按在桌面条上为 null）
+    private int _pressDesktop = -1; // 按在了哪个桌面缩略图上（-1 = 没有）
     private bool _dragging;
+    private bool _draggingDesktop;
     private long _dragWindow;
     private Task<Guid?>? _dropMove; // 已放到别的桌面：移动窗口（新建桌面时先建）的任务，结果是目标桌面
     private readonly HashSet<long> _moved = []; // 本次会话移到别的桌面的窗口
@@ -799,7 +801,11 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         _dropMove = null;
         _removeOnSwitch = null;
         _dragging = false;
+        _draggingDesktop = false;
         _press = null;
+        _pressWindow = null;
+        _pressDesktop = -1;
+        Controller.FinishDesktopDrag();
         _dockApps = [];
         _dockHovered = -1;
         _dockOverlay = null;
@@ -825,8 +831,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     }
 
     /// <summary>
-    /// 鼠标：按下记下位置，没拖动就松开 = 点击（按下时的位置）；按在窗口上拖过系统拖动阈值就开始拖动窗口
-    /// （只在能移动窗口、有桌面条时；否则照旧是点击）。
+    /// 鼠标：按下记下位置，没拖动就松开 = 点击（按下时的位置）；按在窗口或桌面缩略图上拖过系统阈值就开始拖动。
     /// </summary>
     private void OnMouse(OverlayWindow overlay, OverlayMouse kind, double x, double y)
     {
@@ -845,43 +850,71 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         switch (kind)
         {
             case OverlayMouse.Down:
+                if (Controller.IsDesktopDragging) break; // 等系统排序时不再接受按下，避免并发新建 / 删除 / 再次排序
                 _press = overlay;
                 _pressX = x;
                 _pressY = y;
                 _pressWindow = PressedWindow(overlay, x, y);
+                _pressDesktop = PressedDesktop(overlay, x, y);
                 break;
             case OverlayMouse.Move:
                 if (_dragging) DragMove(OverlayAt(overlay, x, y), x, y);
-                else if (_press is not null && _pressWindow is { } id && Math.Max(Math.Abs(x - _pressX), Math.Abs(y - _pressY)) >= DragThreshold(overlay))
+                else if (_draggingDesktop) DesktopDragMove(OverlayAt(overlay, x, y), x, y);
+                else if (_press is not null && Math.Max(Math.Abs(x - _pressX), Math.Abs(y - _pressY)) >= DragThreshold(overlay))
                 {
-                    if (!BeginDrag(overlay, id, x, y)) _pressWindow = null; // 不能拖：松开时照旧按点击处理
-                    else DragMove(overlay, x, y);
+                    if (_pressDesktop >= 0)
+                    {
+                        if (!BeginDesktopDrag(overlay, _pressDesktop, _pressX, _pressY)) _pressDesktop = -1; // 不能拖：松开时照旧按点击处理
+                        else DesktopDragMove(overlay, x, y); // 抓取点仍按最初按下处计算，避免越过阈值时跳动
+                    }
+                    else if (_pressWindow is { } id)
+                    {
+                        if (!BeginDrag(overlay, id, x, y)) _pressWindow = null;
+                        else DragMove(overlay, x, y);
+                    }
                 }
                 else if (_press is null) OnMouseMove(overlay, x, y);
                 break;
             case OverlayMouse.Up:
                 if (_dragging) Drop(OverlayAt(overlay, x, y), x, y);
+                else if (_draggingDesktop) DropDesktop(OverlayAt(overlay, x, y), x, y);
                 else if (_press is { } pressed) OnClick(pressed, _pressX, _pressY);
                 _press = null;
+                _pressWindow = null;
+                _pressDesktop = -1;
                 break;
             case OverlayMouse.Lost:
                 EndPress();
                 break;
             case OverlayMouse.RightUp:
-                if (!_dragging && overlay.Dock is { } dock && dock.Contains(x, y)) ActivateDock(dock.HitTest(x, y), menu: true, (x, y));
+                if (!_dragging && !_draggingDesktop && overlay.Dock is { } dock && dock.Contains(x, y)) ActivateDock(dock.HitTest(x, y), menu: true, (x, y));
                 break;
         }
     }
 
-    /// <summary>取消按下 / 拖动（窗口飞回原位）。</summary>
+    /// <summary>取消按下 / 拖动（窗口或桌面缩略图回到原位）。</summary>
     private void EndPress()
     {
+        long now = HostClock.NowUs();
         if (_dragging)
         {
             _dragging = false;
-            Controller.EndDrag(null, HostClock.NowUs());
+            Controller.EndDrag(null, now);
+        }
+        if (_draggingDesktop)
+        {
+            _draggingDesktop = false;
+            Controller.FinishDesktopDrag();
+            Controller.SetBarHovered(false, now);
+            if (_barHovered != DesktopBarHit.Nothing)
+            {
+                _barHovered = DesktopBarHit.Nothing;
+                UpdateDecorations();
+            }
         }
         _press = null;
+        _pressWindow = null;
+        _pressDesktop = -1;
     }
 
     /// <summary>指针所在那块屏的覆盖层：拖着窗口可以拖到别的屏上（按下的覆盖层捕获了鼠标）；不在任何屏的工作区里时用 <paramref name="fallback"/>。</summary>
@@ -889,6 +922,69 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         => _overlays.FirstOrDefault(o => o.IsShown && o.Monitor.WorkArea.Contains(x, y)) ?? fallback;
 
     private static double DragThreshold(OverlayWindow overlay) => Math.Max(User32.GetSystemMetrics(User32.SM_CXDRAG), 6 * overlay.Monitor.DpiScale);
+
+    /// <summary>按下处的桌面缩略图（展开后才可拖，「×」与「+」不算）。</summary>
+    private int PressedDesktop(OverlayWindow overlay, double x, double y)
+    {
+        if (_desktops is not { Available: true } || !overlay.CanDragDesktops || overlay.Bar is not { } bar || _barState.Count < 2) return -1;
+        long now = HostClock.NowUs();
+        double e = Controller.BarExpansionAt(now);
+        if (e < 0.5 || !bar.Contains(x, y, e)) return -1;
+        var hit = BarHit(bar, x, y, e);
+        return hit.Part == DesktopBarPart.Desktop && hit.Index < _barState.Count ? hit.Index : -1;
+    }
+
+    private bool BeginDesktopDrag(OverlayWindow overlay, int index, double x, double y)
+    {
+        if (overlay.Bar is not { } bar) return false;
+        long now = HostClock.NowUs();
+        var thumb = bar.ThumbRect(index, Controller.BarExpansionAt(now));
+        if (!Controller.BeginDesktopDrag(index, x, y, thumb, now)) return false;
+        _draggingDesktop = true;
+        Select(-1);
+        foreach (var o in _overlays) o.BeginDesktopDrag(index);
+        if (_barHovered != DesktopBarHit.Nothing)
+        {
+            _barHovered = DesktopBarHit.Nothing;
+            UpdateDecorations();
+        }
+        Log.Info($"总览桌面条：开始拖动桌面 {index + 1}「{_barState.Names[index]}」");
+        return true;
+    }
+
+    /// <summary>桌面缩略图跟手移动，中心越过相邻槽位时实时预览新顺序。</summary>
+    private void DesktopDragMove(OverlayWindow overlay, double x, double y)
+    {
+        if (overlay.Bar is not { } bar) return;
+        long now = HostClock.NowUs();
+        Controller.SetBarHovered(true, now);
+        Controller.DragDesktopTo(x, y, bar, now);
+    }
+
+    /// <summary>松手后调用 explorer 的 MoveDesktop；完成前保持目标预览，完成后按真实状态刷新各页。</summary>
+    private void DropDesktop(OverlayWindow overlay, double x, double y)
+    {
+        _draggingDesktop = false;
+        if (Controller.DropDesktop() is not { } move) return;
+        if (move.From == move.To || _desktops is not { Available: true } desktops || overlay.Bar is not { } bar || !bar.Contains(x, y, 1) ||
+            move.From < 0 || move.From >= _barState.Count || move.To < 0 || move.To >= _barState.Count)
+        {
+            Controller.FinishDesktopDrag();
+            return;
+        }
+        Guid desktop = _barState.Desktops[move.From];
+        string name = _barState.Names[move.From];
+        _ = desktops.MoveDesktopAsync(desktop, move.To).ContinueWith(t =>
+            _ui.Post(() => FinishDesktopMove(t.Result, move, name)), TaskScheduler.Default);
+    }
+
+    private void FinishDesktopMove(int hr, DesktopBarMove move, string name)
+    {
+        Controller.FinishDesktopDrag();
+        if (hr < 0) Log.Warn($"总览桌面条：移动「{name}」到位置 {move.To + 1} 失败 0x{hr:X8}");
+        else Log.Info($"总览桌面条：「{name}」从位置 {move.From + 1} 移到 {move.To + 1}");
+        RefreshBar(); // 成功按新顺序、失败按原顺序重建；桌面页按 id 跟随，不会切错桌面
+    }
 
     /// <summary>按下处的窗口（只有能把窗口移到别的桌面时才算，按在桌面条上不算）。</summary>
     private long? PressedWindow(OverlayWindow overlay, double x, double y)

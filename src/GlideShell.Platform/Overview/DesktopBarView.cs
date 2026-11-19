@@ -116,11 +116,15 @@ internal sealed class DesktopBarView : IDisposable
         if (hidden && _hiddenApplied) return false; // 收起着：缩略图已经全透明，不必每帧再设
         _hiddenApplied = hidden;
 
+        var drag = frame.DesktopDrag;
         for (int i = 0; i < slots.Length && i < g.Count; i++)
         {
             var s = slots[i];
             bool chosen = i == target;
-            var r = chosen ? g.ZoomRect(i, e, z) : g.ThumbRect(i, e);
+            int slot = DesktopBarReorder.Slot(i, drag?.Source ?? -1, drag?.Target ?? -1, g.Count);
+            var r = chosen ? g.ZoomRect(slot, e, z) : g.ThumbRect(slot, e);
+            if (drag is { } d && i == d.Source && !d.Dropped)
+                r = new RectD(d.X - d.GrabX * r.Width, d.Y - d.GrabY * r.Height, r.Width, r.Height);
             // 选中的那个点下去就不透明（可能还没完全展开就点了）；其余随放大淡出
             double alpha = chosen ? Math.Max(e, OverviewVisuals.SmoothStep(0, 0.15, z)) : e * (1 - z);
             double scale = r.Width / g.Area.Width;
