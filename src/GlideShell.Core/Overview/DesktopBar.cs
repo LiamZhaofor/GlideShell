@@ -31,6 +31,35 @@ public readonly record struct DesktopBarHit(DesktopBarPart Part, int Index)
     public static DesktopBarHit Nothing => new(DesktopBarPart.None, -1);
 }
 
+/// <summary>一次桌面拖动排序：从原来的下标移到目标下标。</summary>
+public readonly record struct DesktopBarMove(int From, int To);
+
+/// <summary>桌面拖动排序的纯计算：所有桌面仍以原下标存储，只在画面上临时换到目标槽位。</summary>
+public static class DesktopBarReorder
+{
+    /// <summary>原下标 <paramref name="index"/> 的桌面在拖动预览里应占的槽位。</summary>
+    public static int Slot(int index, int from, int to, int count)
+    {
+        if (count <= 0 || index < 0 || index >= count || from < 0 || from >= count || to < 0 || to >= count || from == to) return index;
+        if (index == from) return to;
+        if (from < to && index > from && index <= to) return index - 1;
+        if (from > to && index >= to && index < from) return index + 1;
+        return index;
+    }
+
+    /// <summary>被拖桌面的中心越过其他槽位中心时，预览顺序随之改变。</summary>
+    public static int Target(DesktopBarGeometry bar, int from, double draggedCenterX)
+    {
+        if (from < 0 || from >= bar.Count) return -1;
+        int target = from;
+        if (draggedCenterX > bar.Thumbs[from].CenterX)
+            for (int i = from + 1; i < bar.Count && draggedCenterX > bar.Thumbs[i].CenterX; i++) target = i;
+        else
+            for (int i = from - 1; i >= 0 && draggedCenterX < bar.Thumbs[i].CenterX; i--) target = i;
+        return target;
+    }
+}
+
 /// <summary>
 /// 一块屏上桌面条的几何（物理像素）。macOS 调度中心的样子：平时顶部一排桌面名（收起），
 /// 指针移到顶部时展开成一排桌面缩略图（壁纸 + 窗口），名字挪到缩略图下面；展开时下面的窗口区域整体往下缩，给它让位。

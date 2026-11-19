@@ -70,6 +70,9 @@ public enum OverviewMode
 /// <param name="DragIndex">正在拖动 / 放下的窗口（当前页场景下标，-1 = 没有）。</param>
 /// <param name="DragRect">它这一帧的矩形（<paramref name="DragReturn"/> ≥ 0 时是飞回的起点）。</param>
 /// <param name="DragReturn">没放到别的桌面、正在飞回的进度（0 ~ 1）：从 <paramref name="DragRect"/> 插值到它本来的位置；-1 = 不是在飞回。</param>
+/// <param name="DesktopDrag">正在拖动 / 等待系统排序的桌面缩略图；null = 没有。</param>
+public readonly record struct DesktopBarDragFrame(int Source, int Target, double X, double Y, double GrabX, double GrabY, bool Dropped);
+
 public readonly record struct OverviewFrame(
     double Progress,
     double BackdropOpacity,
@@ -85,7 +88,8 @@ public readonly record struct OverviewFrame(
     int DragIndex = -1,
     RectD DragRect = default,
     double DragOpacity = 1,
-    double DragReturn = -1)
+    double DragReturn = -1,
+    DesktopBarDragFrame? DesktopDrag = null)
 {
     /// <summary>有窗口在拖动或放下途中（标题、悬停框不画）。</summary>
     public bool Dragging => DragIndex >= 0;
@@ -138,6 +142,11 @@ public sealed class OverviewController : IGestureTarget
     private double _dragW, _dragH, _smallW, _smallH; // 平铺位大小 / 在桌面条上缩到的大小
     private RectD _dropFrom;
     private RectD? _dropInto; // 放到别的桌面：飞到这里并淡出；null = 飞回原位
+
+    // 拖动桌面缩略图（UI 线程；渲染线程只读快照）
+    private int _desktopDragSource = -1, _desktopDragTarget = -1;
+    private double _desktopDragX, _desktopDragY, _desktopDragGrabX, _desktopDragGrabY;
+    private bool _desktopDragDropped; // 松手后保持目标预览，等系统排序完成后由宿主结束
 
     private enum DragStage
     {
@@ -266,7 +275,7 @@ public sealed class OverviewController : IGestureTarget
         bool current;
         lock (_gate)
         {
-            if (!_visible || _zoomDesktop >= 0 || index < 0 || index >= _desktops.Count) return;
+            if (!_visible || _zoomDesktop >= 0 || _desktopDragSource >= 0 || index < 0 || index >= _desktops.Count) return;
             current = index == _desktops.Current;
             if (!current)
             {
@@ -277,6 +286,71 @@ public sealed class OverviewController : IGestureTarget
         }
         if (current) Close(null, hostUs);
         else _host.SwitchDesktop(index);
+    }
+
+    // ---------- 拖动桌面缩略图（UI 线程） ----------
+
+    /// <summary>正在拖动桌面，或松手后等待系统排序。</summary>
+    public bool IsDesktopDragging
+    {
+        get { lock (_gate) return _desktopDragSource >= 0; }
+    }
+
+    /// <summary>开始拖动第 <paramref name="index"/> 个桌面；<paramref name="thumb"/> 是按下时的缩略图位置。</summary>
+    public bool BeginDesktopDrag(int index, double x, double y, RectD thumb, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (!_visible || _mode != OverviewMode.All || _tracking || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None ||
+                _desktopDragSource >= 0 || index < 0 || index >= _desktops.Count || thumb.IsEmpty || _bar.Peek(hostUs) < 0.5) return false;
+            if (_transition.Target < 1 - SettleEpsilon || _transition.Peek(hostUs) < 1 - 0.02) return false;
+            if (_page >= 0 && Math.Abs(_pager.Peek(hostUs) - _page) > 0.01) return false;
+            _desktopDragSource = _desktopDragTarget = index;
+            _desktopDragX = x;
+            _desktopDragY = y;
+            _desktopDragGrabX = Math.Clamp((x - thumb.Left) / thumb.Width, 0, 1);
+            _desktopDragGrabY = Math.Clamp((y - thumb.Top) / thumb.Height, 0, 1);
+            _desktopDragDropped = false;
+            _hovered = null;
+            if (_bar.Target != 1) _bar.AnimateTo(1, hostUs);
+            return true;
+        }
+    }
+
+    /// <summary>拖动中更新指针与目标槽位；其他桌面按目标位置实时让位。</summary>
+    public void DragDesktopTo(double x, double y, DesktopBarGeometry bar, long hostUs)
+    {
+        lock (_gate)
+        {
+            if (_desktopDragSource < 0 || _desktopDragDropped || bar.Count != _desktops.Count) return;
+            _desktopDragX = x;
+            _desktopDragY = y;
+            double width = bar.Thumbs[_desktopDragSource].Width;
+            double center = x - _desktopDragGrabX * width + width / 2;
+            _desktopDragTarget = DesktopBarReorder.Target(bar, _desktopDragSource, center);
+            if (_bar.Target != 1) _bar.AnimateTo(1, hostUs);
+        }
+    }
+
+    /// <summary>松手：保持目标预览并返回排序参数；宿主完成系统调用后必须调用 <see cref="FinishDesktopDrag"/>。</summary>
+    public DesktopBarMove? DropDesktop()
+    {
+        lock (_gate)
+        {
+            if (_desktopDragSource < 0 || _desktopDragDropped) return null;
+            _desktopDragDropped = true;
+            return new DesktopBarMove(_desktopDragSource, _desktopDragTarget);
+        }
+    }
+
+    /// <summary>取消拖动，或系统排序成功 / 失败后结束预览；由宿主刷新为真实桌面顺序。</summary>
+    public void FinishDesktopDrag()
+    {
+        lock (_gate)
+        {
+            _desktopDragSource = _desktopDragTarget = -1;
+            _desktopDragDropped = false;
+        }
     }
 
     // ---------- 拖动窗口（UI 线程） ----------
@@ -295,7 +369,7 @@ public sealed class OverviewController : IGestureTarget
     {
         lock (_gate)
         {
-            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None) return false;
+            if (!_visible || _tracking || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None || _desktopDragSource >= 0) return false;
             if (_transition.Target < 1 - SettleEpsilon || _transition.Peek(hostUs) < 1 - 0.02) return false;
             if (_page >= 0 && Math.Abs(_pager.Peek(hostUs) - _page) > 0.01) return false;
             var scene = Scene;
@@ -496,9 +570,9 @@ public sealed class OverviewController : IGestureTarget
         bool restore = desktopGesture && !_visible && e.Direction == GestureDirection.Up && DesktopShown?.Invoke() == true;
         lock (_gate)
         {
-            if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging)
+            if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging || _desktopDragSource >= 0)
             {
-                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口，等它落定
+                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口或桌面，等它落定
                 return;
             }
             OverviewMode? open = null; // 收起态下这次手势要展开的形态（null = 不接管）
@@ -722,9 +796,14 @@ public sealed class OverviewController : IGestureTarget
         int dragIndex = -1;
         RectD dragRect = default;
         double dragOpacity = 1, dragReturn = -1;
+        DesktopBarDragFrame? desktopDrag;
         lock (_gate)
         {
             zoomDesktop = _zoomDesktop;
+            desktopDrag = _desktopDragSource >= 0
+                ? new DesktopBarDragFrame(_desktopDragSource, _desktopDragTarget, _desktopDragX, _desktopDragY,
+                    _desktopDragGrabX, _desktopDragGrabY, _desktopDragDropped)
+                : null;
             if (_drag == DragStage.Dragging)
             {
                 dragIndex = _dragIndex;
@@ -778,6 +857,11 @@ public sealed class OverviewController : IGestureTarget
                     activate = true;
                 }
             }
+            if (hide)
+            {
+                _desktopDragSource = _desktopDragTarget = -1;
+                _desktopDragDropped = false;
+            }
             visible = _visible || hide || activate;
             emphasized = _focusTarget ?? (_closingGesture ? _hovered : null);
         }
@@ -785,7 +869,7 @@ public sealed class OverviewController : IGestureTarget
         else if (activate) _host.Activate();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
             s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0, _page >= 0 ? pager.Value : 0,
-            relayout.Value, dragIndex, dragRect, dragOpacity, dragReturn);
+            relayout.Value, dragIndex, dragRect, dragOpacity, dragReturn, desktopDrag);
     }
 
     /// <summary>
@@ -862,7 +946,7 @@ public sealed class OverviewController : IGestureTarget
         int changed = -1;
         lock (_gate)
         {
-            if (!_visible || _pages.Count < 2 || _page < 0 || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None) return false;
+            if (!_visible || _pages.Count < 2 || _page < 0 || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None || _desktopDragSource >= 0) return false;
             int target = Math.Clamp(_page + Math.Sign(direction), 0, _pages.Count - 1);
             if (target == _page) return true;
             _page = target;
@@ -897,7 +981,7 @@ public sealed class OverviewController : IGestureTarget
         lock (_gate)
         {
             _pagerIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _pages.Count < 2 || _page < 0 ||
-                             _transition.Target < 1 - SettleEpsilon || _drag != DragStage.None;
+                             _transition.Target < 1 - SettleEpsilon || _drag != DragStage.None || _desktopDragSource >= 0;
             if (_pagerIgnoring) return; // 总览还没展开好、或只有一个桌面：不接管
             _pagerTracking = true;
             _pageAtBegin = _page;

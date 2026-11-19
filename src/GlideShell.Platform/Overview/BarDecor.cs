@@ -198,19 +198,28 @@ internal sealed unsafe class BarDecor
         int current = _current, hoverIndex = _hoverIndex;
         var part = _hoverPart;
         var origin = g.Area;
+        var drag = frame.DesktopDrag;
         double dpi = Dpi;
         lock (_res.Backend.Gate)
         {
             for (int i = 0; i < desktops.Length; i++)
             {
                 var d = desktops[i];
-                bool hovered = hoverIndex == i && part is DesktopBarPart.Desktop or DesktopBarPart.Remove;
+                bool hovered = drag is null && hoverIndex == i && part is DesktopBarPart.Desktop or DesktopBarPart.Remove;
                 d.Current = _first ? (i == current ? 1 : 0) : Approach(d.Current, i == current ? 1 : 0, dt, 0.07);
                 d.Hover = Approach(d.Hover, hovered ? 1 : 0, dt, hovered ? 0.05 : 0.09);
                 d.RemoveHover = Approach(d.RemoveHover, hovered && part == DesktopBarPart.Remove ? 1 : 0, dt, 0.05);
 
-                var pill = Local(g.Pills[i], origin);
-                var thumb = Local(g.ThumbRect(i, e), origin);
+                int slot = DesktopBarReorder.Slot(i, drag?.Source ?? -1, drag?.Target ?? -1, g.Count);
+                var pill = Local(g.Pills[slot], origin);
+                var thumb = Local(g.ThumbRect(slot, e), origin);
+                var label = Local(g.Labels[slot], origin);
+                if (drag is { } dragged && i == dragged.Source && !dragged.Dropped)
+                {
+                    thumb = new RectD(dragged.X - dragged.GrabX * thumb.Width - origin.Left,
+                        dragged.Y - dragged.GrabY * thumb.Height - origin.Top, thumb.Width, thumb.Height);
+                    label = new RectD(thumb.Left, thumb.Bottom + (g.Labels[slot].Top - g.Thumbs[slot].Top), thumb.Width, label.Height);
+                }
                 double hover = d.Hover * (1 - d.Current);
                 d.Glass?.Place(a * (1 - e) * Math.Max(d.Current, d.Hover), wallpaper);
                 d.CurrentPill?.Place(pill, a * (1 - e) * d.Current);
@@ -219,24 +228,23 @@ internal sealed unsafe class BarDecor
                 d.CurrentRing?.Place(thumb.Inflate(2 * dpi, 2 * dpi), a * e * d.Current * (1 - d.Hover));
                 d.HoverRing?.Place(thumb.Inflate(3 * dpi, 3 * dpi), a * e * d.Hover);
 
-                // 桌面名：收起时在名字条里，展开时在缩略图下面
+                // 桌面名：收起时在名字条里，展开时在缩略图下面；拖动时跟着被拖的缩略图
                 if (d.TextW > 0)
                 {
-                    var label = Local(g.Labels[i], origin);
                     double cx = pill.CenterX + (label.CenterX - pill.CenterX) * e, cy = pill.CenterY + (label.CenterY - pill.CenterY) * e;
                     double bright = DimName + (1 - DimName) * Math.Max(d.Current, d.Hover);
                     Place(d.Text, cx - d.TextW / 2, cy - d.TextH / 2, a * bright, ref d.TextHidden);
                 }
 
-                // 「×」：展开后悬停的桌面名右端（最后一个桌面不能删）
-                var x = Local(g.RemoveButton(i), origin);
-                double removable = desktops.Length >= 2 ? a * e * d.Hover : 0;
+                // 「×」：展开后悬停的桌面名右端（最后一个桌面不能删）；排序时不显示
+                var x = Local(g.RemoveButton(slot), origin);
+                double removable = drag is null && desktops.Length >= 2 ? a * e * d.Hover : 0;
                 d.RemoveDisc?.Place(x, removable * d.RemoveHover);
                 Place(d.RemoveGlyph, x.Left, x.Top, removable * (0.8 + 0.2 * d.RemoveHover), ref d.GlyphHidden);
             }
 
             // 末尾的「+」：收起时是小圆块（悬停才有底色），展开时是与缩略图同高的方块
-            bool addHovered = part == DesktopBarPart.Add;
+            bool addHovered = drag is null && part == DesktopBarPart.Add;
             _addHover = Approach(_addHover, addHovered ? 1 : 0, dt, addHovered ? 0.05 : 0.09);
             var add = Local(RectD.Lerp(g.AddPill, g.AddTile, e), origin);
             _addBg?.Place(add, a * e * (1 - _addHover));
