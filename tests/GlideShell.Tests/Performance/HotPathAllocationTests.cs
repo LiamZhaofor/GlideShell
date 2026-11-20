@@ -12,6 +12,7 @@ namespace GlideShell.Tests.Performance;
 /// 组帧 → 识别 → 路由 → 控制器，以及渲染线程每帧的取样与窗口矩形，都不得分配托管对象。
 /// 手势开始 / 结束时的少量分配（预热、选目标）不在约束内，所以只测中段的 Changed 报文。
 /// </summary>
+[Collection(nameof(HotPathAllocationTests))] // 计数按线程，但并行跑别的测试时偶尔会多出几 KB：单独跑，免得误报
 public class HotPathAllocationTests
 {
     private sealed class NoopOverviewHost : IOverviewHost
@@ -183,3 +184,6 @@ public class HotPathAllocationTests
         Assert.True(sum != 0);
     }
 }
+
+[CollectionDefinition(nameof(HotPathAllocationTests), DisableParallelization = true)]
+public sealed class HotPathAllocationCollection;
