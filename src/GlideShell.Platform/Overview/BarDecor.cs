@@ -210,16 +210,13 @@ internal sealed unsafe class BarDecor
                 d.Hover = Approach(d.Hover, hovered ? 1 : 0, dt, hovered ? 0.05 : 0.09);
                 d.RemoveHover = Approach(d.RemoveHover, hovered && part == DesktopBarPart.Remove ? 1 : 0, dt, 0.05);
 
-                int slot = DesktopBarReorder.Slot(i, drag?.Source ?? -1, drag?.Target ?? -1, g.Count);
-                var pill = Local(g.Pills[slot], origin);
-                var thumb = Local(g.ThumbRect(slot, e), origin);
-                var label = Local(g.Labels[slot], origin);
-                if (drag is { } dragged && i == dragged.Source && !dragged.Dropped)
-                {
-                    thumb = new RectD(dragged.X - dragged.GrabX * thumb.Width - origin.Left,
-                        dragged.Y - dragged.GrabY * thumb.Height - origin.Top, thumb.Width, thumb.Height);
-                    label = new RectD(thumb.Left, thumb.Bottom + (g.Labels[slot].Top - g.Thumbs[slot].Top), thumb.Width, label.Height);
-                }
+                // 拖动排序：与 DesktopBarView 的缩略图同一套位置（让位途中在槽位之间、被拖的跟着指针或飞向槽位）
+                var (thumbAt, pillAt, labelAt) = drag is { } dragged
+                    ? DesktopBarReorder.Layout(g, dragged, i, e)
+                    : (g.ThumbRect(i, e), g.Pills[i], g.Labels[i]);
+                var pill = Local(pillAt, origin);
+                var thumb = Local(thumbAt, origin);
+                var label = Local(labelAt, origin);
                 double hover = d.Hover * (1 - d.Current);
                 d.Glass?.Place(a * (1 - e) * Math.Max(d.Current, d.Hover), wallpaper);
                 d.CurrentPill?.Place(pill, a * (1 - e) * d.Current);
@@ -237,7 +234,7 @@ internal sealed unsafe class BarDecor
                 }
 
                 // 「×」：展开后悬停的桌面名右端（最后一个桌面不能删）；排序时不显示
-                var x = Local(g.RemoveButton(slot), origin);
+                var x = Local(g.RemoveButton(i), origin);
                 double removable = drag is null && desktops.Length >= 2 ? a * e * d.Hover : 0;
                 d.RemoveDisc?.Place(x, removable * d.RemoveHover);
                 Place(d.RemoveGlyph, x.Left, x.Top, removable * (0.8 + 0.2 * d.RemoveHover), ref d.GlyphHidden);

@@ -1,4 +1,5 @@
 using GlideShell.Core.Geometry;
+using GlideShell.Core.Motion;
 
 namespace GlideShell.Core.Overview;
 
@@ -57,6 +58,91 @@ public static class DesktopBarReorder
         else
             for (int i = from - 1; i >= 0 && draggedCenterX < bar.Thumbs[i].CenterX; i--) target = i;
         return target;
+    }
+
+    /// <summary>
+    /// 拖动排序这一帧第 <paramref name="index"/> 个桌面的缩略图、收起时的桌面名条与展开后的桌面名位置（屏幕坐标）：
+    /// 其余桌面在槽位之间滑动让位；被拖的跟着指针，松手后从松手处飞到它的槽位，桌面名始终跟着它的缩略图。
+    /// 合成层的缩略图与装饰（名字、框）都按它摆，两边不会错开。
+    /// </summary>
+    public static (RectD Thumb, RectD Pill, RectD Label) Layout(DesktopBarGeometry bar, in DesktopBarDragFrame drag, int index, double expansion)
+    {
+        double slot = drag.SlotOf(index, bar.Count);
+        var thumb = bar.ThumbRectAt(slot, expansion);
+        var pill = bar.PillAt(slot);
+        var label = bar.LabelAt(slot);
+        if (index != drag.Source) return (thumb, pill, label);
+        var follow = new RectD(drag.X - drag.GrabX * thumb.Width, drag.Y - drag.GrabY * thumb.Height, thumb.Width, thumb.Height);
+        var moved = drag.Fly < 0 ? follow : RectD.Lerp(follow, thumb, Math.Clamp(drag.Fly, 0, 1));
+        return (moved, pill, label.Offset(moved.Left - thumb.Left, moved.Top - thumb.Top));
+    }
+}
+
+/// <summary>
+/// 桌面拖动排序的让位动画（不可变：UI 线程整体替换，渲染线程只取样）。每个桌面一个显示槽位（可带小数）的弹簧；
+/// 预览顺序变化时，各桌面从此刻的位置与速度出发驶向新槽位，所以让位连续、可以随时改道。
+/// </summary>
+public sealed class DesktopReorderMotion
+{
+    /// <summary>其余桌面让位 / 回原位的弹簧（与桌面条展开同一手感）。</summary>
+    public static readonly SpringParameters SlotSpring = new(0.28, 1.0);
+
+    /// <summary>松手后被拖的缩略图飞到槽位的弹簧（与拖窗口飞回同一手感）。</summary>
+    public static readonly SpringParameters FlySpring = new(0.3, 1.0);
+
+    private readonly SpringAnimation[] _slots;
+
+    private DesktopReorderMotion(SpringAnimation[] slots) => _slots = slots;
+
+    public int Count => _slots.Length;
+
+    /// <summary>所有桌面都在原位（刚开始拖）。</summary>
+    public static DesktopReorderMotion Identity(int count, long hostUs)
+    {
+        var slots = new SpringAnimation[Math.Max(0, count)];
+        for (int i = 0; i < slots.Length; i++) slots[i] = new SpringAnimation(SlotSpring, i, i, 0, hostUs);
+        return new DesktopReorderMotion(slots);
+    }
+
+    /// <summary>
+    /// 驶向「<paramref name="from"/> 移到 <paramref name="to"/>」的预览顺序（<paramref name="from"/> = <paramref name="to"/> 即原顺序）。
+    /// <paramref name="snap"/> 那个桌面直接到位：它正被拖着，画面上跟着指针，松手时要从它的目标槽位算起。
+    /// </summary>
+    public DesktopReorderMotion Retarget(int from, int to, long hostUs, int snap = -1)
+    {
+        var next = new SpringAnimation[_slots.Length];
+        for (int i = 0; i < next.Length; i++)
+        {
+            double target = DesktopBarReorder.Slot(i, from, to, next.Length);
+            var current = _slots[i];
+            if (i == snap) next[i] = new SpringAnimation(SlotSpring, target, target, 0, hostUs);
+            else if (current.Target == target) next[i] = current;
+            else
+            {
+                var (value, velocity, _) = current.Sample(hostUs);
+                next[i] = new SpringAnimation(SlotSpring, value, target, velocity, hostUs);
+            }
+        }
+        return new DesktopReorderMotion(next);
+    }
+
+    /// <summary>所有桌面直接停到目标槽位（落定动画被别的输入打断）。</summary>
+    public DesktopReorderMotion Snap(long hostUs)
+    {
+        var next = new SpringAnimation[_slots.Length];
+        for (int i = 0; i < next.Length; i++) next[i] = new SpringAnimation(SlotSpring, _slots[i].Target, _slots[i].Target, 0, hostUs);
+        return new DesktopReorderMotion(next);
+    }
+
+    /// <summary>第 <paramref name="index"/> 个桌面此刻的槽位（越界的按原位）。</summary>
+    public double SlotAt(int index, long hostUs) => index >= 0 && index < _slots.Length ? _slots[index].Sample(hostUs).Value : index;
+
+    /// <summary>此刻所有桌面都已停在目标槽位。</summary>
+    public bool IsSettled(long hostUs)
+    {
+        foreach (var slot in _slots)
+            if (!slot.Sample(hostUs).Settled) return false;
+        return true;
     }
 }
 
@@ -172,6 +258,34 @@ public sealed class DesktopBarGeometry
         var pill = Pills[index];
         var seed = new RectD(pill.CenterX - full.Width * 0.15, pill.CenterY - full.Height * 0.15, full.Width * 0.3, full.Height * 0.3);
         return RectD.Lerp(seed, full, Math.Clamp(expansion, 0, 1.05));
+    }
+
+    /// <summary>小数槽位 <paramref name="slot"/> 处（拖动排序让位途中）的缩略图：在相邻两个槽位之间插值（各槽位等宽等距）。</summary>
+    public RectD ThumbRectAt(double slot, double expansion)
+    {
+        var (lo, hi, t) = Split(slot);
+        return RectD.Lerp(ThumbRect(lo, expansion), ThumbRect(hi, expansion), t);
+    }
+
+    /// <summary>小数槽位处收起时的桌面名条。</summary>
+    public RectD PillAt(double slot)
+    {
+        var (lo, hi, t) = Split(slot);
+        return RectD.Lerp(Pills[lo], Pills[hi], t);
+    }
+
+    /// <summary>小数槽位处展开后的桌面名。</summary>
+    public RectD LabelAt(double slot)
+    {
+        var (lo, hi, t) = Split(slot);
+        return RectD.Lerp(Labels[lo], Labels[hi], t);
+    }
+
+    private (int Lo, int Hi, double T) Split(double slot)
+    {
+        double s = Math.Clamp(double.IsFinite(slot) ? slot : 0, 0, Math.Max(0, Count - 1));
+        int lo = (int)s;
+        return (lo, Math.Min(lo + 1, Math.Max(0, Count - 1)), s - lo);
     }
 
     /// <summary>屏幕上的矩形 <paramref name="source"/>（例如窗口原位）画在第 <paramref name="index"/> 个桌面缩略图里的位置。</summary>

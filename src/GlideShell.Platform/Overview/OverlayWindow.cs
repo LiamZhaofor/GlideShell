@@ -608,8 +608,8 @@ internal sealed unsafe partial class OverlayWindow : NativeWindow
         return _bar.Prepare(shared ? _shared : null, shared ? _barRoot : null, Handle, Monitor, geometry, desktops, windows, foreground, CornerRadiusDip);
     }
 
-    /// <summary>有可供拖动的桌面缩略图（经典缩略图模式只有桌面名，不支持拖动预览）。</summary>
-    public bool CanDragDesktops => _bar.HasThumbnails;
+    /// <summary>有可供拖动的桌面缩略图，且名字与框由合成层画（GDI 退路的 PaintBar 不按拖动预览的槽位画，不支持拖动）。</summary>
+    public bool CanDragDesktops => BarDecorActive;
 
     /// <summary>UI 线程：开始拖动第 <paramref name="index"/> 个桌面，把它挪到其余缩略图上面。</summary>
     public void BeginDesktopDrag(int index) => _bar.BringToFront(index);

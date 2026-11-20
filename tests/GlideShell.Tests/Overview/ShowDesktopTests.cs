@@ -22,6 +22,7 @@ public class ShowDesktopTests
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
         public void SwitchDesktop(int desktopIndex) => Calls.Add($"SwitchDesktop:{desktopIndex}");
         public void PageChanged(int desktopIndex) => Calls.Add($"PageChanged:{desktopIndex}");
+        public void DesktopReorderSettled() => Calls.Add("DesktopReorderSettled");
     }
 
     private static GestureEvent Ev(GesturePhase phase, GestureDirection dir, double downMm, double downVelocity, long t)
