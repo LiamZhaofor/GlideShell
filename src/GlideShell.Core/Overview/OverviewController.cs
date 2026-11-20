@@ -43,6 +43,13 @@ public interface IOverviewHost
     /// 宿主立刻在覆盖层下面切换真实桌面，总览留在新桌面上（macOS 调度中心）。
     /// </summary>
     void PageChanged(int desktopIndex);
+
+    /// <summary>
+    /// 拖动排序的落定动画结束了（渲染线程，或被手势 / 翻页打断时的那个线程；每次拖动只发一次，撤层时不发）。
+    /// 系统排好了的停在新顺序上：宿主在 UI 线程调用 <see cref="OverviewController.FinishSettledDesktopMove"/>，返回 true 时紧接着按新顺序重建桌面条；
+    /// 没排成的已经自己结束。两种情况下，拖动期间跳过的桌面条刷新此时都可以补上。
+    /// </summary>
+    void DesktopReorderSettled();
 }
 
 /// <summary>总览的两种形态。</summary>
@@ -61,6 +68,19 @@ public enum OverviewMode
     Desktop,
 }
 
+/// <summary>拖动排序桌面这一帧的样子（各桌面的位置用 <see cref="DesktopBarReorder.Layout"/> 算）。</summary>
+/// <param name="Source">被拖的桌面（原下标）。</param>
+/// <param name="X">指针位置（屏幕坐标；松手后是松手处）。</param>
+/// <param name="GrabX">按下处在缩略图里的相对位置（0 ~ 1）。</param>
+/// <param name="Fly">松手后被拖的缩略图从松手处飞到它槽位的进度（0 ~ 1）；-1 = 还跟着指针。</param>
+/// <param name="Motion">各桌面显示槽位的弹簧，按 <paramref name="TimeUs"/> 取样。</param>
+public readonly record struct DesktopBarDragFrame(int Source, double X, double Y, double GrabX, double GrabY, double Fly, DesktopReorderMotion Motion, long TimeUs)
+{
+    /// <summary>第 <paramref name="index"/> 个桌面这一帧的槽位（可带小数）；桌面数对不上（列表刚变过）时按原位。</summary>
+    public double SlotOf(int index, int count)
+        => Motion.Count == count && count > 0 ? Math.Clamp(Motion.SlotAt(index, TimeUs), 0, count - 1) : index;
+}
+
 /// <summary>渲染线程每帧取到的总览状态。</summary>
 /// <param name="BarExpansion">桌面条展开程度（0 收起 ~ 1 展开）。</param>
 /// <param name="ZoomDesktop">点击后正在放大进入的桌面（-1 = 没有）。</param>
@@ -70,9 +90,7 @@ public enum OverviewMode
 /// <param name="DragIndex">正在拖动 / 放下的窗口（当前页场景下标，-1 = 没有）。</param>
 /// <param name="DragRect">它这一帧的矩形（<paramref name="DragReturn"/> ≥ 0 时是飞回的起点）。</param>
 /// <param name="DragReturn">没放到别的桌面、正在飞回的进度（0 ~ 1）：从 <paramref name="DragRect"/> 插值到它本来的位置；-1 = 不是在飞回。</param>
-/// <param name="DesktopDrag">正在拖动 / 等待系统排序的桌面缩略图；null = 没有。</param>
-public readonly record struct DesktopBarDragFrame(int Source, int Target, double X, double Y, double GrabX, double GrabY, bool Dropped);
-
+/// <param name="DesktopDrag">正在拖动 / 等待系统排序 / 播放落位动画的桌面缩略图；null = 没有。</param>
 public readonly record struct OverviewFrame(
     double Progress,
     double BackdropOpacity,
@@ -143,16 +161,34 @@ public sealed class OverviewController : IGestureTarget
     private RectD _dropFrom;
     private RectD? _dropInto; // 放到别的桌面：飞到这里并淡出；null = 飞回原位
 
-    // 拖动桌面缩略图（UI 线程；渲染线程只读快照）
+    // 拖动桌面缩略图（UI 线程改；渲染线程取样）。_desktopDragSource ≥ 0 ⇔ _desktopStage ≠ None
+    private DesktopDragStage _desktopStage;
     private int _desktopDragSource = -1, _desktopDragTarget = -1;
     private double _desktopDragX, _desktopDragY, _desktopDragGrabX, _desktopDragGrabY;
-    private bool _desktopDragDropped; // 松手后保持目标预览，等系统排序完成后由宿主结束
+    private DesktopReorderMotion? _desktopMotion;
+    private SpringAnimation _desktopFly; // 松手后被拖的缩略图飞到槽位：0 → 1
+    private bool _desktopCommitted; // 系统已按新顺序排好：动画落定后要由宿主重建桌面条，不能在渲染线程自己结束预览
+    private bool _desktopSettledSent; // 已通知宿主（只通知一次）
 
     private enum DragStage
     {
         None,
         Dragging,
         Dropping,
+    }
+
+    private enum DesktopDragStage
+    {
+        None,
+
+        /// <summary>跟着指针，其余桌面实时让位。</summary>
+        Dragging,
+
+        /// <summary>松手了，被拖的缩略图飞向目标槽位，等系统排序返回。</summary>
+        Moving,
+
+        /// <summary>系统已返回（或取消了）：等动画落定后结束预览。</summary>
+        Settling,
     }
 
     private volatile OverviewMode _mode;
@@ -290,7 +326,7 @@ public sealed class OverviewController : IGestureTarget
 
     // ---------- 拖动桌面缩略图（UI 线程） ----------
 
-    /// <summary>正在拖动桌面，或松手后等待系统排序。</summary>
+    /// <summary>正在拖动桌面、松手后等待系统排序，或排序动画还没落定（桌面条还按预览顺序画）。</summary>
     public bool IsDesktopDragging
     {
         get { lock (_gate) return _desktopDragSource >= 0; }
@@ -310,7 +346,9 @@ public sealed class OverviewController : IGestureTarget
             _desktopDragY = y;
             _desktopDragGrabX = Math.Clamp((x - thumb.Left) / thumb.Width, 0, 1);
             _desktopDragGrabY = Math.Clamp((y - thumb.Top) / thumb.Height, 0, 1);
-            _desktopDragDropped = false;
+            _desktopStage = DesktopDragStage.Dragging;
+            _desktopMotion = DesktopReorderMotion.Identity(_desktops.Count, hostUs);
+            _desktopCommitted = _desktopSettledSent = false;
             _hovered = null;
             if (_bar.Target != 1) _bar.AnimateTo(1, hostUs);
             return true;
@@ -322,35 +360,138 @@ public sealed class OverviewController : IGestureTarget
     {
         lock (_gate)
         {
-            if (_desktopDragSource < 0 || _desktopDragDropped || bar.Count != _desktops.Count) return;
+            if (_desktopStage != DesktopDragStage.Dragging || _desktopMotion is not { } motion || bar.Count != _desktops.Count ||
+                bar.Count != motion.Count) return;
             _desktopDragX = x;
             _desktopDragY = y;
             double width = bar.Thumbs[_desktopDragSource].Width;
             double center = x - _desktopDragGrabX * width + width / 2;
-            _desktopDragTarget = DesktopBarReorder.Target(bar, _desktopDragSource, center);
+            int target = DesktopBarReorder.Target(bar, _desktopDragSource, center);
+            if (target != _desktopDragTarget)
+            {
+                _desktopDragTarget = target;
+                _desktopMotion = motion.Retarget(_desktopDragSource, target, hostUs, snap: _desktopDragSource);
+            }
             if (_bar.Target != 1) _bar.AnimateTo(1, hostUs);
         }
     }
 
-    /// <summary>松手：保持目标预览并返回排序参数；宿主完成系统调用后必须调用 <see cref="FinishDesktopDrag"/>。</summary>
-    public DesktopBarMove? DropDesktop()
+    /// <summary>
+    /// 松手：被拖的缩略图开始飞向目标槽位，返回排序参数。宿主随后必须调用 <see cref="CompleteDesktopMove"/>
+    /// （系统排序返回时；不排序时立刻以失败调用，缩略图飞回原位）。
+    /// </summary>
+    public DesktopBarMove? DropDesktop(long hostUs)
     {
         lock (_gate)
         {
-            if (_desktopDragSource < 0 || _desktopDragDropped) return null;
-            _desktopDragDropped = true;
+            if (_desktopStage != DesktopDragStage.Dragging) return null;
+            _desktopStage = DesktopDragStage.Moving;
+            _desktopFly = new SpringAnimation(DesktopReorderMotion.FlySpring, 0, 1, 0, hostUs);
             return new DesktopBarMove(_desktopDragSource, _desktopDragTarget);
         }
     }
 
-    /// <summary>取消拖动，或系统排序成功 / 失败后结束预览；由宿主刷新为真实桌面顺序。</summary>
-    public void FinishDesktopDrag()
+    /// <summary>
+    /// 系统排序返回（UI 线程）。成功：动画落定后由 <see cref="IOverviewHost.DesktopReorderSettled"/> 通知宿主收尾；
+    /// 返回 true 表示动画此刻已经落定、预览已结束，调用方紧接着按新顺序重建桌面条。
+    /// 失败（或没有排序）：所有桌面弹回原位，落定后自行结束预览。过时的结果（已撤层、换了一次拖动）什么也不做。
+    /// </summary>
+    public bool CompleteDesktopMove(DesktopBarMove move, bool success, long hostUs)
     {
         lock (_gate)
         {
-            _desktopDragSource = _desktopDragTarget = -1;
-            _desktopDragDropped = false;
+            if (_desktopStage != DesktopDragStage.Moving || _desktopDragSource != move.From || _desktopDragTarget != move.To ||
+                _desktopMotion is not { } motion) return false;
+            _desktopStage = DesktopDragStage.Settling;
+            if (!success)
+            {
+                _desktopDragTarget = _desktopDragSource;
+                _desktopMotion = motion.Retarget(_desktopDragSource, _desktopDragSource, hostUs);
+                return false;
+            }
+            _desktopCommitted = true;
+            if (!_desktopFly.Sample(hostUs).Settled || !motion.IsSettled(hostUs)) return false;
+            ClearDesktopDrag();
+            return true;
         }
+    }
+
+    /// <summary>拖动中取消（Esc、捕获丢失）：被拖的缩略图飞回原位，其余桌面弹回。</summary>
+    public void CancelDesktopDrag(long hostUs)
+    {
+        if (DropDesktop(hostUs) is { } move) CompleteDesktopMove(move, success: false, hostUs);
+    }
+
+    /// <summary>
+    /// 收到 <see cref="IOverviewHost.DesktopReorderSettled"/> 后（UI 线程）：结束已经由系统排好的预览。
+    /// 返回 true 时调用方紧接着按新顺序重建桌面条（中间不能隔帧，否则会闪回旧顺序）。
+    /// </summary>
+    public bool FinishSettledDesktopMove()
+    {
+        lock (_gate)
+        {
+            if (_desktopStage != DesktopDragStage.Settling || !_desktopCommitted) return false;
+            ClearDesktopDrag();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 按下时排序动画还没落定（UI 线程）：跳到终点、结束预览，这次按下照常处理。返回 false = 还在拖动或等系统排序，这次按下不接受。
+    /// <paramref name="refresh"/> = 系统已按新顺序排好，调用方要紧接着重建桌面条。
+    /// </summary>
+    public bool SkipDesktopDragAnimation(out bool refresh)
+    {
+        lock (_gate)
+        {
+            refresh = false;
+            if (_desktopStage == DesktopDragStage.None) return true;
+            if (_desktopStage != DesktopDragStage.Settling) return false;
+            refresh = _desktopCommitted;
+            ClearDesktopDrag();
+            return true;
+        }
+    }
+
+    /// <summary>立刻结束拖动预览（撤层、场景作废）。</summary>
+    public void FinishDesktopDrag()
+    {
+        lock (_gate) ClearDesktopDrag();
+    }
+
+    /// <summary>
+    /// 落定动画途中来了手势 / 翻页（任意线程）：动画跳到终点，不让这次输入等它。没排成的直接结束预览（与不拖时的画面一致）；
+    /// 排好了的停在新顺序上，像自然落定一样通知宿主收尾，返回 true：在宿主按新顺序重建之前，各页还是旧顺序。
+    /// </summary>
+    private bool SkipDesktopSettle(long hostUs)
+    {
+        bool notify, waiting;
+        lock (_gate)
+        {
+            if (_desktopStage != DesktopDragStage.Settling || _desktopMotion is not { } motion) return false;
+            notify = !_desktopSettledSent;
+            waiting = _desktopCommitted;
+            if (!waiting) ClearDesktopDrag();
+            else
+            {
+                _desktopFly = new SpringAnimation(DesktopReorderMotion.FlySpring, 1, 1, 0, hostUs);
+                _desktopMotion = motion.Snap(hostUs);
+                _desktopSettledSent = true;
+            }
+        }
+        if (notify) _host.DesktopReorderSettled();
+        return waiting;
+    }
+
+    /// <summary>鼠标正拖着桌面，或松手后在等系统排序：别的输入要等它（落定动画不用等，见 <see cref="SkipDesktopSettle"/>）。</summary>
+    private bool DesktopDragHolds => _desktopStage is DesktopDragStage.Dragging or DesktopDragStage.Moving;
+
+    private void ClearDesktopDrag()
+    {
+        _desktopStage = DesktopDragStage.None;
+        _desktopDragSource = _desktopDragTarget = -1;
+        _desktopMotion = null;
+        _desktopCommitted = _desktopSettledSent = false;
     }
 
     // ---------- 拖动窗口（UI 线程） ----------
@@ -568,11 +709,12 @@ public sealed class OverviewController : IGestureTarget
     {
         bool show = false, cancelPrewarm = false;
         bool restore = desktopGesture && !_visible && e.Direction == GestureDirection.Up && DesktopShown?.Invoke() == true;
+        SkipDesktopSettle(e.HostTimeUs); // 桌面排序的落定动画不挡手势：跳到终点（排好了的由宿主在 UI 线程按新顺序重建，与手势无关）
         lock (_gate)
         {
-            if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging || _desktopDragSource >= 0)
+            if (_zoomDesktop >= 0 || _pagerTracking || _drag == DragStage.Dragging || DesktopDragHolds)
             {
-                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口或桌面，等它落定
+                _ignoring = true; // 正在放大进入别的桌面 / 正在翻页 / 鼠标正拖着窗口或桌面（或在等系统排序），等它落定
                 return;
             }
             OverviewMode? open = null; // 收起态下这次手势要展开的形态（null = 不接管）
@@ -796,14 +938,29 @@ public sealed class OverviewController : IGestureTarget
         int dragIndex = -1;
         RectD dragRect = default;
         double dragOpacity = 1, dragReturn = -1;
-        DesktopBarDragFrame? desktopDrag;
+        DesktopBarDragFrame? desktopDrag = null;
+        bool reorderSettled = false;
         lock (_gate)
         {
             zoomDesktop = _zoomDesktop;
-            desktopDrag = _desktopDragSource >= 0
-                ? new DesktopBarDragFrame(_desktopDragSource, _desktopDragTarget, _desktopDragX, _desktopDragY,
-                    _desktopDragGrabX, _desktopDragGrabY, _desktopDragDropped)
-                : null;
+            if (_desktopStage != DesktopDragStage.None && _desktopMotion is { } motion)
+            {
+                double fly = -1;
+                if (_desktopStage != DesktopDragStage.Dragging)
+                {
+                    var f = _desktopFly.Sample(hostUs);
+                    fly = Math.Clamp(f.Value, 0, 1);
+                    // 解析弹簧：按时间判断落定，不依赖「刚落定」那一帧有没有取到
+                    if (_desktopStage == DesktopDragStage.Settling && !_desktopSettledSent && f.Settled && motion.IsSettled(hostUs))
+                    {
+                        reorderSettled = _desktopSettledSent = true; // 通知宿主：新顺序要等它重建桌面条才能结束
+                        if (!_desktopCommitted) ClearDesktopDrag(); // 弹回了原顺序：与不拖时的画面一致，直接结束（宿主只补刷新）
+                    }
+                }
+                if (_desktopStage != DesktopDragStage.None)
+                    desktopDrag = new DesktopBarDragFrame(_desktopDragSource, _desktopDragX, _desktopDragY, _desktopDragGrabX, _desktopDragGrabY,
+                        fly, motion, hostUs);
+            }
             if (_drag == DragStage.Dragging)
             {
                 dragIndex = _dragIndex;
@@ -859,14 +1016,15 @@ public sealed class OverviewController : IGestureTarget
             }
             if (hide)
             {
-                _desktopDragSource = _desktopDragTarget = -1;
-                _desktopDragDropped = false;
+                ClearDesktopDrag();
+                reorderSettled = false;
             }
             visible = _visible || hide || activate;
             emphasized = _focusTarget ?? (_closingGesture ? _hovered : null);
         }
         if (hide) _host.Hide(focus);
         else if (activate) _host.Activate();
+        if (reorderSettled) _host.DesktopReorderSettled();
         return new OverviewFrame(s.Value, OverviewVisuals.BackdropOpacity(s.Value), OverviewVisuals.LabelOpacity(s.Value),
             s.Phase, visible, emphasized, bar.Value, zoomDesktop, zoomDesktop >= 0 ? zoom.Value : 0, _page >= 0 ? pager.Value : 0,
             relayout.Value, dragIndex, dragRect, dragOpacity, dragReturn, desktopDrag);
@@ -944,6 +1102,8 @@ public sealed class OverviewController : IGestureTarget
     public bool StepPage(int direction, long hostUs)
     {
         int changed = -1;
+        // 桌面排序的落定动画跳到终点；排好了的要等宿主按新顺序重建各页（通常不到一帧），这一下不翻
+        if (SkipDesktopSettle(hostUs)) return false;
         lock (_gate)
         {
             if (!_visible || _pages.Count < 2 || _page < 0 || _pagerTracking || _zoomDesktop >= 0 || _drag != DragStage.None || _desktopDragSource >= 0) return false;
@@ -978,9 +1138,11 @@ public sealed class OverviewController : IGestureTarget
 
     private void BeginDesktopSwipe(in GestureEvent e)
     {
+        // 桌面排序的落定动画跳到终点；排好了的要等宿主按新顺序重建各页（宿主在 UI 线程上重建会打断跟手翻页），这一次不接
+        bool waiting = SkipDesktopSettle(e.HostTimeUs);
         lock (_gate)
         {
-            _pagerIgnoring = !_visible || _tracking || _zoomDesktop >= 0 || _pages.Count < 2 || _page < 0 ||
+            _pagerIgnoring = waiting || !_visible || _tracking || _zoomDesktop >= 0 || _pages.Count < 2 || _page < 0 ||
                              _transition.Target < 1 - SettleEpsilon || _drag != DragStage.None || _desktopDragSource >= 0;
             if (_pagerIgnoring) return; // 总览还没展开好、或只有一个桌面：不接管
             _pagerTracking = true;

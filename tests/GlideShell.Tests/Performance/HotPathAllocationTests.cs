@@ -24,6 +24,7 @@ public class HotPathAllocationTests
         public void Hide(long? focusWindowId) { }
         public void SwitchDesktop(int desktopIndex) { }
         public void PageChanged(int desktopIndex) { }
+        public void DesktopReorderSettled() { }
     }
 
     private sealed class NoopSwitcherHost : ISwitcherHost
@@ -128,5 +129,57 @@ public class HotPathAllocationTests
         });
 
         Assert.Equal(0, allocated);
+    }
+
+    [Fact]
+    public void Render_sampling_does_not_allocate_while_reordering_desktops()
+    {
+        var overviewConfig = new OverviewConfig();
+        var overview = new OverviewController(new NoopOverviewHost(), () => overviewConfig);
+        var area = new RectD(0, 0, 2560, 1528);
+        var bar = DesktopBarGeometry.Compute(area, 5, 1.5);
+        overview.SetDesktops(new DesktopBarState(["1", "2", "3", "4", "5"], 0));
+        overview.Open(0);
+        overview.OnShown(0);
+        overview.SetBarHovered(true, 0);
+        overview.Sample(2_000_000);
+        double sum = 0;
+
+        void Frame(long us)
+        {
+            var frame = overview.Sample(us);
+            if (frame.DesktopDrag is not { } drag) return;
+            for (int i = 0; i < bar.Count; i++)
+            {
+                var (thumb, pill, label) = DesktopBarReorder.Layout(bar, drag, i, frame.BarExpansion);
+                sum += thumb.Left + pill.Left + label.Left;
+            }
+        }
+
+        long t = 2_000_000;
+        void Session(bool measure, ref long result)
+        {
+            Assert.True(overview.BeginDesktopDrag(0, bar.Thumbs[0].CenterX, bar.Thumbs[0].CenterY, bar.Thumbs[0], t));
+            overview.DragDesktopTo(bar.Thumbs[3].CenterX + 1, bar.Thumbs[0].CenterY, bar, t); // UI 线程（换目标时分配新的动画状态）
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 1; i < 60; i++) Frame(t + i * 6_000); // 让位途中
+            long during = GC.GetAllocatedBytesForCurrentThread() - before;
+            t += 400_000;
+            var move = overview.DropDesktop(t)!.Value;
+            overview.CompleteDesktopMove(move, success: true, t);
+            before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 1; i < 150; i++) Frame(t + i * 6_000); // 飞到槽位、落定、通知宿主
+            during += GC.GetAllocatedBytesForCurrentThread() - before;
+            t += 1_000_000;
+            Assert.True(overview.FinishSettledDesktopMove());
+            if (measure) result = during;
+        }
+
+        long allocated = 0;
+        Session(measure: false, ref allocated); // JIT
+        Session(measure: true, ref allocated);
+
+        Assert.Equal(0, allocated);
+        Assert.True(sum != 0);
     }
 }

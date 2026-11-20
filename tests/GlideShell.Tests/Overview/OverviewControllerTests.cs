@@ -19,6 +19,7 @@ public class OverviewControllerTests
         public void Hide(long? focusWindowId) => Calls.Add($"Hide:{focusWindowId?.ToString() ?? "-"}");
         public void SwitchDesktop(int desktopIndex) => Calls.Add($"SwitchDesktop:{desktopIndex}");
         public void PageChanged(int desktopIndex) => Calls.Add($"PageChanged:{desktopIndex}");
+        public void DesktopReorderSettled() => Calls.Add("DesktopReorderSettled");
     }
 
     private const double Travel = 30;

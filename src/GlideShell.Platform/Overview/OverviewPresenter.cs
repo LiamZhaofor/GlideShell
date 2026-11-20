@@ -75,6 +75,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private int _pressDesktop = -1; // 按在了哪个桌面缩略图上（-1 = 没有）
     private bool _dragging;
     private bool _draggingDesktop;
+    private bool _barRefreshPending; // UI 线程：拖动排序预览中跳过了桌面条刷新（窗口关了、桌面增删完成），预览结束时补上
     private long _dragWindow;
     private Task<Guid?>? _dropMove; // 已放到别的桌面：移动窗口（新建桌面时先建）的任务，结果是目标桌面
     private readonly HashSet<long> _moved = []; // 本次会话移到别的桌面的窗口
@@ -509,6 +510,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         // 桌面条里各桌面的窗口：跨桌面再枚举一次（最小化的不在桌面画面里）
         long t3 = HostClock.NowUs();
         _barState = bar ? desktops : DesktopState.Empty;
+        _barRefreshPending = false;
         _allWindows = bar ? WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true) : [];
         _barWindows = _allWindows.Where(w => !w.IsMinimized).ToList();
         nint foreground = User32.GetForegroundWindow();
@@ -850,7 +852,9 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         switch (kind)
         {
             case OverlayMouse.Down:
-                if (Controller.IsDesktopDragging) break; // 等系统排序时不再接受按下，避免并发新建 / 删除 / 再次排序
+                // 等系统排序时不再接受按下，避免并发新建 / 删除 / 再次排序；排好了只是动画还没落定：跳到终点，照常按下
+                if (!Controller.SkipDesktopDragAnimation(out bool reordered)) break;
+                if (reordered || _barRefreshPending) RefreshBar();
                 _press = overlay;
                 _pressX = x;
                 _pressY = y;
@@ -904,7 +908,7 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         if (_draggingDesktop)
         {
             _draggingDesktop = false;
-            Controller.FinishDesktopDrag();
+            Controller.CancelDesktopDrag(now); // 飞回原位、其余桌面弹回（已撤层时什么也不做）
             Controller.SetBarHovered(false, now);
             if (_barHovered != DesktopBarHit.Nothing)
             {
@@ -961,15 +965,19 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
         Controller.DragDesktopTo(x, y, bar, now);
     }
 
-    /// <summary>松手后调用 explorer 的 MoveDesktop；完成前保持目标预览，完成后按真实状态刷新各页。</summary>
+    /// <summary>
+    /// 松手：缩略图飞向目标槽位，同时调用 explorer 的 MoveDesktop；动画落定且系统返回后才按真实状态重建桌面条与各页。
+    /// 没换位置、或放在桌面条外：飞回原位。
+    /// </summary>
     private void DropDesktop(OverlayWindow overlay, double x, double y)
     {
         _draggingDesktop = false;
-        if (Controller.DropDesktop() is not { } move) return;
+        long now = HostClock.NowUs();
+        if (Controller.DropDesktop(now) is not { } move) return;
         if (move.From == move.To || _desktops is not { Available: true } desktops || overlay.Bar is not { } bar || !bar.Contains(x, y, 1) ||
             move.From < 0 || move.From >= _barState.Count || move.To < 0 || move.To >= _barState.Count)
         {
-            Controller.FinishDesktopDrag();
+            Controller.CompleteDesktopMove(move, success: false, now);
             return;
         }
         Guid desktop = _barState.Desktops[move.From];
@@ -980,11 +988,21 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
 
     private void FinishDesktopMove(int hr, DesktopBarMove move, string name)
     {
-        Controller.FinishDesktopDrag();
         if (hr < 0) Log.Warn($"总览桌面条：移动「{name}」到位置 {move.To + 1} 失败 0x{hr:X8}");
         else Log.Info($"总览桌面条：「{name}」从位置 {move.From + 1} 移到 {move.To + 1}");
-        RefreshBar(); // 成功按新顺序、失败按原顺序重建；桌面页按 id 跟随，不会切错桌面
+        // 成功且动画已落定：现在就按新顺序重建（桌面页按 id 跟随，不会切错桌面）；还在动：落定时由 DesktopReorderSettled 收尾。
+        // 失败：各桌面弹回原位，落定后控制器自己结束预览（原顺序不用重建）
+        if (Controller.CompleteDesktopMove(move, hr >= 0, HostClock.NowUs())) RefreshBar();
     }
+
+    /// <summary>
+    /// 渲染线程（或被手势打断时的输入线程）：桌面排序的动画落定了。排好了的：结束预览与按新顺序重建桌面条在 UI 线程上紧挨着做，
+    /// 不会闪回旧顺序；没排成的预览已经结束，拖动期间跳过的刷新在这里补上。
+    /// </summary>
+    public void DesktopReorderSettled() => _ui.Post(() =>
+    {
+        if (Controller.FinishSettledDesktopMove() || _barRefreshPending) RefreshBar();
+    });
 
     /// <summary>按下处的窗口（只有能把窗口移到别的桌面时才算，按在桌面条上不算）。</summary>
     private long? PressedWindow(OverlayWindow overlay, double x, double y)
@@ -1353,10 +1371,17 @@ public sealed class OverviewPresenter : IOverviewHost, IOverviewSelectionHost, I
     private bool RefreshBarThumbnails()
     {
         if (!_shown || _desktops is null || Controller.Mode != OverviewMode.All) return false;
+        if (Controller.IsDesktopDragging)
+        {
+            // 拖动排序预览中：桌面条按原下标加预览槽位画，换成新列表会错位。记下来，预览结束时整条重建（DesktopReorderSettled / 按下）
+            _barRefreshPending = true;
+            return false;
+        }
         var state = _desktops.State;
         if (state.Count < 2 || state.CurrentIndex < 0) return false;
         var monitors = _overlays.Select(o => o.Monitor).ToList();
         _barState = state;
+        _barRefreshPending = false;
         _barWindows = WindowCatalog.Snapshot(monitors, OwnWindows.ToHashSet(), allDesktops: true).Where(w => !w.IsMinimized).ToList();
         nint foreground = User32.GetForegroundWindow();
         foreach (var o in _overlays)

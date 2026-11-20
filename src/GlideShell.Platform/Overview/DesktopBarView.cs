@@ -121,10 +121,8 @@ internal sealed class DesktopBarView : IDisposable
         {
             var s = slots[i];
             bool chosen = i == target;
-            int slot = DesktopBarReorder.Slot(i, drag?.Source ?? -1, drag?.Target ?? -1, g.Count);
-            var r = chosen ? g.ZoomRect(slot, e, z) : g.ThumbRect(slot, e);
-            if (drag is { } d && i == d.Source && !d.Dropped)
-                r = new RectD(d.X - d.GrabX * r.Width, d.Y - d.GrabY * r.Height, r.Width, r.Height);
+            // 拖动排序：与 BarDecor 的名字、框同一套位置（拖动中不会有放大进入）
+            var r = drag is { } d ? DesktopBarReorder.Layout(g, d, i, e).Thumb : chosen ? g.ZoomRect(i, e, z) : g.ThumbRect(i, e);
             // 选中的那个点下去就不透明（可能还没完全展开就点了）；其余随放大淡出
             double alpha = chosen ? Math.Max(e, OverviewVisuals.SmoothStep(0, 0.15, z)) : e * (1 - z);
             double scale = r.Width / g.Area.Width;
